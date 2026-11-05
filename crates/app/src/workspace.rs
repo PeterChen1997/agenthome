@@ -29,7 +29,6 @@ actions!(agenthome, [FocusSearch]);
 /// 设计稿标题栏高 48。
 const TITLE_BAR_HEIGHT: f32 = 48.;
 /// 左栏宽；导航从中栏左缘起。
-const SIDEBAR_WIDTH: f32 = 240.;
 /// gpui-kit 的 TitleBar 在 macOS 上已为红绿灯留出的左内边距。
 const TRAFFIC_LIGHT_INSET: f32 = if cfg!(target_os = "macos") { 80. } else { 12. };
 
@@ -148,20 +147,33 @@ impl Workspace {
             .child(
                 h_flex()
                     .size_full()
+                    .relative()
                     .pr(px(14.))
                     .gap_3()
-                    .child(div().flex_none().w(px(SIDEBAR_WIDTH - TRAFFIC_LIGHT_INSET)))
+                    // 导航放在一个向左扩出红绿灯内边距的绝对定位叠层里，按整个窗口宽度居中；
+                    // 状态条与搜索框是后绘制的兄弟元素，命中优先级更高，不会被叠层挡住。
                     .child(
-                        TabBar::new("main-nav")
-                            .segmented()
-                            .selected_index(page_ix)
-                            .children(Page::ALL.map(|page| Tab::new().label(page.label())))
-                            .on_click(cx.listener(|this, ix: &usize, _, cx| {
-                                if let Some(page) = Page::ALL.get(*ix) {
-                                    this.page = *page;
-                                    cx.notify();
-                                }
-                            })),
+                        div()
+                            .absolute()
+                            .top_0()
+                            .bottom_0()
+                            .left(px(-TRAFFIC_LIGHT_INSET))
+                            .right_0()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .child(
+                                TabBar::new("main-nav")
+                                    .segmented()
+                                    .selected_index(page_ix)
+                                    .children(Page::ALL.map(|page| Tab::new().label(page.label())))
+                                    .on_click(cx.listener(|this, ix: &usize, _, cx| {
+                                        if let Some(page) = Page::ALL.get(*ix) {
+                                            this.page = *page;
+                                            cx.notify();
+                                        }
+                                    })),
+                            ),
                     )
                     .child(div().flex_1())
                     .child(self.render_status(cx))
