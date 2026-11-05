@@ -50,7 +50,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-echo "== 3/5 签名（$IDENTITY）"
+echo "== 3/5 签名（${IDENTITY}）"
 cat > dist/entitlements.plist <<'ENT'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -69,7 +69,7 @@ echo "== 4/5 打包 zip"
 ditto -c -k --keepParent "$APP" "$ZIP"
 
 if [ -n "${NOTARY_PROFILE:-}" ]; then
-  echo "== 5/5 公证（profile: $NOTARY_PROFILE）"
+  echo "== 5/5 公证（profile: ${NOTARY_PROFILE}）"
   xcrun notarytool submit "$ZIP" --keychain-profile "$NOTARY_PROFILE" --wait
   xcrun stapler staple "$APP"
   rm -f "$ZIP" && ditto -c -k --keepParent "$APP" "$ZIP"

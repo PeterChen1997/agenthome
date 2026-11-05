@@ -6,4 +6,5 @@
 /crates/core/tests/fixtures/real-*
 
 .playwright-mcp/
+/dist
 
