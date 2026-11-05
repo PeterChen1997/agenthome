@@ -1,36 +1,40 @@
-//! 应用外壳：标题栏（导航 / 监听状态 / 搜索）+ 按当前页切换归档 / 仪表盘 / 设置。
+//! 应用外壳：标题栏（当前页名 / 监听状态 / 搜索）+ 左侧固定导航栏 + 按当前页切换的内容区。
 //!
 //! 外壳创建并持有数据源、两个栖息地、实时信号与各页实体；页本身不互相引用。
+//! 左栏公共部分（品牌、导航、栖息地与住户）归外壳；归档页专属的「视图 / 项目」由
+//! `ArchiveView::render_sidebar_sections` 提供，点击仍由归档页处理。
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use gpui_kit::component::{
-    ActiveTheme as _, Icon, IconName, Sizable as _, TitleBar, h_flex,
+    ActiveTheme as _, Icon, IconName, Sizable as _, StyledExt as _, TitleBar, h_flex,
     input::{Input, InputEvent, InputState},
-    tab::{Tab, TabBar},
     v_flex,
 };
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, AppContext as _, Context, Entity, FocusHandle, Focusable as _,
-    InteractiveElement as _, IntoElement, KeyBinding, ParentElement as _, Render, Styled as _,
-    Subscription, Window, actions, div, px,
+    InteractiveElement as _, IntoElement, KeyBinding, ParentElement as _, Render, SharedString,
+    StatefulInteractiveElement as _, Styled as _, Subscription, Task, Window, actions, div, img,
+    px,
 };
 
-use crate::archive::ArchiveView;
-use crate::assets::FONT_PIXEL_MONO;
+use crate::archive::{ArchiveView, side_item};
+use crate::assets::{FONT_PIXEL_MONO, FONT_PIXEL_SANS};
 use crate::dashboard::DashboardView;
 use crate::data::DataSource;
-use crate::format::{now_ms, relative_time};
-use crate::habitat::{HabitatSize, HabitatView};
-use crate::live::{LiveFeed, LiveState};
+use crate::format::{countdown, now_ms, relative_time};
+use crate::habitat::{HabitatSize, HabitatView, ResidentId, ResidentState};
+use crate::live::{LiveFeed, LiveState, primary_window};
+use crate::message_row::{provider_avatar, secondary};
 
 actions!(agenthome, [FocusSearch]);
 
 /// 设计稿标题栏高 48。
 const TITLE_BAR_HEIGHT: f32 = 48.;
-/// 左栏宽；导航从中栏左缘起。
-/// gpui-kit 的 TitleBar 在 macOS 上已为红绿灯留出的左内边距。
-const TRAFFIC_LIGHT_INSET: f32 = if cfg!(target_os = "macos") { 80. } else { 12. };
+/// 左栏宽，所有页面共用。
+const SIDEBAR_WIDTH: f32 = 240.;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Page {
@@ -49,11 +53,201 @@ impl Page {
             Page::Settings => "设置",
         }
     }
+
+    fn icon(self) -> IconName {
+        match self {
+            Page::Dashboard => IconName::LayoutDashboard,
+            Page::Archive => IconName::Inbox,
+            Page::Settings => IconName::Settings,
+        }
+    }
+}
+
+/// 左栏的栖息地盒 + 三行住户：自己每秒刷新倒计时，不牵动整页。
+pub struct ResidentPanel {
+    live: Entity<LiveState>,
+    habitat: Entity<HabitatView>,
+    _ticker: Task<()>,
+    _subscription: Subscription,
+}
+
+impl ResidentPanel {
+    fn new(live: Entity<LiveState>, habitat: Entity<HabitatView>, cx: &mut Context<Self>) -> Self {
+        let subscription = cx.observe(&live, |_, _, cx| cx.notify());
+        let ticker = cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(Duration::from_secs(1)).await;
+                if this.update(cx, |_, cx| cx.notify()).is_err() {
+                    break;
+                }
+            }
+        });
+        Self {
+            live,
+            habitat,
+            _ticker: ticker,
+            _subscription: subscription,
+        }
+    }
+
+    fn render_resident(&self, who: ResidentId, now: i64, cx: &mut Context<Self>) -> AnyElement {
+        let live = self.live.read(cx);
+        let residents = self.habitat.read(cx).residents();
+        let away = residents[who.index()].state == ResidentState::Away;
+        let quota = live.quota_for(who);
+        let window = quota.and_then(primary_window);
+        let hp = window
+            .map(|w| (100.0 - w.used_percent).round().clamp(0.0, 100.0) as u8)
+            .unwrap_or(0);
+        let lit = usize::from(hp.div_ceil(10));
+        let bar_color = if hp < 20 {
+            cx.theme().danger
+        } else if hp < 50 {
+            cx.theme().warning
+        } else {
+            cx.theme().success
+        };
+        let plan: SharedString = if away {
+            "未接入".into()
+        } else {
+            quota
+                .and_then(|q| q.plan.clone())
+                .unwrap_or_else(|| "未接入额度".to_string())
+                .into()
+        };
+        let (sub_label, sub_value): (SharedString, SharedString) = match (away, window) {
+            (true, _) => ("在设置里接入".into(), "".into()),
+            (false, None) => ("装 statusline 后显示额度".into(), "".into()),
+            (false, Some(w)) => (
+                format!("{} 重置", w.label).into(),
+                w.resets_at_ms
+                    .map(|at| countdown(at - now))
+                    .unwrap_or_else(|| "—".to_string())
+                    .into(),
+            ),
+        };
+        h_flex()
+            .items_center()
+            .gap_2()
+            .px_4()
+            .py_2()
+            .when(away, |row| row.opacity(0.55))
+            .child(
+                div()
+                    .flex_none()
+                    .rounded(cx.theme().radius)
+                    .border_1()
+                    .border_color(cx.theme().border)
+                    .child(provider_avatar(&who_provider(who), 28.)),
+            )
+            .child(
+                v_flex()
+                    .flex_1()
+                    .min_w_0()
+                    .child(
+                        h_flex()
+                            .items_baseline()
+                            .gap_1()
+                            .child(div().text_sm().font_semibold().child(who.name()))
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child(plan),
+                            )
+                            .when(window.is_some(), |row| {
+                                row.child(
+                                    div()
+                                        .ml_auto()
+                                        .font_family(FONT_PIXEL_MONO)
+                                        .text_size(px(15.))
+                                        .child(format!("{hp}%")),
+                                )
+                            }),
+                    )
+                    .child(h_flex().mt_1().gap(px(2.)).children((0..10).map(|ix| {
+                        div().flex_1().h(px(7.)).rounded(px(1.)).bg(if ix < lit {
+                            bar_color
+                        } else {
+                            cx.theme().border
+                        })
+                    })))
+                    .child(
+                        h_flex()
+                            .mt(px(3.))
+                            .justify_between()
+                            .text_xs()
+                            .text_color(secondary(cx))
+                            .child(sub_label)
+                            .child(
+                                div()
+                                    .font_family(FONT_PIXEL_MONO)
+                                    .text_size(px(14.))
+                                    .child(sub_value),
+                            ),
+                    ),
+            )
+            .into_any_element()
+    }
+}
+
+fn who_provider(who: ResidentId) -> agenthome_core::model::ProviderId {
+    use agenthome_core::model::ProviderId;
+    match who {
+        ResidentId::Claude => ProviderId::ClaudeCode,
+        ResidentId::Codex => ProviderId::Codex,
+        ResidentId::Gemini => ProviderId::GeminiCli,
+    }
+}
+
+impl Render for ResidentPanel {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let now = now_ms();
+        let residents = self.habitat.read(cx).residents();
+        let away = residents
+            .iter()
+            .filter(|r| r.state == ResidentState::Away)
+            .count();
+        let caption = format!("{} 位在线 · {} 外出", residents.len() - away, away);
+        v_flex()
+            .w_full()
+            .child(
+                div()
+                    .relative()
+                    .mx_3()
+                    .h(px(108.))
+                    .rounded(cx.theme().radius)
+                    .border_2()
+                    .border_color(cx.theme().border)
+                    .overflow_hidden()
+                    .child(self.habitat.clone())
+                    .child(
+                        div()
+                            .absolute()
+                            .left_2()
+                            .top(px(6.))
+                            .px(px(5.))
+                            .py(px(1.))
+                            .rounded(px(2.))
+                            .bg(cx.theme().background.opacity(0.78))
+                            .font_family(FONT_PIXEL_MONO)
+                            .text_size(px(11.))
+                            .text_color(cx.theme().primary)
+                            .child(caption),
+                    ),
+            )
+            .child(
+                v_flex()
+                    .mt_2()
+                    .children(ResidentId::ALL.map(|who| self.render_resident(who, now, cx))),
+            )
+    }
 }
 
 pub struct Workspace {
     page: Page,
     live: Entity<LiveState>,
+    residents: Entity<ResidentPanel>,
     archive: Entity<ArchiveView>,
     dashboard: Entity<DashboardView>,
     search: Entity<InputState>,
@@ -90,8 +284,8 @@ impl Workspace {
             live.clone(),
             cx,
         );
-        let archive = cx
-            .new(|cx| ArchiveView::new(source.clone(), live.clone(), habitat_compact, window, cx));
+        let residents = cx.new(|cx| ResidentPanel::new(live.clone(), habitat_compact, cx));
+        let archive = cx.new(|cx| ArchiveView::new(source.clone(), window, cx));
         let dashboard = cx.new(|cx| DashboardView::new(source, habitat_hero, window, cx));
         let search =
             cx.new(|cx| InputState::new(window, cx).placeholder("搜索标题、正文、工具输出…"));
@@ -104,10 +298,13 @@ impl Workspace {
                 }
             }),
             cx.observe(&live, |_, _, cx| cx.notify()),
+            // 左栏的「视图 / 项目」选中态随归档页状态变化，归档页重绘时外壳跟着重绘。
+            cx.observe(&archive, |_, _, cx| cx.notify()),
         ];
         Self {
             page: Page::Archive,
             live,
+            residents,
             archive,
             dashboard,
             search,
@@ -141,39 +338,20 @@ impl Workspace {
     }
 
     fn render_title_bar(&self, cx: &mut Context<Self>) -> AnyElement {
-        let page_ix = Page::ALL.iter().position(|p| *p == self.page).unwrap_or(1);
         TitleBar::new()
             .h(px(TITLE_BAR_HEIGHT))
             .child(
                 h_flex()
                     .size_full()
-                    .relative()
                     .pr(px(14.))
                     .gap_3()
-                    // 导航放在一个向左扩出红绿灯内边距的绝对定位叠层里，按整个窗口宽度居中；
-                    // 状态条与搜索框是后绘制的兄弟元素，命中优先级更高，不会被叠层挡住。
+                    // 红绿灯右侧放当前页名，弱化色小字，填掉导航移走后的空缺。
                     .child(
                         div()
-                            .absolute()
-                            .top_0()
-                            .bottom_0()
-                            .left(px(-TRAFFIC_LIGHT_INSET))
-                            .right_0()
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .child(
-                                TabBar::new("main-nav")
-                                    .segmented()
-                                    .selected_index(page_ix)
-                                    .children(Page::ALL.map(|page| Tab::new().label(page.label())))
-                                    .on_click(cx.listener(|this, ix: &usize, _, cx| {
-                                        if let Some(page) = Page::ALL.get(*ix) {
-                                            this.page = *page;
-                                            cx.notify();
-                                        }
-                                    })),
-                            ),
+                            .font_family(FONT_PIXEL_SANS)
+                            .text_sm()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(self.page.label()),
                     )
                     .child(div().flex_1())
                     .child(self.render_status(cx))
@@ -201,6 +379,62 @@ impl Workspace {
                         ),
                     ),
             )
+            .into_any_element()
+    }
+
+    /// 左栏：品牌行、导航、栖息地与住户，归档页再接「视图 / 项目」。
+    fn render_sidebar(&self, cx: &mut Context<Self>) -> AnyElement {
+        let page_sections = (self.page == Page::Archive).then(|| {
+            self.archive
+                .update(cx, |archive, cx| archive.render_sidebar_sections(cx))
+        });
+        v_flex()
+            .id("workspace-sidebar")
+            .w(px(SIDEBAR_WIDTH))
+            .flex_none()
+            .h_full()
+            .overflow_y_scroll()
+            .border_r_1()
+            .border_color(cx.theme().secondary)
+            .pb_3()
+            .child(
+                h_flex()
+                    .gap_2()
+                    .px_4()
+                    .pt_3()
+                    .pb_2()
+                    .child(
+                        img("avatars/app-icon.png")
+                            .size(px(22.))
+                            .rounded(cx.theme().radius),
+                    )
+                    .child(
+                        div()
+                            .font_family(FONT_PIXEL_SANS)
+                            .text_size(px(16.))
+                            .font_semibold()
+                            .text_color(cx.theme().primary)
+                            .child("AgentHome"),
+                    ),
+            )
+            .child(v_flex().pb_2().children(Page::ALL.map(|page| {
+                side_item(
+                    ("nav", page as usize),
+                    Some(page.icon()),
+                    page.label(),
+                    None,
+                    self.page == page,
+                    cx.listener(move |this, _, _, cx| {
+                        if this.page != page {
+                            this.page = page;
+                            cx.notify();
+                        }
+                    }),
+                    cx,
+                )
+            })))
+            .child(self.residents.clone())
+            .when_some(page_sections, |col, sections| col.child(sections))
             .into_any_element()
     }
 
@@ -240,11 +474,19 @@ impl Render for Workspace {
             .text_color(cx.theme().foreground)
             .child(self.render_title_bar(cx))
             .child(
-                div()
+                h_flex()
+                    .items_stretch()
                     .flex_1()
                     .min_h_0()
                     .min_w_0()
-                    .child(self.render_page(cx)),
+                    .child(self.render_sidebar(cx))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .min_h_0()
+                            .child(self.render_page(cx)),
+                    ),
             )
     }
 }

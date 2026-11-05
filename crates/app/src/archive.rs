@@ -1,16 +1,16 @@
-//! 归档浏览器三栏：左栏（品牌 + 栖息地 + 住户 + 视图 + 项目）、中栏会话列表、右栏会话详情。
+//! 归档页两栏：会话列表 + 会话详情；左栏里的「视图 / 项目」两组由外壳通过
+//! `render_sidebar_sections` 取用，点击仍回到本视图处理。
 //!
 //! 所有 `DataSource` 调用都在后台线程执行，结果带 revision 回到前台，过期结果直接丢弃。
-//! 住户行的每秒倒计时由独立的 `ResidentPanel` 实体刷新，不牵动整页。
 
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::sync::Arc;
-use std::time::Duration;
 
 use agenthome_core::model::{ProviderHealth, SessionKind, SessionQuery, SessionSummary};
 use gpui_kit::component::{
-    ActiveTheme as _, Disableable as _, IconName, Sizable as _, StyledExt as _, WindowExt as _,
+    ActiveTheme as _, Disableable as _, Icon, IconName, Sizable as _, StyledExt as _,
+    WindowExt as _,
     button::{Button, ButtonVariants as _},
     h_flex,
     message_scroller::{MessageScroller, MessageScrollerState},
@@ -25,16 +25,12 @@ use gpui_kit::{
     AnyElement, App, AppContext as _, ClipboardItem, Context, Entity, InteractiveElement as _,
     IntoElement, ParentElement as _, Render, ScrollStrategy, SharedString,
     StatefulInteractiveElement as _, Styled as _, Subscription, Task, UniformListScrollHandle,
-    Window, div, img, px, uniform_list,
+    Window, div, px, uniform_list,
 };
 
 use crate::assets::{FONT_PIXEL_MONO, FONT_PIXEL_SANS};
 use crate::data::{DataSource, ProjectRow};
-use crate::format::{
-    DayGroup, countdown, now_ms, relative_time, short_cost, short_datetime, short_tokens,
-};
-use crate::habitat::{HabitatView, ResidentId, ResidentState};
-use crate::live::{LiveState, primary_window};
+use crate::format::{DayGroup, now_ms, relative_time, short_cost, short_datetime, short_tokens};
 use crate::message_row::{
     BlockKey, Transcript, provider_avatar, provider_display_name, render_row, secondary,
 };
@@ -239,190 +235,8 @@ fn export_path(session: &SessionSummary) -> Option<std::path::PathBuf> {
     )
 }
 
-/// 左栏的栖息地盒 + 三行住户：自己每秒刷新倒计时，不牵动整页。
-pub struct ResidentPanel {
-    live: Entity<LiveState>,
-    habitat: Entity<HabitatView>,
-    _ticker: Task<()>,
-    _subscription: Subscription,
-}
-
-impl ResidentPanel {
-    fn new(live: Entity<LiveState>, habitat: Entity<HabitatView>, cx: &mut Context<Self>) -> Self {
-        let subscription = cx.observe(&live, |_, _, cx| cx.notify());
-        let ticker = cx.spawn(async move |this, cx| {
-            loop {
-                cx.background_executor().timer(Duration::from_secs(1)).await;
-                if this.update(cx, |_, cx| cx.notify()).is_err() {
-                    break;
-                }
-            }
-        });
-        Self {
-            live,
-            habitat,
-            _ticker: ticker,
-            _subscription: subscription,
-        }
-    }
-
-    fn render_resident(&self, who: ResidentId, now: i64, cx: &mut Context<Self>) -> AnyElement {
-        let live = self.live.read(cx);
-        let residents = self.habitat.read(cx).residents();
-        let away = residents[who.index()].state == ResidentState::Away;
-        let quota = live.quota_for(who);
-        let window = quota.and_then(primary_window);
-        let hp = window
-            .map(|w| (100.0 - w.used_percent).round().clamp(0.0, 100.0) as u8)
-            .unwrap_or(0);
-        let lit = usize::from(hp.div_ceil(10));
-        let bar_color = if hp < 20 {
-            cx.theme().danger
-        } else if hp < 50 {
-            cx.theme().warning
-        } else {
-            cx.theme().success
-        };
-        let plan: SharedString = if away {
-            "未接入".into()
-        } else {
-            quota
-                .and_then(|q| q.plan.clone())
-                .unwrap_or_else(|| "未接入额度".to_string())
-                .into()
-        };
-        let (sub_label, sub_value): (SharedString, SharedString) = match (away, window) {
-            (true, _) => ("在设置里接入".into(), "".into()),
-            (false, None) => ("装 statusline 后显示额度".into(), "".into()),
-            (false, Some(w)) => (
-                format!("{} 重置", w.label).into(),
-                w.resets_at_ms
-                    .map(|at| countdown(at - now))
-                    .unwrap_or_else(|| "—".to_string())
-                    .into(),
-            ),
-        };
-        h_flex()
-            .items_center()
-            .gap_2()
-            .px_4()
-            .py_2()
-            .when(away, |row| row.opacity(0.55))
-            .child(
-                div()
-                    .flex_none()
-                    .rounded(cx.theme().radius)
-                    .border_1()
-                    .border_color(cx.theme().border)
-                    .child(provider_avatar(&who_provider(who), 28.)),
-            )
-            .child(
-                v_flex()
-                    .flex_1()
-                    .min_w_0()
-                    .child(
-                        h_flex()
-                            .items_baseline()
-                            .gap_1()
-                            .child(div().text_sm().font_semibold().child(who.name()))
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(cx.theme().muted_foreground)
-                                    .child(plan),
-                            )
-                            .when(window.is_some(), |row| {
-                                row.child(
-                                    div()
-                                        .ml_auto()
-                                        .font_family(FONT_PIXEL_MONO)
-                                        .text_size(px(15.))
-                                        .child(format!("{hp}%")),
-                                )
-                            }),
-                    )
-                    .child(h_flex().mt_1().gap(px(2.)).children((0..10).map(|ix| {
-                        div().flex_1().h(px(7.)).rounded(px(1.)).bg(if ix < lit {
-                            bar_color
-                        } else {
-                            cx.theme().border
-                        })
-                    })))
-                    .child(
-                        h_flex()
-                            .mt(px(3.))
-                            .justify_between()
-                            .text_xs()
-                            .text_color(secondary(cx))
-                            .child(sub_label)
-                            .child(
-                                div()
-                                    .font_family(FONT_PIXEL_MONO)
-                                    .text_size(px(14.))
-                                    .child(sub_value),
-                            ),
-                    ),
-            )
-            .into_any_element()
-    }
-}
-
-fn who_provider(who: ResidentId) -> agenthome_core::model::ProviderId {
-    use agenthome_core::model::ProviderId;
-    match who {
-        ResidentId::Claude => ProviderId::ClaudeCode,
-        ResidentId::Codex => ProviderId::Codex,
-        ResidentId::Gemini => ProviderId::GeminiCli,
-    }
-}
-
-impl Render for ResidentPanel {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let now = now_ms();
-        let residents = self.habitat.read(cx).residents();
-        let away = residents
-            .iter()
-            .filter(|r| r.state == ResidentState::Away)
-            .count();
-        let caption = format!("{} 位在线 · {} 外出", residents.len() - away, away);
-        v_flex()
-            .w_full()
-            .child(
-                div()
-                    .relative()
-                    .mx_3()
-                    .h(px(108.))
-                    .rounded(cx.theme().radius)
-                    .border_2()
-                    .border_color(cx.theme().border)
-                    .overflow_hidden()
-                    .child(self.habitat.clone())
-                    .child(
-                        div()
-                            .absolute()
-                            .left_2()
-                            .top(px(6.))
-                            .px(px(5.))
-                            .py(px(1.))
-                            .rounded(px(2.))
-                            .bg(cx.theme().background.opacity(0.78))
-                            .font_family(FONT_PIXEL_MONO)
-                            .text_size(px(11.))
-                            .text_color(cx.theme().primary)
-                            .child(caption),
-                    ),
-            )
-            .child(
-                v_flex()
-                    .mt_2()
-                    .children(ResidentId::ALL.map(|who| self.render_resident(who, now, cx))),
-            )
-    }
-}
-
 pub struct ArchiveView {
     source: Arc<dyn DataSource>,
-    residents: Entity<ResidentPanel>,
     /// 相对时间的参照点，每次重载列表时刷新。
     now_ms: i64,
     projects: Arc<Vec<ProjectRow>>,
@@ -453,20 +267,11 @@ pub struct ArchiveView {
 }
 
 impl ArchiveView {
-    /// `habitat` 是外壳创建并持续喂事件的 Compact 尺寸栖息地，`live` 是最新信号快照。
-    pub fn new(
-        source: Arc<dyn DataSource>,
-        live: Entity<LiveState>,
-        habitat: Entity<HabitatView>,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Self {
+    pub fn new(source: Arc<dyn DataSource>, _window: &mut Window, cx: &mut Context<Self>) -> Self {
         let scroller = cx.new(|cx| MessageScrollerState::new(0, cx));
-        let residents = cx.new(|cx| ResidentPanel::new(live, habitat, cx));
         let subscriptions = vec![cx.observe(&scroller, |_, _, cx| cx.notify())];
         let mut this = Self {
             source,
-            residents,
             now_ms: now_ms(),
             projects: Arc::default(),
             projects_expanded: false,
@@ -743,9 +548,10 @@ impl ArchiveView {
         (turn > 0).then(|| turn as usize - 1)
     }
 
-    // ---------- 左栏 ----------
+    // ---------- 左栏页面专属区（外壳调用） ----------
 
-    fn render_sidebar(&self, cx: &mut Context<Self>) -> AnyElement {
+    /// 左栏的「视图 / 项目」两组；外壳在归档页把它接在公共导航下面。
+    pub fn render_sidebar_sections(&self, cx: &mut Context<Self>) -> AnyElement {
         let total: u32 = self.projects.iter().map(|p| p.session_count).sum();
         let archive_only: u64 = self.health.iter().map(|h| h.archive_only).sum();
         let expiring: u64 = self.health.iter().map(|h| h.expiring_within_7d).sum();
@@ -764,43 +570,15 @@ impl ArchiveView {
         };
         let hidden = self.projects.len().saturating_sub(shown);
         v_flex()
-            .id("archive-sidebar")
-            .w(px(240.))
-            .flex_none()
-            .h_full()
-            .overflow_y_scroll()
-            .border_r_1()
-            .border_color(cx.theme().secondary)
-            .pb_3()
-            .child(
-                h_flex()
-                    .gap_2()
-                    .px_4()
-                    .pt_3()
-                    .pb_2()
-                    .child(
-                        img("avatars/app-icon.png")
-                            .size(px(22.))
-                            .rounded(cx.theme().radius),
-                    )
-                    .child(
-                        div()
-                            .font_family(FONT_PIXEL_SANS)
-                            .text_size(px(16.))
-                            .font_semibold()
-                            .text_color(cx.theme().primary)
-                            .child("AgentHome"),
-                    ),
-            )
-            .child(self.residents.clone())
+            .w_full()
             .child(side_head("视图", cx))
             .children(ViewFilter::ALL.map(|view| {
                 let (count, alert) = view_count(view);
                 side_item(
                     ("view", view as usize),
+                    None,
                     view.label(),
-                    count,
-                    alert,
+                    Some((count, alert)),
                     self.view == view,
                     cx.listener(move |this, _, _, cx| this.select_view(view, cx)),
                     cx,
@@ -811,9 +589,9 @@ impl ArchiveView {
                 let row = project.clone();
                 side_item(
                     SharedString::from(format!("project:{}", project.name)),
+                    None,
                     project.name.clone(),
-                    project.session_count.to_string(),
-                    false,
+                    Some((project.session_count.to_string(), false)),
                     self.selected_project.as_ref() == Some(project),
                     cx.listener(move |this, _, _, cx| {
                         let next =
@@ -1268,7 +1046,6 @@ impl Render for ArchiveView {
             .size_full()
             .min_w_0()
             .min_h_0()
-            .child(self.render_sidebar(cx))
             .child(self.render_session_list(cx))
             .child(self.render_detail(cx))
     }
@@ -1374,12 +1151,13 @@ fn side_head(text: &'static str, cx: &App) -> AnyElement {
         .into_any_element()
 }
 
-/// 左栏可点行：文字 + 右侧计数，选中态左缘 2px 琥珀条。
-fn side_item(
+/// 左栏可点行：可选图标 + 文字 + 可选右侧计数，选中态左缘 2px 琥珀条。外壳导航也用它。
+pub(crate) fn side_item(
     id: impl Into<gpui_kit::ElementId>,
+    icon: Option<IconName>,
     label: impl Into<SharedString>,
-    count: String,
-    alert: bool,
+    // 右侧计数与是否用警示色。
+    count: Option<(String, bool)>,
     selected: bool,
     on_click: impl Fn(&gpui_kit::ClickEvent, &mut Window, &mut App) + 'static,
     cx: &App,
@@ -1400,18 +1178,21 @@ fn side_item(
                 .border_color(cx.theme().primary)
         })
         .hover(|style| style.bg(cx.theme().secondary))
+        .when_some(icon, |row, icon| row.child(Icon::new(icon).small()))
         .child(div().flex_1().min_w_0().truncate().child(label.into()))
-        .child(
-            div()
-                .text_xs()
-                .font_family(cx.theme().mono_font_family.clone())
-                .text_color(if alert {
-                    cx.theme().danger
-                } else {
-                    cx.theme().muted_foreground
-                })
-                .child(count),
-        )
+        .when_some(count, |row, (count, alert)| {
+            row.child(
+                div()
+                    .text_xs()
+                    .font_family(cx.theme().mono_font_family.clone())
+                    .text_color(if alert {
+                        cx.theme().danger
+                    } else {
+                        cx.theme().muted_foreground
+                    })
+                    .child(count),
+            )
+        })
         .on_click(on_click)
         .into_any_element()
 }
