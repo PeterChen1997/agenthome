@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>栖息地组件</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=VT323&family=Pixelify+Sans:wght@500;600&display=swap">
+<style>
+body{margin:0;background:#0F1423;font-family:"IBM Plex Sans","PingFang SC",system-ui,sans-serif}
+.scene{position:relative;width:100%;aspect-ratio:2/1;overflow:hidden;background:#0F1423;border-radius:4px}
+.scene img{display:block}
+.bg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transition:opacity 1.2s ease}
+.slot{position:absolute;bottom:6.5%;width:20%;height:40%;display:flex;align-items:flex-end;justify-content:center}
+.slot img.sprite{height:100%;width:auto;transform-origin:50% 100%}
+.slot.away img.sprite{display:none}
+.sign{position:absolute;bottom:34%;left:50%;transform:translateX(-50%);font-family:"VT323",monospace;font-size:1.9em;color:#9AA6C0;background:rgba(15,20,35,.75);padding:0 .35em;border-radius:2px;white-space:nowrap}
+.tag{position:absolute;left:50%;bottom:-1.6em;transform:translateX(-50%);display:flex;align-items:center;gap:.35em;white-space:nowrap;font-family:"VT323",monospace;font-size:1.55em;line-height:1;color:#E8ECF5;background:rgba(15,20,35,.82);border:1px solid #26304A;padding:.15em .45em;border-radius:2px}
+.tag i{width:.5em;height:.5em;display:inline-block}
+.hp{display:inline-flex;gap:1px}
+.hp b{width:.45em;height:.45em;background:#26304A;display:inline-block}
+.hp b.on{background:#8BD16A}.hp.a b.on{background:#F5B556}.hp.r b.on{background:#FF6B6B}
+.fx{position:absolute;pointer-events:none}
+.glow-fire{left:79%;top:62%;width:12%;height:18%;background:radial-gradient(ellipse at center,rgba(255,150,60,.55),rgba(255,120,40,0) 70%);animation:flicker .9s steps(3) infinite;mix-blend-mode:screen}
+.glow-lamp{left:26.5%;top:30%;width:9%;height:14%;background:radial-gradient(ellipse at center,rgba(255,200,110,.5),rgba(255,180,80,0) 70%);animation:breathe 3.2s ease-in-out infinite;mix-blend-mode:screen}
+.star{position:absolute;width:.4%;height:.8%;background:#FFF;animation:twinkle 2.4s ease-in-out infinite}
+.toast{position:absolute;left:50%;top:12%;transform:translateX(-50%);font-family:"VT323",monospace;font-size:1.9em;color:#F5B556;background:rgba(15,20,35,.85);border:1px solid #26304A;padding:.1em .5em;border-radius:2px;animation:rise 2.4s ease-out forwards;white-space:nowrap}
+.clock{position:absolute;right:1.2%;top:3%;font-family:"VT323",monospace;font-size:1.6em;line-height:1;color:#9AA6C0;background:rgba(15,20,35,.75);padding:.1em .4em;border-radius:2px}
+/* 状态动画 */
+.working img.sprite{animation:typing .42s steps(2) infinite}
+.thinking img.sprite{animation:ponder 2.2s ease-in-out infinite}
+.sleeping img.sprite{animation:breathe 3.4s ease-in-out infinite}
+.tired img.sprite{animation:droop 2.8s ease-in-out infinite;filter:saturate(.75) brightness(.92)}
+.happy img.sprite{animation:hop .55s ease-in-out infinite alternate}
+.zz{position:absolute;left:62%;bottom:88%;font-family:"VT323",monospace;font-size:1.8em;color:#C9D3F0;animation:floatz 2.2s ease-out infinite;opacity:0}
+.spark{position:absolute;font-size:1.4em;color:#FFD86B;animation:twinkle 1.1s ease-in-out infinite}
+@keyframes typing{0%{transform:translateY(0)}100%{transform:translateY(-2.5%)}}
+@keyframes ponder{0%,100%{transform:rotate(-1.5deg)}50%{transform:rotate(1.5deg) translateY(-1%)}}
+@keyframes breathe{0%,100%{transform:scaleY(1)}50%{transform:scaleY(1.035)}}
+@keyframes droop{0%,100%{transform:translateY(0) rotate(0)}50%{transform:translateY(2%) rotate(-1.2deg)}}
+@keyframes hop{0%{transform:translateY(0)}100%{transform:translateY(-7%)}}
+@keyframes flicker{0%{opacity:.75;transform:scale(1)}50%{opacity:1;transform:scale(1.08)}100%{opacity:.85;transform:scale(.97)}}
+@keyframes twinkle{0%,100%{opacity:.25}50%{opacity:1}}
+@keyframes floatz{0%{opacity:0;transform:translateY(0)}20%{opacity:1}100%{opacity:0;transform:translateY(-140%)}}
+@keyframes rise{0%{opacity:0;transform:translate(-50%,10px)}15%{opacity:1}75%{opacity:1}100%{opacity:0;transform:translate(-50%,-14px)}}
+@media (prefers-reduced-motion: reduce){.scene *{animation:none !important}}
+</style>
+</helmet>
+
+<div class="scene" style="font-size:{{fontPx}}px">
+  <img class="bg" src="./assets/habitat/bg-night.png" alt="" style="opacity:{{nightOn}}">
+  <img class="bg" src="./assets/habitat/bg-evening.png" alt="" style="opacity:{{eveningOn}}">
+  <img class="bg" src="./assets/habitat/bg-day.png" alt="" style="opacity:{{dayOn}}">
+
+  <sc-if value="{{isNight}}" hint-placeholder-val="{{ true }}">
+    <span class="star" style="left:43%;top:30%;animation-delay:0s"></span>
+    <span class="star" style="left:47%;top:35%;animation-delay:.7s"></span>
+    <span class="star" style="left:52%;top:28%;animation-delay:1.3s"></span>
+    <span class="star" style="left:56%;top:33%;animation-delay:.4s"></span>
+  </sc-if>
+  <sc-if value="{{fireOn}}" hint-placeholder-val="{{ true }}">
+    <span class="fx glow-fire"></span>
+    <span class="fx glow-lamp"></span>
+  </sc-if>
+
+  <!-- Claude -->
+  <div class="slot {{claude.cls}}" style="left:22.5%">
+    <img class="sprite" src="{{claude.src}}" alt="Claude {{claude.label}}">
+    <sc-if value="{{claude.away}}" hint-placeholder-val="{{ false }}"><span class="sign">外出</span></sc-if>
+    <sc-if value="{{claude.sleeping}}" hint-placeholder-val="{{ false }}"><span class="zz">z</span></sc-if>
+    <sc-if value="{{claude.happy}}" hint-placeholder-val="{{ false }}"><span class="spark" style="left:8%;top:4%">✦</span><span class="spark" style="right:6%;top:14%;animation-delay:.4s">✦</span></sc-if>
+    <sc-if value="{{showTags}}" hint-placeholder-val="{{ true }}">
+      <span class="tag"><i style="background:#E8824F"></i>Claude · {{claude.label}} <span class="hp {{claude.hpCls}}"><b class="{{claude.h1}}"></b><b class="{{claude.h2}}"></b><b class="{{claude.h3}}"></b><b class="{{claude.h4}}"></b><b class="{{claude.h5}}"></b></span>{{claude.hp}}%</span>
+    </sc-if>
+  </div>
+
+  <!-- Codex -->
+  <div class="slot {{codex.cls}}" style="left:42%">
+    <img class="sprite" src="{{codex.src}}" alt="Codex {{codex.label}}">
+    <sc-if value="{{codex.away}}" hint-placeholder-val="{{ false }}"><span class="sign">外出</span></sc-if>
+    <sc-if value="{{codex.sleeping}}" hint-placeholder-val="{{ false }}"><span class="zz">z</span></sc-if>
+    <sc-if value="{{codex.happy}}" hint-placeholder-val="{{ false }}"><span class="spark" style="left:8%;top:4%">✦</span><span class="spark" style="right:6%;top:14%;animation-delay:.4s">✦</span></sc-if>
+    <sc-if value="{{showTags}}" hint-placeholder-val="{{ true }}">
+      <span class="tag"><i style="background:#E8ECF5"></i>Codex · {{codex.label}} <span class="hp {{codex.hpCls}}"><b class="{{codex.h1}}"></b><b class="{{codex.h2}}"></b><b class="{{codex.h3}}"></b><b class="{{codex.h4}}"></b><b class="{{codex.h5}}"></b></span>{{codex.hp}}%</span>
+    </sc-if>
+  </div>
+
+  <!-- Gemini -->
+  <div class="slot {{gemini.cls}}" style="left:62%">
+    <img class="sprite" src="{{gemini.src}}" alt="Gemini {{gemini.label}}">
+    <sc-if value="{{gemini.away}}" hint-placeholder-val="{{ false }}"><span class="sign">外出</span></sc-if>
+    <sc-if value="{{gemini.sleeping}}" hint-placeholder-val="{{ false }}"><span class="zz">z</span></sc-if>
+    <sc-if value="{{gemini.happy}}" hint-placeholder-val="{{ false }}"><span class="spark" style="left:8%;top:4%">✦</span><span class="spark" style="right:6%;top:14%;animation-delay:.4s">✦</span></sc-if>
+    <sc-if value="{{showTags}}" hint-placeholder-val="{{ true }}">
+      <span class="tag"><i style="background:#8E7CFF"></i>Gemini · {{gemini.label}} <span class="hp {{gemini.hpCls}}"><b class="{{gemini.h1}}"></b><b class="{{gemini.h2}}"></b><b class="{{gemini.h3}}"></b><b class="{{gemini.h4}}"></b><b class="{{gemini.h5}}"></b></span>{{gemini.hp}}%</span>
+    </sc-if>
+  </div>
+
+  <sc-if value="{{hasToast}}" hint-placeholder-val="{{ false }}"><span class="toast">{{toast}}</span></sc-if>
+  <sc-if value="{{showTags}}" hint-placeholder-val="{{ true }}"><span class="clock">{{clock}}</span></sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"size":{"editor":"enum","options":["hero","compact"],"default":"hero","section":"布局"},"timeOfDay":{"editor":"enum","options":["auto","day","evening","night"],"default":"auto","section":"场景"},"demo":{"editor":"boolean","default":true,"section":"场景"},"claudeState":{"editor":"enum","options":["working","thinking","sleeping","tired","happy","away"],"default":"working","section":"Claude"},"claudeHp":{"editor":"range","default":58,"min":0,"max":100,"step":1,"section":"Claude"},"codexState":{"editor":"enum","options":["working","thinking","sleeping","tired","happy","away"],"default":"thinking","section":"Codex"},"codexHp":{"editor":"range","default":82,"min":0,"max":100,"step":1,"section":"Codex"},"geminiState":{"editor":"enum","options":["working","thinking","sleeping","tired","happy","away"],"default":"sleeping","section":"Gemini"},"geminiHp":{"editor":"range","default":0,"min":0,"max":100,"step":1,"section":"Gemini"},"$preview":{"width":700,"height":350}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { step: 0, toast: "", toastId: 0, now: Date.now() };
+  }
+
+  componentDidMount() {
+    // 演示剧本：每 2.2 秒推进一步；真实应用里由数据层事件驱动同样的状态机。
+    this._timer = setInterval(() => {
+      if (!(this.props.demo ?? true)) return;
+      const next = (this.state.step + 1) % SCRIPT.length;
+      const beat = SCRIPT[next];
+      this.setState({ step: next, toast: beat.toast || "", toastId: this.state.toastId + 1, now: Date.now() });
+    }, 2200);
+  }
+
+  componentWillUnmount() {
+    clearInterval(this._timer);
+  }
+
+  resident(name, color, stateProp, hpProp, beat) {
+    const demo = this.props.demo ?? true;
+    const st = demo && beat ? beat[name] : (this.props[stateProp] ?? "working");
+    const hp = Math.max(0, Math.min(100, demo && beat && beat[name + "Hp"] != null ? beat[name + "Hp"] : (this.props[hpProp] ?? 0)));
+    const labels = { working: "工作中", thinking: "思考中", sleeping: "休息中", tired: "快没电", happy: "完成了", away: "外出" };
+    const seg = Math.round(hp / 20);
+    const hpCls = hp < 20 ? "r" : hp < 50 ? "a" : "";
+    return {
+      cls: st,
+      src: st === "away" ? "./assets/habitat/" + name + "-sleeping.png" : "./assets/habitat/" + name + "-" + st + ".png",
+      label: labels[st] || st,
+      away: st === "away",
+      sleeping: st === "sleeping",
+      happy: st === "happy",
+      hp, hpCls,
+      h1: seg >= 1 ? "on" : "", h2: seg >= 2 ? "on" : "", h3: seg >= 3 ? "on" : "", h4: seg >= 4 ? "on" : "", h5: seg >= 5 ? "on" : ""
+    };
+  }
+
+  renderVals() {
+    const demo = this.props.demo ?? true;
+    const beat = demo ? SCRIPT[this.state.step] : null;
+    let tod = this.props.timeOfDay ?? "auto";
+    if (demo && beat && beat.tod) tod = beat.tod;
+    if (tod === "auto") {
+      const h = new Date().getHours();
+      tod = h >= 7 && h < 17 ? "day" : h >= 17 && h < 20 ? "evening" : "night";
+    }
+    const size = this.props.size ?? "hero";
+    const d = new Date(this.state.now);
+    const pad = (n) => String(n).padStart(2, "0");
+    return {
+      fontPx: size === "compact" ? 6 : 10,
+      showTags: size !== "compact",
+      nightOn: tod === "night" ? 1 : 0,
+      eveningOn: tod === "evening" ? 1 : 0,
+      dayOn: tod === "day" ? 1 : 0,
+      isNight: tod === "night",
+      fireOn: tod !== "day",
+      claude: this.resident("claude", "#E8824F", "claudeState", "claudeHp", beat),
+      codex: this.resident("codex", "#E8ECF5", "codexState", "codexHp", beat),
+      gemini: this.resident("gemini", "#8E7CFF", "geminiState", "geminiHp", beat),
+      hasToast: !!this.state.toast,
+      toast: this.state.toast,
+      clock: pad(d.getHours()) + ":" + pad(d.getMinutes())
+    };
+  }
+}
+
+// 演示剧本：模拟一天里数据层会推送的事件。
+const SCRIPT = [
+  { tod: "night",   claude: "working",  claudeHp: 58, codex: "thinking", codexHp: 82, gemini: "sleeping", geminiHp: 0 },
+  { tod: "night",   claude: "thinking", claudeHp: 57, codex: "working",  codexHp: 81, gemini: "sleeping", geminiHp: 0, toast: "Codex 开始执行工具 cargo test" },
+  { tod: "night",   claude: "working",  claudeHp: 55, codex: "working",  codexHp: 80, gemini: "sleeping", geminiHp: 0 },
+  { tod: "night",   claude: "happy",    claudeHp: 54, codex: "working",  codexHp: 79, gemini: "sleeping", geminiHp: 0, toast: "Claude 完成了一个会话 · $3.21" },
+  { tod: "evening", claude: "working",  claudeHp: 40, codex: "tired",    codexHp: 18, gemini: "sleeping", geminiHp: 0, toast: "Codex 5h 窗口只剩 18%" },
+  { tod: "evening", claude: "working",  claudeHp: 38, codex: "sleeping", codexHp: 0,  gemini: "sleeping", geminiHp: 0, toast: "Codex 额度用尽，03:41 后重置" },
+  { tod: "day",     claude: "tired",    claudeHp: 15, codex: "sleeping", codexHp: 0,  gemini: "away",     geminiHp: 0 },
+  { tod: "day",     claude: "sleeping", claudeHp: 0,  codex: "happy",    codexHp: 100, gemini: "away",    geminiHp: 0, toast: "Codex 窗口已重置，体力全满" },
+  { tod: "day",     claude: "happy",    claudeHp: 100, codex: "working", codexHp: 97, gemini: "away",     geminiHp: 0, toast: "Claude 5h 窗口已重置" },
+  { tod: "night",   claude: "working",  claudeHp: 92, codex: "thinking", codexHp: 90, gemini: "sleeping", geminiHp: 0 }
+];
+</script>
+</body>
+</html>

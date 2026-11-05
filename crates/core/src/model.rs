@@ -106,10 +106,12 @@ pub struct SourceInfo {
     pub path: PathBuf,
     pub size_bytes: u64,
     pub mtime_ms: i64,
+    /// 原件是否为压缩归档（Codex 的 `.jsonl.zst`）。
+    pub compressed: bool,
 }
 
 /// 一次会话。`id = "{provider}:{machine_id}:{native_id}"`。
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Session {
     pub id: String,
     pub provider: ProviderId,
@@ -130,6 +132,10 @@ pub struct Session {
     pub models: Vec<String>,
     pub usage: Usage,
     pub message_count: u32,
+    /// agent 自己记录的成本真值（Claude `cost-state.totalCostUSD`）；Codex 无。
+    pub recorded_cost_usd: Option<f64>,
+    /// 按内嵌定价表对各消息 usage 估算的成本之和；没有任何可计价消息时为 None。
+    pub estimated_cost_usd: Option<f64>,
     pub source: SourceInfo,
 }
 
@@ -256,7 +262,7 @@ pub struct SessionQuery {
 }
 
 /// 按天聚合的用量，仪表盘用。
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct DailyUsage {
     /// YYYY-MM-DD（本地时区）
     pub day: String,
@@ -264,4 +270,165 @@ pub struct DailyUsage {
     pub model: String,
     pub usage: Usage,
     pub message_count: u64,
+    /// 估算成本（USD），按消息 `cost_usd` 求和；未知模型不计入。
+    pub cost_usd: f64,
+}
+
+/// 统计周期，边界按本地时区。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Period {
+    /// 今天 00:00 起。
+    Today,
+    /// 本周一 00:00 起。
+    Week,
+    /// 本月 1 日 00:00 起。
+    Month,
+    /// 最近 N 天（滚动，now - N×24h）。
+    Days(u32),
+    All,
+}
+
+impl Period {
+    /// 周期起点（Unix 毫秒）；`All` 为 None。
+    pub fn since_ms(&self) -> Option<i64> {
+        use chrono::{Datelike, Local, TimeZone};
+        let now = Local::now();
+        let midnight = |d: chrono::NaiveDate| {
+            Local
+                .from_local_datetime(&d.and_hms_opt(0, 0, 0).unwrap_or_default())
+                .earliest()
+                .map(|t| t.timestamp_millis())
+                .unwrap_or(0)
+        };
+        let today = now.date_naive();
+        match self {
+            Period::Today => Some(midnight(today)),
+            Period::Week => {
+                let back = i64::from(today.weekday().num_days_from_monday());
+                Some(midnight(today - chrono::Duration::days(back)))
+            }
+            Period::Month => Some(midnight(today.with_day(1).unwrap_or(today))),
+            Period::Days(n) => Some(now.timestamp_millis() - i64::from(*n) * 86_400_000),
+            Period::All => None,
+        }
+    }
+
+    pub fn as_str(&self) -> String {
+        match self {
+            Period::Today => "today".to_string(),
+            Period::Week => "week".to_string(),
+            Period::Month => "month".to_string(),
+            Period::Days(n) => format!("{n}d"),
+            Period::All => "all".to_string(),
+        }
+    }
+}
+
+/// 成本数字的出处。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CostSource {
+    /// 全部按定价表估算。
+    Estimated,
+    /// 全部来自 agent 自己记录的真值。
+    Recorded,
+    /// 一部分会话有真值，其余估算。
+    Mixed,
+    /// 没有任何可计价数据。
+    Unknown,
+}
+
+/// 周期汇总。
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct UsageTotals {
+    pub period: Period,
+    pub provider: Option<ProviderId>,
+    pub usage: Usage,
+    pub cost_usd: f64,
+    pub cost_source: CostSource,
+    /// 周期内有消息的会话数。
+    pub sessions: u64,
+    /// 周期内的消息数（所有角色）。
+    pub messages: u64,
+}
+
+/// 按模型 / 按项目的分项；`key` 为模型名或项目名。
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CostBreakdown {
+    pub key: String,
+    pub provider: ProviderId,
+    pub usage: Usage,
+    pub cost_usd: f64,
+}
+
+/// 归档健康：原件还在不在、快不快到清理期、压没压缩。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProviderHealth {
+    pub provider: ProviderId,
+    pub sessions: u64,
+    /// 原件路径已不存在、只剩索引的会话数。
+    pub archive_only: u64,
+    /// Claude 默认 30 天清理：原件 mtime 距今 > 23 天的会话数。
+    pub expiring_within_7d: u64,
+    /// 原件为 `.zst` 压缩归档的会话数（Codex）。
+    pub compressed: u64,
+}
+
+/// 一个额度窗口（5 小时 / 7 天 / Codex primary ...）。
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct QuotaWindow {
+    pub id: String,
+    pub label: String,
+    pub used_percent: f32,
+    pub resets_at_ms: Option<i64>,
+    pub window_minutes: Option<u32>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Credits {
+    pub balance: Option<String>,
+    pub unlimited: bool,
+    pub has_credits: bool,
+    pub reset_credits: Option<u32>,
+    pub expires_at_ms: Option<i64>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Freshness {
+    Live,
+    Cached,
+    Stale,
+}
+
+/// 一次额度快照。`source` 为来源文件路径，`fetched_at_ms` 为该文件 mtime。
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct QuotaSnapshot {
+    pub provider: ProviderId,
+    pub plan: Option<String>,
+    pub windows: Vec<QuotaWindow>,
+    pub credits: Option<Credits>,
+    pub fetched_at_ms: i64,
+    pub source: String,
+    pub freshness: Freshness,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ActivityKind {
+    UserMessage,
+    AssistantText,
+    Thinking,
+    ToolCall,
+    ToolResult,
+    SessionEnd,
+}
+
+/// 某来源的最近活动。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProviderActivity {
+    pub provider: ProviderId,
+    /// provider.detect()：本机有没有这个 agent 的数据目录。
+    pub detected: bool,
+    pub last_activity_ms: Option<i64>,
+    pub last_kind: Option<ActivityKind>,
+    /// 最近 10 分钟内有更新的会话数。
+    pub active_sessions: u32,
 }

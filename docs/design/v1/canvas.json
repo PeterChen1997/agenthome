@@ -1,0 +1,18 @@
+{
+  "v": 3,
+  "createdOnFiles": {"v": 1, "at": "2026-11-05T08:20:00Z"},
+  "title": "AgentHome UI 设计稿",
+  "launch": {"view": "canvas"},
+  "pages": [],
+  "boards": {
+    "Main.dc.html": {"x": 0, "y": 0, "w": 1440, "h": 900, "title": "归档浏览器", "expand": "fill"},
+    "Dashboard.dc.html": {"x": 1520, "y": 0, "w": 1440, "h": 900, "title": "仪表盘", "expand": "fill"},
+    "MenuBar.dc.html": {"x": 3040, "y": 0, "w": 360, "h": 560, "title": "菜单栏弹窗", "radius": 14}
+  },
+  "order": ["Main.dc.html", "Dashboard.dc.html", "MenuBar.dc.html"],
+  "notes": {
+    "title": {"x": 0, "y": -300, "text": "AgentHome · UI 设计稿 v1（macOS 浅色）", "kind": "title1", "maxW": 3400},
+    "tokens": {"x": 3040, "y": 640, "w": 360, "text": "设计令牌（对应 gpui-kit theme.json）\n\n字体：IBM Plex Sans / IBM Plex Mono，中文回退 PingFang SC\n窗口底 #F3F4F6 · 面板 #FFFFFF · 分割线 #E4E6EA\n正文 #15171C · 次要 #5F6670 · 弱化 #6B727D\n强调 #3457D5 · 强调底 #EEF2FD\n额度：正常 #3457D5 · 偏高 #B45309 · 告急 #B91C1C\n来源色：Claude #C96442 · Codex #10A37F · Gemini #4285F4\n圆角 6 / 10 · 行高 36 · 侧栏 240 · 列表 360", "fill": "blue", "size": "s"}
+  },
+  "designSystems": []
+}

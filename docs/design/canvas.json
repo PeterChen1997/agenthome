@@ -1,0 +1,78 @@
+{
+  "v": 3,
+  "createdOnFiles": {
+    "v": 1,
+    "at": "2026-11-05T08:20:00Z"
+  },
+  "title": "AgentHome UI 设计稿",
+  "launch": {
+    "view": "canvas"
+  },
+  "pages": [],
+  "boards": {
+    "Main.dc.html": {
+      "x": 0,
+      "y": 0,
+      "w": 1440,
+      "h": 900,
+      "title": "归档浏览器",
+      "expand": "fill"
+    },
+    "Dashboard.dc.html": {
+      "x": 1520,
+      "y": 0,
+      "w": 1440,
+      "h": 1040,
+      "title": "仪表盘",
+      "expand": "fill"
+    },
+    "MenuBar.dc.html": {
+      "x": 3040,
+      "y": 0,
+      "w": 360,
+      "h": 640,
+      "title": "菜单栏弹窗",
+      "radius": 10
+    },
+    "Habitat.dc.html": {
+      "x": 0,
+      "y": 1020,
+      "w": 700,
+      "h": 350,
+      "title": "栖息地组件（交互 · 点 Play）",
+      "is_interactive": true
+    }
+  },
+  "order": [
+    "Main.dc.html",
+    "Dashboard.dc.html",
+    "MenuBar.dc.html",
+    "Habitat.dc.html"
+  ],
+  "notes": {
+    "title": {
+      "x": 0,
+      "y": -300,
+      "text": "AgentHome · UI 设计稿 v2「像素栖息地」",
+      "kind": "title1",
+      "maxW": 3400
+    },
+    "tokens": {
+      "x": 3040,
+      "y": 720,
+      "w": 360,
+      "text": "设计令牌（对应 gpui-kit theme.json）\n\n字体：IBM Plex Sans 正文 · IBM Plex Mono 小数字 · VT323 大数字/倒计时/标签 · Pixelify Sans 区块标题，中文回退 PingFang SC\n底 #0F1423 · 面板 #161C2E · 面板二 #1C2338 · 线 #26304A\n正文 #E8ECF5 · 次要 #9AA6C0 · 弱化 #6F7B99\n灯光强调 #F5B556（选中、链接、主按钮）\n住户色对齐 App 图标：Claude 赭陶 #E8824F（狐狸）· Codex 黑白 #E8ECF5（企鹅）· Gemini 蓝紫 #8E7CFF（猫）\n状态：OK #8BD16A · 警示 #F5B556 · 告急 #FF6B6B\n体力条 10 格：>50% 绿，20–50% 琥珀，<20% 红\n圆角 2 / 4 · 像素图 image-rendering: pixelated\n素材：assets/habitat/bg-{night,evening,day}.png（1400×700）· assets/habitat/{claude,codex,gemini}-{working,thinking,sleeping,tired,happy}.png（高 320，透明）· avatar-*.png（256）· app-icon.png（256）",
+      "fill": "blue",
+      "size": "s"
+    },
+    "habitat": {
+      "x": 760,
+      "y": 1020,
+      "w": 420,
+      "text": "栖息地状态机\n\n住户状态：working 工作中（有进行中的会话，30s 内有新消息）· thinking 思考中（最近一条是 assistant 的 thinking / 等待工具）· happy 完成了（会话刚结束或工具成功后 3s）· tired 快没电（窗口剩余 < 20%）· sleeping 休息中（窗口剩余 0，等重置；或空闲 > 10 分钟）· away 外出（来源未接入 / 未检测到）\n\n场景：时段按本机时钟 day 07–17 / evening 17–20 / night；壁炉与灯只在 evening/night 亮；事件气泡（toast）来自数据层：工具开始/失败、会话完成、窗口重置、额度告急。\n\n点画板上的 Play 看演示剧本（10 拍 × 2.2s）。",
+      "fill": "orange",
+      "size": "s"
+    }
+  },
+  "designSystems": []
+}

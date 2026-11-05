@@ -1,9 +1,14 @@
-//! agenthome 命令行：scan / sessions / show / stats。
+//! agenthome 命令行：scan / sessions / show / stats / quota / activity。
 
-use agenthome_core::model::{ContentBlock, Role, SessionQuery};
-use agenthome_core::{ClaudeCodeProvider, Store, ingest_claude, paths};
+use agenthome_core::model::{
+    ContentBlock, CostSource, Freshness, Period, ProviderId, Role, SessionQuery,
+};
+use agenthome_core::{
+    ClaudeCodeProvider, CodexProvider, SourceProvider, Store, claude_statusline,
+    codex_rollout_quota, ingest_all, paths, pricing,
+};
 use anyhow::{Context, Result, bail};
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use std::io::Write;
 use std::path::PathBuf;
 use unicode_width::UnicodeWidthStr;
@@ -15,13 +20,24 @@ struct Cli {
     cmd: Cmd,
 }
 
+#[derive(Clone, Copy, ValueEnum)]
+enum PeriodArg {
+    Today,
+    Week,
+    Month,
+    All,
+}
+
 #[derive(Subcommand)]
 enum Cmd {
-    /// 扫描 Claude Code 转录并入库（增量）
+    /// 扫描全部来源（Claude Code、Codex）并入库（增量）
     Scan {
         /// Claude Code projects 根目录，默认 ~/.claude/projects
         #[arg(long)]
         root: Option<PathBuf>,
+        /// Codex sessions 根目录，默认 ~/.codex/sessions
+        #[arg(long)]
+        codex_root: Option<PathBuf>,
         /// 索引数据库路径，默认 ~/AgentHome/index/agenthome.db
         #[arg(long)]
         db: Option<PathBuf>,
@@ -46,18 +62,44 @@ enum Cmd {
         #[arg(long)]
         db: Option<PathBuf>,
     },
-    /// 按天 × 模型统计 token
+    /// 用量与成本：汇总 / 按模型 / 按项目 / 每日
     Stats {
         #[arg(long)]
         db: Option<PathBuf>,
-        #[arg(long, default_value_t = 30)]
-        days: u32,
+        /// 周期（本地时区）；与 --days 二选一
+        #[arg(long, value_enum)]
+        period: Option<PeriodArg>,
+        /// 最近 N 天（滚动）；默认 30
+        #[arg(long)]
+        days: Option<u32>,
+    },
+    /// 打印额度快照（Claude statusline 文件 + Codex rollout）
+    Quota {
+        /// Codex sessions 根目录，默认 ~/.codex/sessions
+        #[arg(long)]
+        codex_root: Option<PathBuf>,
+        /// statusline 快照文件，默认 ~/AgentHome/signals/claude-statusline.json
+        #[arg(long)]
+        statusline: Option<PathBuf>,
+    },
+    /// 各来源最近活动
+    Activity {
+        #[arg(long)]
+        db: Option<PathBuf>,
+        #[arg(long)]
+        root: Option<PathBuf>,
+        #[arg(long)]
+        codex_root: Option<PathBuf>,
     },
 }
 
 fn main() -> Result<()> {
     match Cli::parse().cmd {
-        Cmd::Scan { root, db } => scan(root, db),
+        Cmd::Scan {
+            root,
+            codex_root,
+            db,
+        } => scan(root, codex_root, db),
         Cmd::Sessions {
             db,
             limit,
@@ -65,7 +107,16 @@ fn main() -> Result<()> {
             project,
         } => sessions(db, limit, query, project),
         Cmd::Show { session, db } => show(db, &session),
-        Cmd::Stats { db, days } => stats(db, days),
+        Cmd::Stats { db, period, days } => stats(db, period, days),
+        Cmd::Quota {
+            codex_root,
+            statusline,
+        } => quota(codex_root, statusline),
+        Cmd::Activity {
+            db,
+            root,
+            codex_root,
+        } => activity(db, root, codex_root),
     }
 }
 
@@ -74,56 +125,90 @@ fn open_store(db: Option<PathBuf>) -> Result<Store> {
     Store::open(&path).with_context(|| format!("打开索引库 {}", path.display()))
 }
 
-fn scan(root: Option<PathBuf>, db: Option<PathBuf>) -> Result<()> {
-    let provider = ClaudeCodeProvider::new(root.unwrap_or_else(paths::claude_projects_dir));
-    if !provider.detect() {
-        bail!("未找到 Claude Code 目录：{}", provider.root().display());
+fn providers(
+    root: Option<PathBuf>,
+    codex_root: Option<PathBuf>,
+) -> (ClaudeCodeProvider, CodexProvider) {
+    (
+        ClaudeCodeProvider::new(root.unwrap_or_else(paths::claude_projects_dir)),
+        CodexProvider::new(codex_root.unwrap_or_else(paths::codex_sessions_dir)),
+    )
+}
+
+fn scan(root: Option<PathBuf>, codex_root: Option<PathBuf>, db: Option<PathBuf>) -> Result<()> {
+    let (claude, codex) = providers(root, codex_root);
+    let list: [&dyn SourceProvider; 2] = [&claude, &codex];
+    let detected: Vec<&dyn SourceProvider> = list.iter().copied().filter(|p| p.detect()).collect();
+    if detected.is_empty() {
+        bail!(
+            "未找到任何来源目录：{} / {}",
+            claude.root().display(),
+            codex.root().display()
+        );
     }
     let mut store = open_store(db)?;
     let stderr = std::io::stderr();
     let mut progress = |p: agenthome_core::Progress| {
         if p.done.is_multiple_of(50) || p.done == p.total {
-            let _ = write!(stderr.lock(), "\r已处理 {}/{} 个文件", p.done, p.total);
+            let _ = write!(
+                stderr.lock(),
+                "\r[{}] 已处理 {}/{} 个文件",
+                p.provider.as_str(),
+                p.done,
+                p.total
+            );
         }
     };
-    let report = ingest_claude(&mut store, &provider, &mut progress);
+    let report = ingest_all(&mut store, &detected, &mut progress);
     eprintln!();
 
-    let (sessions, messages) = store.counts()?;
-    println!("扫描根目录: {}", provider.root().display());
-    println!("发现文件: {}", report.scanned);
-    println!("重新解析: {}", report.parsed);
-    println!("未变跳过: {}", report.skipped_unchanged);
-    println!(
-        "旧副本跳过(superseded/orphaned): {}",
-        report.skipped_superseded
-    );
-    println!("解析警告: {} 条", report.warnings);
-    for w in &report.warning_samples {
-        println!("  警告: {w}");
-    }
-    if !report.ignored_records.is_empty() {
-        let items: Vec<String> = report
-            .ignored_records
-            .iter()
-            .map(|(k, n)| format!("{k}={n}"))
-            .collect();
-        println!("非对话记录(未入库): {}", items.join(", "));
-    }
-    for (later, first) in &report.id_collisions {
+    for (provider, r) in &report.per_provider {
+        let root = match provider {
+            ProviderId::ClaudeCode => claude.root().display().to_string(),
+            ProviderId::Codex => codex.root().display().to_string(),
+            _ => String::new(),
+        };
+        println!("== {} ({root})", provider.as_str());
         println!(
-            "  警告: 会话 id 冲突，{} 覆盖了 {}",
-            later.display(),
-            first.display()
+            "发现文件: {}  重新解析: {}  未变跳过: {}  旧副本跳过: {}",
+            r.scanned, r.parsed, r.skipped_unchanged, r.skipped_superseded
         );
-    }
-    println!("库内会话: {sessions}，消息: {messages}");
-    println!("耗时: {:.1}s", report.elapsed.as_secs_f64());
-    if !report.failed.is_empty() {
-        println!("失败: {} 个文件", report.failed.len());
-        for (p, e) in &report.failed {
-            println!("  {}: {e}", p.display());
+        println!(
+            "解析警告: {} 条  耗时: {:.1}s",
+            r.warnings,
+            r.elapsed.as_secs_f64()
+        );
+        for w in &r.warning_samples {
+            println!("  警告: {w}");
         }
+        if !r.ignored_records.is_empty() {
+            let items: Vec<String> = r
+                .ignored_records
+                .iter()
+                .map(|(k, n)| format!("{k}={n}"))
+                .collect();
+            println!("非对话记录(未入库): {}", items.join(", "));
+        }
+        for (later, first) in &r.id_collisions {
+            println!(
+                "  警告: 会话 id 冲突，{} 覆盖了 {}",
+                later.display(),
+                first.display()
+            );
+        }
+        if !r.failed.is_empty() {
+            println!("失败: {} 个文件", r.failed.len());
+            for (p, e) in &r.failed {
+                println!("  {}: {e}", p.display());
+            }
+        }
+    }
+    let (sessions, messages) = store.counts()?;
+    println!("== 合计");
+    println!("库内会话: {sessions}，消息: {messages}");
+    println!("总耗时: {:.1}s", report.elapsed.as_secs_f64());
+    if !report.failed.is_empty() {
+        println!("失败合计: {} 个文件", report.failed.len());
         std::process::exit(1);
     }
     Ok(())
@@ -151,6 +236,7 @@ fn sessions(
     }
     let header = [
         "更新时间",
+        "来源",
         "类型",
         "项目",
         "消息",
@@ -163,6 +249,7 @@ fn sessions(
         .map(|s| {
             vec![
                 fmt_time(s.updated_at_ms),
+                s.provider.as_str().to_string(),
                 s.kind.as_str().to_string(),
                 truncate(&s.project_name, 20),
                 s.message_count.to_string(),
@@ -207,15 +294,39 @@ fn show(db: Option<PathBuf>, prefix: &str) -> Result<()> {
     println!("模型: {}", session.models.join(", "));
     let u = &session.usage;
     println!(
-        "用量: in={} out={} cache_read={} cache_write={} reasoning={} requests={}",
+        "用量: in={} out={} cache_read={} cache_write={} reasoning={} requests={}{}",
         fmt_num(u.input_tokens),
         fmt_num(u.output_tokens),
         fmt_num(u.cache_read_tokens),
         fmt_num(u.cache_write_tokens),
         fmt_num(u.reasoning_tokens),
-        u.requests
+        u.requests,
+        if u.input_includes_cache {
+            " (input 含缓存读)"
+        } else {
+            ""
+        }
     );
-    println!("原件: {}", session.source.path.display());
+    println!(
+        "成本: 记录={}  估算={}",
+        session
+            .recorded_cost_usd
+            .map(fmt_usd)
+            .unwrap_or_else(|| "-".to_string()),
+        session
+            .estimated_cost_usd
+            .map(fmt_usd)
+            .unwrap_or_else(|| "-".to_string())
+    );
+    println!(
+        "原件: {}{}",
+        session.source.path.display(),
+        if session.source.compressed {
+            " (zstd)"
+        } else {
+            ""
+        }
+    );
     println!("---");
     for m in store.messages(&session.id)? {
         let role = match m.role {
@@ -265,23 +376,142 @@ fn show(db: Option<PathBuf>, prefix: &str) -> Result<()> {
     Ok(())
 }
 
-fn stats(db: Option<PathBuf>, days: u32) -> Result<()> {
+fn stats(db: Option<PathBuf>, period: Option<PeriodArg>, days: Option<u32>) -> Result<()> {
     let store = open_store(db)?;
-    let rows = store.stats_daily(days)?;
+    let period = match (period, days) {
+        (Some(_), Some(_)) => bail!("--period 与 --days 只能选一个"),
+        (Some(PeriodArg::Today), None) => Period::Today,
+        (Some(PeriodArg::Week), None) => Period::Week,
+        (Some(PeriodArg::Month), None) => Period::Month,
+        (Some(PeriodArg::All), None) => Period::All,
+        (None, Some(n)) => Period::Days(n),
+        (None, None) => Period::Days(30),
+    };
+    let daily_days = match period {
+        Period::Days(n) => n,
+        Period::Today => 1,
+        Period::Week => 7,
+        Period::Month => 31,
+        Period::All => 30,
+    };
+
+    println!(
+        "== 汇总（周期: {}，定价表: {}）",
+        period.as_str(),
+        pricing::pricing_version()
+    );
+    let header = [
+        "来源",
+        "会话",
+        "消息",
+        "请求",
+        "input",
+        "output",
+        "cache_read",
+        "cache_write",
+        "成本(USD)",
+        "成本来源",
+    ];
+    let mut body = Vec::new();
+    for p in [None, Some(ProviderId::ClaudeCode), Some(ProviderId::Codex)] {
+        let t = store.stats_totals(period, p.as_ref())?;
+        if p.is_some() && t.messages == 0 {
+            continue;
+        }
+        body.push(vec![
+            p.as_ref()
+                .map(|p| p.as_str().to_string())
+                .unwrap_or_else(|| "全部".to_string()),
+            t.sessions.to_string(),
+            t.messages.to_string(),
+            t.usage.requests.to_string(),
+            fmt_num(t.usage.input_tokens),
+            fmt_num(t.usage.output_tokens),
+            fmt_num(t.usage.cache_read_tokens),
+            fmt_num(t.usage.cache_write_tokens),
+            fmt_usd(t.cost_usd),
+            cost_source_str(t.cost_source).to_string(),
+        ]);
+    }
+    print_table(&header, &body);
+
+    println!("\n== 按模型");
+    let rows = store.stats_by_model(period)?;
     if rows.is_empty() {
-        println!("最近 {days} 天没有用量记录");
+        println!("(无)");
+    } else {
+        let header = [
+            "来源",
+            "模型",
+            "请求",
+            "input",
+            "output",
+            "cache_read",
+            "cache_write",
+            "成本(USD)",
+        ];
+        let body: Vec<Vec<String>> = rows
+            .iter()
+            .map(|b| {
+                vec![
+                    b.provider.as_str().to_string(),
+                    b.key.clone(),
+                    b.usage.requests.to_string(),
+                    fmt_num(b.usage.input_tokens),
+                    fmt_num(b.usage.output_tokens),
+                    fmt_num(b.usage.cache_read_tokens),
+                    fmt_num(b.usage.cache_write_tokens),
+                    fmt_usd(b.cost_usd),
+                ]
+            })
+            .collect();
+        print_table(&header, &body);
+    }
+
+    println!("\n== 按项目（前 15）");
+    let rows = store.stats_by_project(period, 15)?;
+    if rows.is_empty() {
+        println!("(无)");
+    } else {
+        let header = ["来源", "项目", "请求", "tokens", "成本(USD)"];
+        let body: Vec<Vec<String>> = rows
+            .iter()
+            .map(|b| {
+                vec![
+                    b.provider.as_str().to_string(),
+                    truncate(
+                        if b.key.is_empty() {
+                            "(无 cwd)"
+                        } else {
+                            &b.key
+                        },
+                        30,
+                    ),
+                    b.usage.requests.to_string(),
+                    fmt_num(b.usage.total_tokens()),
+                    fmt_usd(b.cost_usd),
+                ]
+            })
+            .collect();
+        print_table(&header, &body);
+    }
+
+    println!("\n== 每日（最近 {daily_days} 天）");
+    let rows = store.stats_daily(daily_days)?;
+    if rows.is_empty() {
+        println!("(无)");
         return Ok(());
     }
     let header = [
         "日期",
-        "provider",
+        "来源",
         "模型",
         "消息",
         "input",
         "output",
         "cache_read",
         "cache_write",
-        "reasoning",
+        "成本(USD)",
     ];
     let body: Vec<Vec<String>> = rows
         .iter()
@@ -295,12 +525,104 @@ fn stats(db: Option<PathBuf>, days: u32) -> Result<()> {
                 fmt_num(d.usage.output_tokens),
                 fmt_num(d.usage.cache_read_tokens),
                 fmt_num(d.usage.cache_write_tokens),
-                fmt_num(d.usage.reasoning_tokens),
+                fmt_usd(d.cost_usd),
             ]
         })
         .collect();
     print_table(&header, &body);
     Ok(())
+}
+
+fn quota(codex_root: Option<PathBuf>, statusline: Option<PathBuf>) -> Result<()> {
+    let sl_path = statusline.unwrap_or_else(paths::claude_statusline_path);
+    println!("== Claude Code（statusline 快照 {}）", sl_path.display());
+    match claude_statusline(Some(&sl_path))? {
+        Some(s) => print_snapshot(&s),
+        None => println!(
+            "无快照：文件不存在。按 docs/06-statusline-安装.md 装好包装脚本并跑一次 Claude Code 后才有。"
+        ),
+    }
+    let root = codex_root.unwrap_or_else(paths::codex_sessions_dir);
+    println!("\n== Codex（rollout {}）", root.display());
+    match codex_rollout_quota(Some(&root))? {
+        Some(s) => print_snapshot(&s),
+        None => println!("无快照：目录不存在，或最近 10 个 rollout 里没有 rate_limits 记录。"),
+    }
+    Ok(())
+}
+
+fn print_snapshot(s: &agenthome_core::model::QuotaSnapshot) {
+    println!(
+        "套餐: {}  采集于: {}  新鲜度: {}  来源: {}",
+        s.plan.as_deref().unwrap_or("-"),
+        fmt_time(s.fetched_at_ms),
+        match s.freshness {
+            Freshness::Live => "live",
+            Freshness::Cached => "cached",
+            Freshness::Stale => "stale",
+        },
+        s.source
+    );
+    if s.windows.is_empty() {
+        println!("(快照里没有额度窗口：API key 用户或会话尚无 API 响应)");
+    }
+    for w in &s.windows {
+        println!(
+            "  {:<12} 已用 {:>5.1}%  重置: {}",
+            w.label,
+            w.used_percent,
+            w.resets_at_ms
+                .map(fmt_time)
+                .unwrap_or_else(|| "-".to_string())
+        );
+    }
+    if let Some(c) = &s.credits {
+        println!(
+            "  credits: balance={} unlimited={} has_credits={}",
+            c.balance.as_deref().unwrap_or("-"),
+            c.unlimited,
+            c.has_credits
+        );
+    }
+}
+
+fn activity(db: Option<PathBuf>, root: Option<PathBuf>, codex_root: Option<PathBuf>) -> Result<()> {
+    let store = open_store(db)?;
+    let (claude, codex) = providers(root, codex_root);
+    let list: [&dyn SourceProvider; 2] = [&claude, &codex];
+    let rows = store.activity(&list)?;
+    let header = ["来源", "检测到", "最近活动", "类型", "10分钟内活跃会话"];
+    let body: Vec<Vec<String>> = rows
+        .iter()
+        .map(|a| {
+            vec![
+                a.provider.as_str().to_string(),
+                if a.detected { "是" } else { "否" }.to_string(),
+                a.last_activity_ms
+                    .map(fmt_time)
+                    .unwrap_or_else(|| "-".to_string()),
+                a.last_kind
+                    .map(|k| format!("{k:?}"))
+                    .unwrap_or_else(|| "-".to_string()),
+                a.active_sessions.to_string(),
+            ]
+        })
+        .collect();
+    print_table(&header, &body);
+    Ok(())
+}
+
+fn cost_source_str(c: CostSource) -> &'static str {
+    match c {
+        CostSource::Estimated => "估算",
+        CostSource::Recorded => "记录",
+        CostSource::Mixed => "混合",
+        CostSource::Unknown => "未知",
+    }
+}
+
+fn fmt_usd(v: f64) -> String {
+    format!("${v:.2}")
 }
 
 fn fmt_time(ms: i64) -> String {

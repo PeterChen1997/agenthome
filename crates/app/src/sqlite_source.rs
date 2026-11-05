@@ -4,14 +4,22 @@
 use std::path::Path;
 use std::sync::Mutex;
 
-use agenthome_core::Store;
-use agenthome_core::model::{DailyUsage, Message, SessionQuery, SessionSummary};
+use agenthome_core::model::{
+    CostBreakdown, DailyUsage, Message, Period, ProviderActivity, ProviderHealth, ProviderId,
+    QuotaSnapshot, SessionQuery, SessionSummary, UsageTotals,
+};
+use agenthome_core::{
+    ClaudeCodeProvider, CodexProvider, SourceProvider, Store, claude_statusline,
+    codex_rollout_quota, paths,
+};
 use anyhow::{Context as _, anyhow};
 
 use crate::data::{DataSource, ProjectRow};
 
 pub struct SqliteDataSource {
     store: Mutex<Store>,
+    claude: ClaudeCodeProvider,
+    codex: CodexProvider,
 }
 
 impl SqliteDataSource {
@@ -20,6 +28,8 @@ impl SqliteDataSource {
             Store::open(path).with_context(|| format!("打开索引库失败：{}", path.display()))?;
         Ok(Self {
             store: Mutex::new(store),
+            claude: ClaudeCodeProvider::new(paths::claude_projects_dir()),
+            codex: CodexProvider::new(paths::codex_sessions_dir()),
         })
     }
 
@@ -54,5 +64,38 @@ impl DataSource for SqliteDataSource {
 
     fn daily(&self, days: u32) -> anyhow::Result<Vec<DailyUsage>> {
         self.with_store(|store| store.stats_daily(days))
+    }
+
+    fn totals(&self, period: Period, provider: Option<ProviderId>) -> anyhow::Result<UsageTotals> {
+        self.with_store(|store| store.stats_totals(period, provider.as_ref()))
+    }
+
+    fn by_model(&self, period: Period) -> anyhow::Result<Vec<CostBreakdown>> {
+        self.with_store(|store| store.stats_by_model(period))
+    }
+
+    fn by_project(&self, period: Period, limit: usize) -> anyhow::Result<Vec<CostBreakdown>> {
+        self.with_store(|store| store.stats_by_project(period, limit))
+    }
+
+    fn archive_health(&self) -> anyhow::Result<Vec<ProviderHealth>> {
+        self.with_store(|store| store.archive_health())
+    }
+
+    fn activity(&self) -> anyhow::Result<Vec<ProviderActivity>> {
+        let providers: [&dyn SourceProvider; 2] = [&self.claude, &self.codex];
+        self.with_store(|store| store.activity(&providers))
+    }
+
+    fn quota(&self) -> anyhow::Result<Vec<QuotaSnapshot>> {
+        // 两个信号互不依赖；一个读不到不影响另一个，但错误不吞：记到返回值里由 UI 展示。
+        let mut out = Vec::new();
+        if let Some(s) = claude_statusline(None)? {
+            out.push(s);
+        }
+        if let Some(s) = codex_rollout_quota(None)? {
+            out.push(s);
+        }
+        Ok(out)
     }
 }

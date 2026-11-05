@@ -21,3 +21,21 @@ pub fn claude_projects_dir() -> PathBuf {
         .join(".claude")
         .join("projects")
 }
+
+/// `~/.codex/sessions`
+pub fn codex_sessions_dir() -> PathBuf {
+    dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".codex")
+        .join("sessions")
+}
+
+/// `~/AgentHome/signals`：statusline 包装脚本等外部信号落盘目录。
+pub fn signals_dir() -> PathBuf {
+    default_data_dir().join("signals")
+}
+
+/// `~/AgentHome/signals/claude-statusline.json`
+pub fn claude_statusline_path() -> PathBuf {
+    signals_dir().join("claude-statusline.json")
+}

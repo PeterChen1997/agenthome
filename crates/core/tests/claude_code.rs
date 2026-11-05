@@ -113,7 +113,11 @@ fn broken_line_goes_to_warnings_and_non_conversation_records_are_counted() {
     assert!(parsed.warnings[0].contains("第 10 行"));
     assert_eq!(parsed.ignored_records.get("queue-operation"), Some(&1));
     assert_eq!(parsed.ignored_records.get("attachment"), Some(&1));
-    assert_eq!(parsed.ignored_records.get("cost-state"), Some(&1));
+    // cost-state 不再是「忽略」：它的 totalCostUSD 进 recorded_cost_usd
+    assert_eq!(parsed.ignored_records.get("cost-state"), None);
+    assert_eq!(parsed.session.recorded_cost_usd, Some(0.01));
+    // fixture 用的是假模型名，定价表里没有：估算必须是 None，不能静默按 0
+    assert_eq!(parsed.session.estimated_cost_usd, None);
     // resume 重写进来的同 uuid 行被去重，不会多出一条消息
     assert_eq!(parsed.ignored_records.get("duplicate-uuid"), Some(&1));
 }

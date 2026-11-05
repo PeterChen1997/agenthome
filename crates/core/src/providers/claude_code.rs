@@ -2,35 +2,14 @@
 //!
 //! 字段结构见 docs/research/03-agent-session-formats.md §2.1。原件只读。
 
-use crate::model::{
-    ContentBlock, Message, ProviderId, Role, Session, SessionKind, SourceInfo, Usage,
-};
+use crate::model::{ContentBlock, Message, ProviderId, Role, Session, SessionKind, Usage};
+use crate::providers::SourceProvider;
+pub use crate::providers::{Discovery, Parsed};
 use anyhow::{Context, Result};
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
-
-/// 一个转录文件的解析结果。
-#[derive(Debug)]
-pub struct Parsed {
-    pub session: Session,
-    pub messages: Vec<Message>,
-    /// 解析失败的行、缺字段等，调用方必须展示或计数，不能丢。
-    pub warnings: Vec<String>,
-    /// 非对话记录按 `type` 计数（attachment / queue-operation / cost-state ...），
-    /// P0 不入库但要让上层知道跳过了什么。
-    pub ignored_records: BTreeMap<String, usize>,
-}
-
-/// 发现结果。
-#[derive(Debug, Default)]
-pub struct Discovery {
-    /// 主会话与子代理转录文件（已排序）。
-    pub files: Vec<PathBuf>,
-    /// 跳过的 `.superseded-*` / `.orphaned-*` 旧副本数。
-    pub skipped_superseded: usize,
-}
 
 pub struct ClaudeCodeProvider {
     root: PathBuf,
@@ -39,12 +18,10 @@ pub struct ClaudeCodeProvider {
 
 impl ClaudeCodeProvider {
     pub fn new(root: PathBuf) -> Self {
-        let machine_id = hostname::get()
-            .ok()
-            .and_then(|h| h.into_string().ok())
-            .filter(|h| !h.is_empty())
-            .unwrap_or_else(|| "unknown-host".to_string());
-        Self { root, machine_id }
+        Self {
+            root,
+            machine_id: crate::providers::machine_id(),
+        }
     }
 
     pub fn root(&self) -> &Path {
@@ -100,18 +77,7 @@ impl ClaudeCodeProvider {
 
     /// 逐行解析一个转录文件。坏行进 warnings，不中断。
     pub fn parse_file(&self, path: &Path) -> Result<Parsed> {
-        let meta =
-            std::fs::metadata(path).with_context(|| format!("读取元数据 {}", path.display()))?;
-        let source = SourceInfo {
-            path: path.to_path_buf(),
-            size_bytes: meta.len(),
-            mtime_ms: meta
-                .modified()
-                .ok()
-                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                .map(|d| d.as_millis() as i64)
-                .unwrap_or(0),
-        };
+        let source = crate::providers::source_info(path, false)?;
         let (native_id, kind, parent_session_id) = self.identify(path)?;
         let session_id = format!(
             "{}:{}:{}",
@@ -210,6 +176,8 @@ impl ClaudeCodeProvider {
             models,
             usage,
             message_count: messages.len() as u32,
+            recorded_cost_usd: st.recorded_cost_usd,
+            estimated_cost_usd: crate::pricing::estimate_messages(&messages),
             source,
         };
         Ok(Parsed {
@@ -254,6 +222,21 @@ impl ClaudeCodeProvider {
     }
 }
 
+impl SourceProvider for ClaudeCodeProvider {
+    fn id(&self) -> ProviderId {
+        ProviderId::ClaudeCode
+    }
+    fn detect(&self) -> bool {
+        ClaudeCodeProvider::detect(self)
+    }
+    fn discover(&self) -> Discovery {
+        ClaudeCodeProvider::discover(self)
+    }
+    fn parse_file(&self, path: &Path) -> Result<Parsed> {
+        ClaudeCodeProvider::parse_file(self, path)
+    }
+}
+
 /// 逐行累积状态。assistant 同一 `message.id` 的多行合并成一条。
 struct ParseState {
     session_id: String,
@@ -271,6 +254,8 @@ struct ParseState {
     git_branch: Option<String>,
     version: Option<String>,
     entrypoint: Option<String>,
+    /// `cost-state` 记录的 `totalCostUSD`，后写覆盖先写（它是累计值）。
+    recorded_cost_usd: Option<f64>,
 }
 
 struct PendingAssistant {
@@ -294,6 +279,7 @@ impl ParseState {
             git_branch: None,
             version: None,
             entrypoint: None,
+            recorded_cost_usd: None,
         }
     }
 
@@ -328,6 +314,12 @@ impl ParseState {
                     self.custom_title = Some(t);
                 }
             }
+            "cost-state" => match v.get("totalCostUSD").and_then(Value::as_f64) {
+                Some(c) => self.recorded_cost_usd = Some(c),
+                None => self
+                    .warnings
+                    .push(format!("第 {line_no} 行 cost-state 缺少 totalCostUSD")),
+            },
             "" => self.warnings.push(format!("第 {line_no} 行缺少 type 字段")),
             other => *self.ignored.entry(other.to_string()).or_default() += 1,
         }

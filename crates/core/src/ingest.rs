@@ -1,5 +1,7 @@
-//! 扫描 + 解析 + 入库。P0 只做 index 层，原件只读，不拷贝。
+//! 扫描 + 解析 + 入库。只做 index 层，原件只读，不拷贝。
 
+use crate::model::ProviderId;
+use crate::providers::SourceProvider;
 use crate::providers::claude_code::ClaudeCodeProvider;
 use crate::store::Store;
 use std::collections::{BTreeMap, HashMap};
@@ -9,6 +11,7 @@ use std::time::{Duration, Instant};
 /// 每处理完一个文件回调一次。
 #[derive(Clone, Debug)]
 pub struct Progress {
+    pub provider: ProviderId,
     pub done: usize,
     pub total: usize,
     pub path: PathBuf,
@@ -17,13 +20,13 @@ pub struct Progress {
 /// 一次 ingest 的结果。任何被跳过的东西都在这里有计数。
 #[derive(Debug, Default)]
 pub struct Report {
-    /// 发现的转录文件数（不含 superseded/orphaned）。
+    /// 发现的转录文件数（不含旧副本）。
     pub scanned: usize,
     /// 实际重新解析并入库的文件数。
     pub parsed: usize,
     /// size + mtime 未变而跳过。
     pub skipped_unchanged: usize,
-    /// `.superseded-*` / `.orphaned-*` 旧副本。
+    /// 旧副本：Claude `.superseded-*` / `.orphaned-*`，Codex 与 `.jsonl` 并存的 `.zst`。
     pub skipped_superseded: usize,
     /// 解析或入库失败：(路径, 错误)。
     pub failed: Vec<(PathBuf, String)>,
@@ -31,19 +34,71 @@ pub struct Report {
     pub warnings: usize,
     /// 最近几条 warning 原文（带路径），便于排查；全部保留会太长。
     pub warning_samples: Vec<String>,
-    /// 非对话记录按 type 计数（attachment / queue-operation ...），P0 不入库。
+    /// 非对话记录按 type 计数，不入库。
     pub ignored_records: BTreeMap<String, usize>,
     /// 同一次扫描里两个文件算出同一个 session id：(后来者路径, 先到者路径)。后来者覆盖先到者。
     pub id_collisions: Vec<(PathBuf, PathBuf)>,
     pub elapsed: Duration,
+    /// `ingest_all` 时按来源拆开的子报告（子报告自身的 `per_provider` 为空）。
+    pub per_provider: Vec<(ProviderId, Report)>,
 }
 
 const WARNING_SAMPLE_LIMIT: usize = 20;
 
-/// 扫 Claude Code 根目录并入库。未变文件按 `sources` 表 size+mtime 跳过。
+impl Report {
+    fn merge(&mut self, other: &Report) {
+        self.scanned += other.scanned;
+        self.parsed += other.parsed;
+        self.skipped_unchanged += other.skipped_unchanged;
+        self.skipped_superseded += other.skipped_superseded;
+        self.failed.extend(other.failed.iter().cloned());
+        self.warnings += other.warnings;
+        for w in &other.warning_samples {
+            if self.warning_samples.len() < WARNING_SAMPLE_LIMIT {
+                self.warning_samples.push(w.clone());
+            }
+        }
+        for (k, n) in &other.ignored_records {
+            *self.ignored_records.entry(k.clone()).or_default() += n;
+        }
+        self.id_collisions
+            .extend(other.id_collisions.iter().cloned());
+        self.elapsed += other.elapsed;
+    }
+}
+
+/// 顺序跑每个来源并合并报告。来源目录不存在（`detect() == false`）的跳过，不算失败。
+pub fn ingest_all(
+    store: &mut Store,
+    providers: &[&dyn SourceProvider],
+    progress: &mut dyn FnMut(Progress),
+) -> Report {
+    let start = Instant::now();
+    let mut total = Report::default();
+    for p in providers {
+        if !p.detect() {
+            continue;
+        }
+        let r = ingest_one(store, *p, progress);
+        total.merge(&r);
+        total.per_provider.push((p.id(), r));
+    }
+    total.elapsed = start.elapsed();
+    total
+}
+
+/// 只扫 Claude Code（P0 接口，保留作薄封装）。
 pub fn ingest_claude(
     store: &mut Store,
     provider: &ClaudeCodeProvider,
+    progress: &mut dyn FnMut(Progress),
+) -> Report {
+    ingest_one(store, provider, progress)
+}
+
+fn ingest_one(
+    store: &mut Store,
+    provider: &dyn SourceProvider,
     progress: &mut dyn FnMut(Progress),
 ) -> Report {
     let start = Instant::now();
@@ -60,6 +115,7 @@ pub fn ingest_claude(
             Err(e) => report.failed.push((path.clone(), format!("{e:#}"))),
         }
         progress(Progress {
+            provider: provider.id(),
             done: i + 1,
             total,
             path,
@@ -71,18 +127,13 @@ pub fn ingest_claude(
 
 fn process_one(
     store: &mut Store,
-    provider: &ClaudeCodeProvider,
+    provider: &dyn SourceProvider,
     path: &std::path::Path,
     report: &mut Report,
     seen_ids: &mut HashMap<String, PathBuf>,
 ) -> anyhow::Result<()> {
     let meta = std::fs::metadata(path)?;
-    let mtime_ms = meta
-        .modified()
-        .ok()
-        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or(0);
+    let mtime_ms = crate::providers::mtime_ms(&meta);
     if let Some(prev) = store.source_state(path)?
         && prev.size_bytes == meta.len()
         && prev.mtime_ms == mtime_ms

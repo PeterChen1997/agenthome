@@ -61,3 +61,134 @@ pub fn preview(text: &str, max_chars: usize) -> String {
     }
     out
 }
+
+/// 成本简写，三位有效数字：$0.41 / $7.32 / $10.2 / $241 / $1,255。
+pub fn short_cost(usd: f64) -> String {
+    if usd < 10. {
+        format!("${usd:.2}")
+    } else if usd < 100. {
+        format!("${usd:.1}")
+    } else {
+        let whole = usd.round() as u64;
+        let digits = whole.to_string();
+        let mut out = String::with_capacity(digits.len() + 2);
+        for (i, ch) in digits.chars().enumerate() {
+            if i > 0 && (digits.len() - i).is_multiple_of(3) {
+                out.push(',');
+            }
+            out.push(ch);
+        }
+        format!("${out}")
+    }
+}
+
+/// 倒计时 HH:MM:SS；已过期显示「已重置」。
+pub fn countdown(remaining_ms: i64) -> String {
+    if remaining_ms <= 0 {
+        return "已重置".to_string();
+    }
+    let seconds = remaining_ms / 1_000;
+    if seconds >= 86_400 {
+        return format!("{}d {:02}h", seconds / 86_400, seconds % 86_400 / 3_600);
+    }
+    format!(
+        "{:02}:{:02}:{:02}",
+        seconds / 3_600,
+        seconds % 3_600 / 60,
+        seconds % 60
+    )
+}
+
+/// 本地时刻 HH:MM:SS，消息行用。
+pub fn clock_time(ms: i64) -> String {
+    match Local.timestamp_millis_opt(ms).single() {
+        Some(t) => t.format("%H:%M:%S").to_string(),
+        None => "--:--:--".to_string(),
+    }
+}
+
+/// 本地 MM-DD HH:MM，详情头部的起止时间用。
+pub fn short_datetime(ms: i64) -> String {
+    match Local.timestamp_millis_opt(ms).single() {
+        Some(t) => t.format("%m-%d %H:%M").to_string(),
+        None => "无效时间".to_string(),
+    }
+}
+
+/// 耗时简写：0.3s / 12.4s / 3m10s / 1h02m。
+pub fn short_duration(ms: i64) -> String {
+    let seconds = ms.max(0) as f64 / 1_000.;
+    if seconds < 60. {
+        format!("{seconds:.1}s")
+    } else if seconds < 3_600. {
+        format!("{}m{:02}s", (seconds / 60.) as u64, (seconds % 60.) as u64)
+    } else {
+        format!(
+            "{}h{:02}m",
+            (seconds / 3_600.) as u64,
+            (seconds % 3_600. / 60.) as u64
+        )
+    }
+}
+
+/// 会话列表的日期分组。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DayGroup {
+    Today,
+    Yesterday,
+    ThisWeek,
+    Earlier,
+}
+
+impl DayGroup {
+    pub fn label(self) -> &'static str {
+        match self {
+            DayGroup::Today => "今天",
+            DayGroup::Yesterday => "昨天",
+            DayGroup::ThisWeek => "本周",
+            DayGroup::Earlier => "更早",
+        }
+    }
+
+    /// 以本地日期判断：今天 / 昨天 / 本周（周一起）/ 更早。
+    pub fn of(ms: i64, now_ms: i64) -> Self {
+        use chrono::Datelike as _;
+        let (Some(t), Some(now)) = (
+            Local.timestamp_millis_opt(ms).single(),
+            Local.timestamp_millis_opt(now_ms).single(),
+        ) else {
+            return DayGroup::Earlier;
+        };
+        let day = t.date_naive();
+        let today = now.date_naive();
+        let monday =
+            today - chrono::Duration::days(i64::from(today.weekday().num_days_from_monday()));
+        if day >= today {
+            DayGroup::Today
+        } else if day == today - chrono::Duration::days(1) {
+            DayGroup::Yesterday
+        } else if day >= monday {
+            DayGroup::ThisWeek
+        } else {
+            DayGroup::Earlier
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cost_keeps_three_significant_digits() {
+        assert_eq!(short_cost(0.41), "$0.41");
+        assert_eq!(short_cost(10.24), "$10.2");
+        assert_eq!(short_cost(1255.4), "$1,255");
+    }
+
+    #[test]
+    fn countdown_formats_hours() {
+        assert_eq!(countdown(2 * 3_600_000 + 10 * 60_000 + 33_000), "02:10:33");
+        assert_eq!(countdown(-5), "已重置");
+    }
+}

@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>AgentHome 菜单栏弹窗</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+body{margin:0;background:#FFFFFF;color:#15171C;font-family:"IBM Plex Sans","PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif;font-size:13px;line-height:1.45;-webkit-font-smoothing:antialiased}
+a{color:#3457D5;text-decoration:none}a:hover{color:#2A46B0}
+.mono{font-family:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;font-variant-numeric:tabular-nums}
+.muted{color:#5F6670}
+.faint{color:#6B727D}
+.dot{width:7px;height:7px;border-radius:50%;display:inline-block}
+.q{display:flex;flex-direction:column;gap:6px;padding:10px 0}
+.q + .q{border-top:1px solid #EEF0F3}
+.q .h{display:flex;align-items:center;gap:8px;font-size:12.5px}
+.q .h .p{margin-left:auto;font-weight:500}
+.bar{height:6px;border-radius:3px;background:#EEF0F3;overflow:hidden}
+.bar > span{display:block;height:100%;border-radius:3px}
+.q .s{font-size:11.5px;color:#5F6670;display:flex;justify-content:space-between}
+.item{display:flex;align-items:center;gap:8px;height:30px;padding:0 8px;border-radius:6px;border:0;background:transparent;font:inherit;color:#15171C;width:100%;text-align:left;cursor:pointer}
+.item:hover{background:#F3F4F6}
+.item .t{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.foot{display:flex;align-items:center;gap:6px;height:30px;padding:0 8px;border-radius:6px;border:0;background:transparent;font:inherit;color:#15171C;width:100%;text-align:left;cursor:pointer;font-weight:500}
+.foot:hover{background:#F3F4F6}
+.kbd{margin-left:auto;font-family:"IBM Plex Mono",monospace;font-size:10.5px;color:#6B727D}
+</style>
+</helmet>
+
+<div style="width:360px;height:560px;box-sizing:border-box;padding:12px 14px;display:flex;flex-direction:column;gap:6px;background:#FFFFFF;border-radius:14px;border:1px solid #E4E6EA;box-shadow:0 12px 32px rgba(21,23,28,.16)">
+
+  <div style="display:flex;align-items:center;gap:8px;padding:2px 2px 6px">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#3457D5" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg>
+    <span style="font-weight:600">AgentHome</span>
+    <span class="faint" style="font-size:11.5px">今天 <span class="mono">$18.4</span> · 12 会话</span>
+    <button type="button" aria-label="刷新" style="margin-left:auto;width:24px;height:24px;border:0;border-radius:6px;background:transparent;color:#6B727D;cursor:pointer;display:flex;align-items:center;justify-content:center">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/></svg>
+    </button>
+  </div>
+
+  <div class="q" style="padding-top:4px">
+    <div class="h"><span class="dot" style="background:#C96442"></span>Claude · 5 小时<span class="p mono">42%</span></div>
+    <div class="bar"><span style="width:42%;background:#3457D5"></span></div>
+    <div class="s"><span>2 小时 10 分后重置</span><span class="mono">17:52</span></div>
+  </div>
+  <div class="q">
+    <div class="h"><span class="dot" style="background:#C96442"></span>Claude · 7 天<span class="p mono" style="color:#8A4B06">78%</span></div>
+    <div class="bar"><span style="width:78%;background:#B45309"></span></div>
+    <div class="s"><span>还剩 2 天 17 小时</span><span>周日 09:00</span></div>
+  </div>
+  <div class="q">
+    <div class="h"><span class="dot" style="background:#10A37F"></span>Codex · 5 小时<span class="p mono">18%</span></div>
+    <div class="bar"><span style="width:18%;background:#3457D5"></span></div>
+    <div class="s"><span>3 小时 41 分后重置</span><span class="mono">19:23</span></div>
+  </div>
+  <div class="q">
+    <div class="h"><span class="dot" style="background:#10A37F"></span>Codex · 每周<span class="p mono">37%</span></div>
+    <div class="bar"><span style="width:37%;background:#3457D5"></span></div>
+    <div class="s"><span>还剩 4 天</span><span class="faint">快照 · 11 分钟前</span></div>
+  </div>
+
+  <div style="border-top:1px solid #EEF0F3;padding-top:8px;display:flex;flex-direction:column;gap:2px">
+    <div class="faint" style="font-size:11px;font-weight:600;letter-spacing:.05em;padding:2px 8px 4px">最近</div>
+    <button class="item" type="button"><span class="dot" style="background:#C96442"></span><span class="t">GPTUI 调研与多端统计应用</span><span class="mono faint" style="font-size:11px">3 分钟前</span></button>
+    <button class="item" type="button"><span class="dot" style="background:#C96442"></span><span class="t">实现 agenthome-app 的 P0 界面骨架</span><span class="mono faint" style="font-size:11px">7 分钟前</span></button>
+    <button class="item" type="button"><span class="dot" style="background:#10A37F"></span><span class="t">beatlock 发布脚本整理</span><span class="mono faint" style="font-size:11px">刚刚</span></button>
+  </div>
+
+  <div style="margin-top:auto;border-top:1px solid #EEF0F3;padding-top:6px;display:flex;flex-direction:column;gap:1px">
+    <button class="foot" type="button">打开 AgentHome<span class="kbd">⌥⇧A</span></button>
+    <button class="foot" type="button" style="font-weight:400;color:#5F6670">设置…</button>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":360,"height":560}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {};
+  }
+}
+</script>
+</body>
+</html>

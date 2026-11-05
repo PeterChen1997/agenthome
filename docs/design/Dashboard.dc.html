@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>AgentHome 仪表盘 · 像素栖息地</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&family=Pixelify+Sans:wght@400;500;600&family=VT323&display=swap">
+<style>
+body{margin:0;background:#0F1423;color:#E8ECF5;font-family:"IBM Plex Sans","PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif;font-size:13px;line-height:1.45;-webkit-font-smoothing:antialiased}
+a{color:#F5B556;text-decoration:none}a:hover{color:#FFD08A}
+.mono{font-family:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;font-variant-numeric:tabular-nums}
+.px{font-family:"Pixelify Sans","IBM Plex Sans",sans-serif;letter-spacing:.02em}
+.vt{font-family:"VT323","IBM Plex Mono",monospace;letter-spacing:.02em}
+.muted{color:#9AA6C0}
+.faint{color:#6F7B99}
+img{image-rendering:pixelated}
+.light{width:12px;height:12px;border-radius:50%;display:inline-block}
+.nav-btn{height:28px;padding:0 12px;border:0;border-radius:4px;background:transparent;color:#9AA6C0;font:inherit;font-weight:500;cursor:pointer}
+.nav-btn.on{background:#1C2338;color:#F5B556;box-shadow:inset 0 0 0 1px #26304A}
+.card{background:#161C2E;border:1px solid #26304A;border-radius:4px;padding:16px 18px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.card h2{margin:0;font-family:"Pixelify Sans",sans-serif;font-size:14px;font-weight:600;letter-spacing:.03em}
+.card .sub{font-size:12px;color:#9AA6C0}
+.hp{display:flex;gap:3px}
+.hp i{flex:1;height:10px;background:#26304A;border-radius:1px}
+.hp i.g{background:#8BD16A}.hp i.a{background:#F5B556}.hp i.r{background:#FF6B6B}
+.big{font-family:"VT323",monospace;font-size:44px;line-height:.9}
+.cd{font-family:"VT323",monospace;font-size:26px;line-height:1;color:#F5B556;background:#0F1423;border:1px solid #26304A;border-radius:3px;padding:4px 8px;display:inline-block}
+.tag{display:inline-flex;align-items:center;height:18px;padding:0 6px;border-radius:2px;font-family:"VT323",monospace;font-size:14px;line-height:1}
+.tag.ok{background:rgba(139,209,106,.16);color:#8BD16A}
+.tag.warn{background:rgba(245,181,86,.16);color:#F5B556}
+.tag.err{background:rgba(255,107,107,.16);color:#FF8A8A}
+.tag.dim{background:#1C2338;color:#9AA6C0}
+.row{display:flex;align-items:center;gap:10px;font-size:12.5px}
+.row .l{width:118px;flex:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row .b{flex:1;height:10px;border-radius:1px;background:#26304A;overflow:hidden;display:flex;gap:2px}
+.row .b > span{display:block;height:100%}
+.row .v{width:72px;text-align:right;flex:none;font-family:"VT323",monospace;font-size:18px}
+.tile{display:flex;flex-direction:column;gap:4px;padding:12px 14px;border-radius:3px;background:#0F1423;border:1px solid #26304A}
+.tile .l{font-size:11px;color:#6F7B99}
+.tile .v{font-family:"VT323",monospace;font-size:30px;line-height:.95}
+.tile .d{font-size:11px;color:#8BD16A}
+.tile .d.down{color:#F5B556}
+.btn{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;border-radius:3px;border:1px solid #26304A;background:#161C2E;color:#E8ECF5;font:inherit;font-weight:500;cursor:pointer}
+.seg{display:flex;gap:2px;padding:2px;background:#0F1423;border:1px solid #26304A;border-radius:3px}
+.seg button{height:22px;padding:0 9px;border:0;border-radius:2px;background:transparent;font:inherit;font-size:12px;color:#9AA6C0;cursor:pointer}
+.seg button.on{background:#1C2338;color:#F5B556}
+.col{display:flex;flex-direction:column;align-items:center;gap:1px;flex:1;min-width:0;height:100%;justify-content:flex-end}
+.col > div{width:100%}
+.legend{display:flex;gap:14px;font-size:11.5px;color:#9AA6C0;flex-wrap:wrap}
+.legend span{display:inline-flex;align-items:center;gap:5px}
+.sw{width:10px;height:10px;display:inline-block}
+.due{display:flex;align-items:center;gap:10px;padding:8px 0;border-top:1px solid #1C2338}
+.due:first-child{border-top:0;padding-top:0}
+.due img{width:22px;height:22px;border-radius:3px;border:1px solid #26304A}
+.due .t{flex:1;min-width:0}
+.due .t b{font-weight:500}
+.due .t span{display:block;font-size:11px;color:#6F7B99}
+.due .vt{font-size:22px;line-height:1}
+.win{display:flex;flex-direction:column;gap:4px}
+.win .h{display:flex;justify-content:space-between;align-items:baseline;font-size:12px;color:#9AA6C0}
+.win .h .pct{font-family:"VT323",monospace;font-size:22px;color:#E8ECF5}
+</style>
+</helmet>
+
+<div style="display:flex;flex-direction:column;min-height:1040px;background:#0F1423">
+
+  <header style="display:flex;align-items:center;height:48px;border-bottom:1px solid #1C2338;flex-wrap:wrap">
+    <div style="width:240px;flex:0 0 240px;display:flex;align-items:center;gap:8px;padding-left:14px;box-sizing:border-box" aria-hidden="true">
+      <span class="light" style="background:#FF5F57"></span><span class="light" style="background:#FEBC2E"></span><span class="light" style="background:#28C840"></span>
+    </div>
+    <nav style="display:flex;gap:2px;padding:3px;background:#161C2E;border-radius:5px;margin-left:12px" aria-label="主导航">
+      <button class="nav-btn on" type="button">仪表盘</button>
+      <button class="nav-btn" type="button">归档</button>
+      <button class="nav-btn" type="button">设置</button>
+    </nav>
+    <div style="margin-left:auto;display:flex;align-items:center;gap:10px;padding-right:14px">
+      <div class="seg" role="group" aria-label="时间范围">
+        <button type="button">今天</button><button type="button" class="on">30 天</button><button type="button">90 天</button><button type="button">全部</button>
+      </div>
+      <button class="btn" type="button">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/></svg>
+        刷新额度
+      </button>
+    </div>
+  </header>
+
+  <div style="max-width:1400px;width:100%;margin:0 auto;padding:18px 24px 32px;box-sizing:border-box;display:flex;flex-direction:column;gap:14px">
+
+    <!-- 栖息地：实时场景 + 住户状态 -->
+    <section style="display:grid;grid-template-columns:640px minmax(0, 1fr);gap:14px" aria-label="栖息地">
+      <div class="card" style="padding:6px;gap:0">
+        <img src="./assets/habitat/processed/composed-night.png" alt="栖息地" style="display:block;width:100%;height:auto">
+      </div>
+      <div class="card" style="gap:0">
+        <div style="display:flex;align-items:center;gap:8px;padding-bottom:6px"><h2>住户</h2><span class="sub">状态由数据层事件驱动 · 体力条 = 窗口剩余</span></div>
+        <div class="due" style="padding:10px 0">
+          <img src="./assets/processed/avatar-claude.png" alt="" style="width:40px;height:40px">
+          <div class="t" style="display:flex;flex-direction:column;gap:6px">
+            <div style="display:flex;align-items:baseline;gap:8px"><b style="font-size:13.5px">Claude</b><span style="display:inline">Max · 工作中</span><span class="tag ok" style="margin-left:auto">合规 · statusline</span></div>
+            <div class="win"><div class="h"><span>5 小时</span><span class="pct">58%</span></div><div class="hp"><i class="g"></i><i class="g"></i><i class="g"></i><i class="g"></i><i class="g"></i><i class="g"></i><i></i><i></i><i></i><i></i></div></div>
+            <div class="win"><div class="h"><span>7 天</span><span class="pct" style="color:#F5B556">22%</span></div><div class="hp"><i class="a"></i><i class="a"></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div></div>
+            <div style="display:flex;gap:14px;font-size:11.5px;color:#9AA6C0"><span>5h 重置 <span class="vt" style="font-size:16px;color:#F5B556">02:10:33</span></span><span>7d 重置 <span class="vt" style="font-size:16px">2d 17h</span></span></div>
+          </div>
+        </div>
+        <div class="due" style="padding:10px 0">
+          <img src="./assets/processed/avatar-codex.png" alt="" style="width:40px;height:40px">
+          <div class="t" style="display:flex;flex-direction:column;gap:6px">
+            <div style="display:flex;align-items:baseline;gap:8px"><b style="font-size:13.5px">Codex</b><span style="display:inline">Plus · 思考中</span><span class="tag ok" style="margin-left:auto">合规 · rollout</span></div>
+            <div class="win"><div class="h"><span>5 小时</span><span class="pct">82%</span></div><div class="hp"><i class="g"></i><i class="g"></i><i class="g"></i><i class="g"></i><i class="g"></i><i class="g"></i><i class="g"></i><i class="g"></i><i></i><i></i></div></div>
+            <div class="win"><div class="h"><span>每周</span><span class="pct">63%</span></div><div class="hp"><i class="g"></i><i class="g"></i><i class="g"></i><i class="g"></i><i class="g"></i><i class="g"></i><i></i><i></i><i></i><i></i></div></div>
+            <div style="display:flex;gap:14px;font-size:11.5px;color:#9AA6C0"><span>5h 重置 <span class="vt" style="font-size:16px">03:41:08</span></span><span>重置信用 <span class="vt" style="font-size:16px;color:#8BD16A">3 张</span> · 6d 14h 后过期</span></div>
+          </div>
+        </div>
+        <div class="due" style="padding:10px 0 0;opacity:.6">
+          <img src="./assets/processed/avatar-gemini.png" alt="" style="width:40px;height:40px">
+          <div class="t" style="display:flex;flex-direction:column;gap:6px">
+            <div style="display:flex;align-items:baseline;gap:8px"><b style="font-size:13.5px">Gemini</b><span style="display:inline">未接入 · 外出</span><a href="#settings" style="margin-left:auto;font-size:12px">去设置接入 →</a></div>
+            <div class="win"><div class="h"><span>配额</span><span class="pct faint">--</span></div><div class="hp"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div></div>
+            <span style="font-size:11.5px">个人账号的 Gemini CLI 配额接口已于 2026-06 停服，暂只能统计本地消耗。</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 累计 token + 到期 -->
+    <section style="display:grid;grid-template-columns:repeat(3, minmax(0, 1fr));gap:14px">
+      <div class="card" style="grid-column:span 2">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <h2>累计 token</h2><span class="sub">本月 · 11-01 至今</span>
+          <div class="seg" style="margin-left:auto"><button type="button">今天</button><button type="button">本周</button><button type="button" class="on">本月</button><button type="button">全部</button></div>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(4, minmax(0, 1fr));gap:10px">
+          <div class="tile"><span class="l">输入</span><span class="v">1.86M</span><span class="d">Claude 1.71M · Codex 0.15M</span></div>
+          <div class="tile"><span class="l">输出</span><span class="v">4.02M</span><span class="d">Claude 3.64M · Codex 0.38M</span></div>
+          <div class="tile"><span class="l">缓存读</span><span class="v">312.4M</span><span class="d faint">命中率 96%</span></div>
+          <div class="tile"><span class="l">缓存写</span><span class="v">18.9M</span><span class="d faint">5m 16.2M · 1h 2.7M</span></div>
+        </div>
+        <div style="display:flex;gap:22px;flex-wrap:wrap;font-size:12px;color:#9AA6C0;border-top:1px solid #1C2338;padding-top:10px">
+          <span>估算成本 <span class="vt" style="font-size:20px;color:#F5B556">$1,482</span></span>
+          <span>Claude 真值（cost-state）<span class="vt" style="font-size:20px;color:#E8ECF5">$1,461</span></span>
+          <span>会话 <span class="vt" style="font-size:20px;color:#E8ECF5">418</span></span>
+          <span>消息 <span class="vt" style="font-size:20px;color:#E8ECF5">48,120</span></span>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:8px;border-top:1px solid #1C2338;padding-top:10px">
+          <div class="sub px" style="color:#E8ECF5">按住户 · 输出 token</div>
+          <div class="row"><img src="./assets/processed/avatar-claude.png" alt="" width="18" height="18" style="border-radius:3px;border:1px solid #26304A"><span class="l" style="width:60px">Claude</span><div class="b"><span style="width:62%;background:#E8824F"></span><span style="width:28%;background:#F5B556"></span></div><span class="v">3.64M</span></div>
+          <div class="row"><img src="./assets/processed/avatar-codex.png" alt="" width="18" height="18" style="border-radius:3px;border:1px solid #26304A"><span class="l" style="width:60px">Codex</span><div class="b"><span style="width:7%;background:#D9DEEA"></span><span style="width:2%;background:#8C95AA"></span></div><span class="v">0.38M</span></div>
+          <div class="legend"><span><i class="sw" style="background:#E8824F"></i>Opus</span><span><i class="sw" style="background:#F5B556"></i>Fable / Sonnet</span><span><i class="sw" style="background:#D9DEEA"></i>gpt-5-codex</span><span><i class="sw" style="background:#8C95AA"></i>gpt-5-mini</span></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div style="display:flex;align-items:center;gap:8px"><h2>到期与重置</h2><span class="sub">按先后</span></div>
+        <div style="display:flex;flex-direction:column">
+          <div class="due"><img src="./assets/processed/avatar-claude.png" alt=""><div class="t"><b>Claude 5h 窗口重置</b><span>17:52</span></div><span class="vt" style="color:#F5B556">02:10:33</span></div>
+          <div class="due"><img src="./assets/processed/avatar-codex.png" alt=""><div class="t"><b>Codex 5h 窗口重置</b><span>19:23</span></div><span class="vt">03:41:08</span></div>
+          <div class="due"><img src="./assets/processed/avatar-claude.png" alt=""><div class="t"><b>Claude 7d 窗口重置</b><span>周日 09:00 · 剩余已不足 1/4</span></div><span class="vt" style="color:#F5B556">2d 17h</span></div>
+          <div class="due"><img src="./assets/processed/avatar-codex.png" alt=""><div class="t"><b>Codex 每周窗口重置</b><span>周二 08:00</span></div><span class="vt">4d 02h</span></div>
+          <div class="due"><img src="./assets/processed/avatar-codex.png" alt=""><div class="t"><b>Codex 重置信用过期</b><span>3 张未用 · 11-12 06:00</span></div><span class="vt" style="color:#FF8A8A">6d 14h</span></div>
+          <div class="due"><img src="./assets/processed/avatar-claude.png" alt=""><div class="t"><b>Claude Max 订阅续期</b><span>11-21</span></div><span class="vt faint">16d</span></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- token 趋势 + 今日 -->
+    <section style="display:grid;grid-template-columns:repeat(3, minmax(0, 1fr));gap:14px">
+      <div class="card" style="grid-column:span 2">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <h2>token 量趋势</h2><span class="sub">最近 30 天 · 输入 / 输出 / 缓存写分层 · 悬停看当天</span>
+          <div class="seg" style="margin-left:auto"><button type="button" class="on">token</button><button type="button">成本</button><button type="button">会话</button></div>
+        </div>
+        <div style="display:flex;gap:4px;height:170px;align-items:flex-end;padding-top:8px;border-bottom:1px solid #26304A" role="img" aria-label="最近 30 天每日 token 柱状图">
+          <div class="col"><div style="height:8%;background:#F5B556"></div><div style="height:22%;background:#6FA9FF"></div><div style="height:6%;background:#26304A"></div></div>
+          <div class="col"><div style="height:10%;background:#F5B556"></div><div style="height:30%;background:#6FA9FF"></div><div style="height:8%;background:#26304A"></div></div>
+          <div class="col"><div style="height:5%;background:#F5B556"></div><div style="height:14%;background:#6FA9FF"></div><div style="height:4%;background:#26304A"></div></div>
+          <div class="col"><div style="height:14%;background:#F5B556"></div><div style="height:46%;background:#6FA9FF"></div><div style="height:10%;background:#26304A"></div></div>
+          <div class="col"><div style="height:12%;background:#F5B556"></div><div style="height:38%;background:#6FA9FF"></div><div style="height:9%;background:#26304A"></div></div>
+          <div class="col"><div style="height:3%;background:#F5B556"></div><div style="height:8%;background:#6FA9FF"></div><div style="height:2%;background:#26304A"></div></div>
+          <div class="col"><div style="height:2%;background:#F5B556"></div><div style="height:5%;background:#6FA9FF"></div><div style="height:1%;background:#26304A"></div></div>
+          <div class="col"><div style="height:16%;background:#F5B556"></div><div style="height:52%;background:#6FA9FF"></div><div style="height:12%;background:#26304A"></div></div>
+          <div class="col"><div style="height:18%;background:#F5B556"></div><div style="height:61%;background:#6FA9FF"></div><div style="height:14%;background:#26304A"></div></div>
+          <div class="col"><div style="height:13%;background:#F5B556"></div><div style="height:44%;background:#6FA9FF"></div><div style="height:7%;background:#26304A"></div></div>
+          <div class="col"><div style="height:11%;background:#F5B556"></div><div style="height:35%;background:#6FA9FF"></div><div style="height:6%;background:#26304A"></div></div>
+          <div class="col"><div style="height:9%;background:#F5B556"></div><div style="height:27%;background:#6FA9FF"></div><div style="height:5%;background:#26304A"></div></div>
+          <div class="col"><div style="height:4%;background:#F5B556"></div><div style="height:10%;background:#6FA9FF"></div><div style="height:3%;background:#26304A"></div></div>
+          <div class="col"><div style="height:2%;background:#F5B556"></div><div style="height:6%;background:#6FA9FF"></div><div style="height:2%;background:#26304A"></div></div>
+          <div class="col"><div style="height:17%;background:#F5B556"></div><div style="height:58%;background:#6FA9FF"></div><div style="height:16%;background:#26304A"></div></div>
+          <div class="col"><div style="height:20%;background:#F5B556"></div><div style="height:72%;background:#6FA9FF"></div><div style="height:18%;background:#26304A"></div></div>
+          <div class="col"><div style="height:19%;background:#F5B556"></div><div style="height:66%;background:#6FA9FF"></div><div style="height:12%;background:#26304A"></div></div>
+          <div class="col"><div style="height:14%;background:#F5B556"></div><div style="height:49%;background:#6FA9FF"></div><div style="height:9%;background:#26304A"></div></div>
+          <div class="col"><div style="height:12%;background:#F5B556"></div><div style="height:40%;background:#6FA9FF"></div><div style="height:11%;background:#26304A"></div></div>
+          <div class="col"><div style="height:4%;background:#F5B556"></div><div style="height:12%;background:#6FA9FF"></div><div style="height:3%;background:#26304A"></div></div>
+          <div class="col"><div style="height:3%;background:#F5B556"></div><div style="height:9%;background:#6FA9FF"></div><div style="height:2%;background:#26304A"></div></div>
+          <div class="col"><div style="height:16%;background:#F5B556"></div><div style="height:55%;background:#6FA9FF"></div><div style="height:13%;background:#26304A"></div></div>
+          <div class="col"><div style="height:18%;background:#F5B556"></div><div style="height:63%;background:#6FA9FF"></div><div style="height:15%;background:#26304A"></div></div>
+          <div class="col"><div style="height:13%;background:#F5B556"></div><div style="height:47%;background:#6FA9FF"></div><div style="height:8%;background:#26304A"></div></div>
+          <div class="col"><div style="height:22%;background:#F5B556"></div><div style="height:84%;background:#6FA9FF"></div><div style="height:16%;background:#26304A"></div></div>
+          <div class="col"><div style="height:19%;background:#F5B556"></div><div style="height:70%;background:#6FA9FF"></div><div style="height:10%;background:#26304A"></div></div>
+          <div class="col"><div style="height:5%;background:#F5B556"></div><div style="height:16%;background:#6FA9FF"></div><div style="height:4%;background:#26304A"></div></div>
+          <div class="col"><div style="height:4%;background:#F5B556"></div><div style="height:11%;background:#6FA9FF"></div><div style="height:2%;background:#26304A"></div></div>
+          <div class="col"><div style="height:13%;background:#F5B556"></div><div style="height:43%;background:#6FA9FF"></div><div style="height:9%;background:#26304A"></div></div>
+          <div class="col"><div style="height:11%;background:#FFD08A"></div><div style="height:36%;background:#9CC3FF"></div><div style="height:8%;background:#3A4766"></div></div>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+          <div class="legend"><span><i class="sw" style="background:#F5B556"></i>输入</span><span><i class="sw" style="background:#6FA9FF"></i>输出</span><span><i class="sw" style="background:#26304A"></i>缓存写</span><span class="faint">· 缓存读单独看，量级差两位</span></div>
+          <div class="vt faint" style="font-size:15px;display:flex;justify-content:space-between;width:56%"><span>10-07</span><span>10-14</span><span>10-21</span><span>10-28</span><span>11-05</span></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div style="display:flex;align-items:center;gap:8px"><h2>今天</h2><span class="sub">11-05 · 截至 15:48</span></div>
+        <div style="display:grid;grid-template-columns:repeat(2, minmax(0, 1fr));gap:10px">
+          <div class="tile"><span class="l">估算成本</span><span class="v">$18.4</span><span class="d down">较昨日 +32%</span></div>
+          <div class="tile"><span class="l">输出 token</span><span class="v">70.2k</span><span class="d">较昨日 +8%</span></div>
+          <div class="tile"><span class="l">会话</span><span class="v">12</span><span class="d">2 个进行中</span></div>
+          <div class="tile"><span class="l">缓存读</span><span class="v">9.9M</span><span class="d faint">写 233k</span></div>
+        </div>
+        <div style="border-top:1px solid #1C2338;padding-top:10px;display:flex;flex-direction:column;gap:6px">
+          <div class="sub px" style="color:#E8ECF5">进行中</div>
+          <div class="row"><img src="./assets/processed/avatar-claude.png" alt="" width="18" height="18" style="border-radius:3px;border:1px solid #26304A"><span style="flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">GPTUI 调研与多端统计应用</span><span class="vt faint" style="font-size:15px">3 分钟前</span></div>
+          <div class="row"><img src="./assets/processed/avatar-codex.png" alt="" width="18" height="18" style="border-radius:3px;border:1px solid #26304A"><span style="flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">beatlock 发布脚本整理</span><span class="vt faint" style="font-size:15px">刚刚</span></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 占比 + 归档健康 -->
+    <section style="display:grid;grid-template-columns:repeat(3, minmax(0, 1fr));gap:14px">
+      <div class="card">
+        <div style="display:flex;align-items:center;gap:8px"><h2>按模型</h2><span class="sub">本月成本</span></div>
+        <div class="row"><span class="l">claude-opus-5-5</span><div class="b"><span style="width:58%;background:#E8824F"></span></div><span class="v">$860</span></div>
+        <div class="row"><span class="l">claude-fable-5-1</span><div class="b"><span style="width:24%;background:#E8824F"></span></div><span class="v">$356</span></div>
+        <div class="row"><span class="l">claude-sonnet-5-5</span><div class="b"><span style="width:7%;background:#E8824F"></span></div><span class="v">$104</span></div>
+        <div class="row"><span class="l">gpt-5-codex</span><div class="b"><span style="width:9%;background:#D9DEEA"></span></div><span class="v">$133</span></div>
+        <div class="row"><span class="l">gpt-5-mini</span><div class="b"><span style="width:2%;background:#D9DEEA"></span></div><span class="v">$29</span></div>
+      </div>
+      <div class="card">
+        <div style="display:flex;align-items:center;gap:8px"><h2>按项目</h2><span class="sub">Top 5 · 按住户分段</span></div>
+        <div class="row"><span class="l">workto-ai</span><div class="b"><span style="width:52%;background:#E8824F"></span><span style="width:6%;background:#D9DEEA"></span></div><span class="v">$612</span></div>
+        <div class="row"><span class="l">tick-me</span><div class="b"><span style="width:31%;background:#E8824F"></span><span style="width:2%;background:#D9DEEA"></span></div><span class="v">$298</span></div>
+        <div class="row"><span class="l">self-finance</span><div class="b"><span style="width:22%;background:#E8824F"></span></div><span class="v">$172</span></div>
+        <div class="row"><span class="l">chatme</span><div class="b"><span style="width:16%;background:#E8824F"></span><span style="width:4%;background:#D9DEEA"></span></div><span class="v">$150</span></div>
+        <div class="row"><span class="l">daily</span><div class="b"><span style="width:9%;background:#E8824F"></span><span style="width:1%;background:#D9DEEA"></span></div><span class="v">$78</span></div>
+        <div class="legend" style="margin-top:4px"><span><i class="sw" style="background:#E8824F"></i>Claude</span><span><i class="sw" style="background:#D9DEEA"></i>Codex</span></div>
+      </div>
+      <div class="card">
+        <div style="display:flex;align-items:center;gap:8px"><h2>归档健康</h2><span class="sub">来源 → 仓库</span></div>
+        <div class="row"><img src="./assets/processed/avatar-claude.png" alt="" width="18" height="18" style="border-radius:3px;border:1px solid #26304A"><span style="flex:1">Claude Code</span><span class="v" style="width:auto">2,363</span></div>
+        <div class="row" style="padding-left:28px"><span style="flex:1" class="muted">仅归档存在（原件已被 30 天清理）</span><span class="tag warn">269</span></div>
+        <div class="row" style="padding-left:28px"><span style="flex:1" class="muted">7 天内将被清理</span><span class="tag err">41</span></div>
+        <div class="row"><img src="./assets/processed/avatar-codex.png" alt="" width="18" height="18" style="border-radius:3px;border:1px solid #26304A"><span style="flex:1">Codex</span><span class="v" style="width:auto">418</span></div>
+        <div class="row" style="padding-left:28px"><span style="flex:1" class="muted">已压缩 .zst（解析时自动解压）</span><span class="tag dim">311</span></div>
+        <div style="border-top:1px solid #1C2338;padding-top:10px;display:flex;justify-content:space-between;align-items:center">
+          <span class="sub">仓库 <span class="mono" style="color:#E8ECF5">~/AgentHome</span> · raw 2.9 GB · 索引 885 MB</span>
+          <a href="#rebuild" style="font-size:12px">重建索引</a>
+        </div>
+      </div>
+    </section>
+
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1040}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {};
+  }
+}
+</script>
+</body>
+</html>

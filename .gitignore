@@ -5,3 +5,5 @@
 .DS_Store
 /crates/core/tests/fixtures/real-*
 
+.playwright-mcp/
+

@@ -4,14 +4,16 @@
 //! 中文子串可直接匹配；若运行时不支持则退回 `unicode61`（中文按整段切，只能整词命中）。
 
 use crate::model::{
-    ContentBlock, DailyUsage, Message, ProviderId, Role, Session, SessionKind, SessionQuery,
-    SessionSummary, SourceInfo, Usage,
+    ActivityKind, ContentBlock, CostBreakdown, CostSource, DailyUsage, Message, Period,
+    ProviderActivity, ProviderHealth, ProviderId, Role, Session, SessionKind, SessionQuery,
+    SessionSummary, SourceInfo, Usage, UsageTotals,
 };
+use crate::providers::SourceProvider;
 use anyhow::{Context, Result, bail};
 use rusqlite::{Connection, OptionalExtension, Row, params};
 use std::path::{Path, PathBuf};
 
-const SCHEMA_VERSION: i32 = 1;
+const SCHEMA_VERSION: i32 = 3;
 
 pub struct Store {
     conn: Connection,
@@ -45,9 +47,14 @@ CREATE TABLE IF NOT EXISTS sessions (
     requests            INTEGER NOT NULL,
     input_includes_cache INTEGER NOT NULL,
     message_count       INTEGER NOT NULL,
+    -- agent 自记的成本真值（Claude cost-state），Codex 为 NULL。
+    recorded_cost_usd   REAL,
+    -- 按定价表对消息 usage 估算之和；无可计价消息为 NULL。
+    estimated_cost_usd  REAL,
     source_path         TEXT NOT NULL,
     source_size_bytes   INTEGER NOT NULL,
-    source_mtime_ms     INTEGER NOT NULL
+    source_mtime_ms     INTEGER NOT NULL,
+    source_compressed   INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_updated ON sessions(updated_at_ms DESC);
 CREATE INDEX IF NOT EXISTS idx_sessions_cwd ON sessions(cwd);
@@ -74,6 +81,8 @@ CREATE TABLE IF NOT EXISTS messages (
     cache_write_5m_tokens INTEGER,
     cache_write_1h_tokens INTEGER,
     reasoning_tokens    INTEGER,
+    -- 按定价表估算；未知模型或无 usage 为 NULL。
+    cost_usd            REAL,
     PRIMARY KEY (session_id, id)
 );
 CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, timestamp_ms);
@@ -307,7 +316,8 @@ impl Store {
                     s.provider, COALESCE(m.model, ''),
                     SUM(m.input_tokens), SUM(m.output_tokens), SUM(m.cache_read_tokens),
                     SUM(m.cache_write_tokens), SUM(m.cache_write_5m_tokens),
-                    SUM(m.cache_write_1h_tokens), SUM(m.reasoning_tokens), COUNT(*)
+                    SUM(m.cache_write_1h_tokens), SUM(m.reasoning_tokens), COUNT(*),
+                    COALESCE(SUM(m.cost_usd), 0)
              FROM messages m JOIN sessions s ON s.id = m.session_id
              WHERE m.input_tokens IS NOT NULL AND m.timestamp_ms >= ?1
              GROUP BY day, s.provider, m.model ORDER BY day DESC, s.provider, m.model",
@@ -330,9 +340,235 @@ impl Store {
                     input_includes_cache: false,
                 },
                 message_count: n,
+                cost_usd: r.get::<_, f64>(11)?,
             })
         })?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// 周期汇总。时间按消息 timestamp（本地时区边界见 `Period::since_ms`）。
+    ///
+    /// 成本口径：`All` 时优先用会话级真值（Claude cost-state），没有的用估算；
+    /// 有真值的主会话，其子代理的估算不再加（cost-state 已含子代理）。
+    /// 其余周期只能按消息估算（真值无法切到天）。
+    pub fn stats_totals(
+        &self,
+        period: Period,
+        provider: Option<&ProviderId>,
+    ) -> Result<UsageTotals> {
+        let (filter, args) = period_filter(period, provider);
+        let sql = format!(
+            "SELECT COALESCE(SUM(m.input_tokens),0), COALESCE(SUM(m.output_tokens),0),
+                    COALESCE(SUM(m.cache_read_tokens),0), COALESCE(SUM(m.cache_write_tokens),0),
+                    COALESCE(SUM(m.cache_write_5m_tokens),0), COALESCE(SUM(m.cache_write_1h_tokens),0),
+                    COALESCE(SUM(m.reasoning_tokens),0),
+                    SUM(m.input_tokens IS NOT NULL), MAX(s.input_includes_cache),
+                    COUNT(*), COUNT(DISTINCT m.session_id),
+                    COALESCE(SUM(m.cost_usd),0), SUM(m.cost_usd IS NOT NULL)
+             FROM messages m JOIN sessions s ON s.id = m.session_id WHERE 1 = 1 {filter}"
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
+        let (usage, messages, sessions, est_cost, priced) =
+            stmt.query_row(rusqlite::params_from_iter(args.iter()), |r| {
+                let mut u = Usage {
+                    input_tokens: get_u64(r, 0),
+                    output_tokens: get_u64(r, 1),
+                    cache_read_tokens: get_u64(r, 2),
+                    cache_write_tokens: get_u64(r, 3),
+                    cache_write_5m_tokens: get_u64(r, 4),
+                    cache_write_1h_tokens: get_u64(r, 5),
+                    reasoning_tokens: get_u64(r, 6),
+                    requests: get_u64(r, 7),
+                    input_includes_cache: false,
+                };
+                u.input_includes_cache = get_u64(r, 8) != 0;
+                Ok((
+                    u,
+                    get_u64(r, 9),
+                    get_u64(r, 10),
+                    r.get::<_, f64>(11)?,
+                    get_u64(r, 12),
+                ))
+            })?;
+
+        let (cost_usd, cost_source) = if period == Period::All {
+            let mut sql = String::from(
+                "SELECT COALESCE(SUM(CASE WHEN s.recorded_cost_usd IS NOT NULL THEN s.recorded_cost_usd
+                                          WHEN p.recorded_cost_usd IS NOT NULL THEN 0
+                                          ELSE COALESCE(s.estimated_cost_usd, 0) END), 0),
+                        SUM(s.recorded_cost_usd IS NOT NULL),
+                        SUM(s.recorded_cost_usd IS NULL AND p.recorded_cost_usd IS NULL
+                            AND s.estimated_cost_usd IS NOT NULL)
+                 FROM sessions s LEFT JOIN sessions p ON p.id = s.parent_session_id WHERE 1 = 1",
+            );
+            let mut a: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+            if let Some(p) = provider {
+                sql.push_str(" AND s.provider = ?");
+                a.push(Box::new(p.as_str().to_string()));
+            }
+            let (cost, recorded, estimated): (f64, u64, u64) =
+                self.conn
+                    .query_row(&sql, rusqlite::params_from_iter(a.iter()), |r| {
+                        Ok((r.get(0)?, get_u64(r, 1), get_u64(r, 2)))
+                    })?;
+            let src = match (recorded, estimated) {
+                (0, 0) => CostSource::Unknown,
+                (_, 0) => CostSource::Recorded,
+                (0, _) => CostSource::Estimated,
+                _ => CostSource::Mixed,
+            };
+            (cost, src)
+        } else if priced == 0 {
+            (0.0, CostSource::Unknown)
+        } else {
+            (est_cost, CostSource::Estimated)
+        };
+        Ok(UsageTotals {
+            period,
+            provider: provider.cloned(),
+            usage,
+            cost_usd,
+            cost_source,
+            sessions,
+            messages,
+        })
+    }
+
+    /// 周期内按 provider × 模型 的用量与估算成本，按成本倒序。
+    pub fn stats_by_model(&self, period: Period) -> Result<Vec<CostBreakdown>> {
+        let (filter, args) = period_filter(period, None);
+        let sql = format!(
+            "SELECT s.provider, COALESCE(m.model, ''), {USAGE_SUM_COLS}
+             FROM messages m JOIN sessions s ON s.id = m.session_id
+             WHERE m.input_tokens IS NOT NULL {filter}
+             GROUP BY s.provider, m.model ORDER BY cost DESC, total DESC, m.model, s.provider"
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt.query_map(rusqlite::params_from_iter(args.iter()), row_to_breakdown)?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// 周期内按 provider × 项目名 的用量与估算成本（同一项目不同来源各一行），按成本倒序取前 `limit`。
+    pub fn stats_by_project(&self, period: Period, limit: usize) -> Result<Vec<CostBreakdown>> {
+        let (filter, args) = period_filter(period, None);
+        let sql = format!(
+            "SELECT s.provider, s.project_name, {USAGE_SUM_COLS}
+             FROM messages m JOIN sessions s ON s.id = m.session_id
+             WHERE m.input_tokens IS NOT NULL {filter}
+             GROUP BY s.provider, s.project_name
+             ORDER BY cost DESC, total DESC, s.project_name, s.provider LIMIT {}",
+            if limit == 0 { -1 } else { limit as i64 }
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt.query_map(rusqlite::params_from_iter(args.iter()), row_to_breakdown)?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// 归档健康。`archive_only` 要逐个 stat 原件路径。
+    pub fn archive_health(&self) -> Result<Vec<ProviderHealth>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT provider, source_path, source_mtime_ms, source_compressed FROM sessions",
+        )?;
+        let now_ms = chrono::Utc::now().timestamp_millis();
+        const EXPIRE_AFTER_MS: i64 = 23 * 86_400_000;
+        let mut out: Vec<ProviderHealth> = Vec::new();
+        let rows = stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, i64>(2)?,
+                r.get::<_, i64>(3)? != 0,
+            ))
+        })?;
+        for row in rows {
+            let (provider, path, mtime_ms, compressed) = row?;
+            let provider = ProviderId::parse(&provider);
+            let h = match out.iter_mut().find(|h| h.provider == provider) {
+                Some(h) => h,
+                None => {
+                    out.push(ProviderHealth {
+                        provider: provider.clone(),
+                        sessions: 0,
+                        archive_only: 0,
+                        expiring_within_7d: 0,
+                        compressed: 0,
+                    });
+                    out.last_mut().expect("刚 push")
+                }
+            };
+            h.sessions += 1;
+            let exists = Path::new(&path).exists();
+            if !exists {
+                h.archive_only += 1;
+            } else if provider == ProviderId::ClaudeCode && now_ms - mtime_ms > EXPIRE_AFTER_MS {
+                h.expiring_within_7d += 1;
+            }
+            if compressed {
+                h.compressed += 1;
+            }
+        }
+        out.sort_by(|a, b| a.provider.as_str().cmp(b.provider.as_str()));
+        Ok(out)
+    }
+
+    /// 各来源最近活动。`detected` 取自 `provider.detect()`，所以要把 provider 传进来；
+    /// 库里有数据但未传 provider 的来源也会列出（`detected = false`）。
+    pub fn activity(&self, providers: &[&dyn SourceProvider]) -> Result<Vec<ProviderActivity>> {
+        let mut ids: Vec<(ProviderId, bool)> =
+            providers.iter().map(|p| (p.id(), p.detect())).collect();
+        let mut stmt = self
+            .conn
+            .prepare("SELECT DISTINCT provider FROM sessions")?;
+        for p in stmt.query_map([], |r| r.get::<_, String>(0))? {
+            let p = ProviderId::parse(&p?);
+            if !ids.iter().any(|(id, _)| *id == p) {
+                ids.push((p, false));
+            }
+        }
+        let now_ms = chrono::Utc::now().timestamp_millis();
+        let mut out = Vec::new();
+        for (provider, detected) in ids {
+            let latest: Option<String> = self
+                .conn
+                .query_row(
+                    "SELECT id FROM sessions WHERE provider = ?1 ORDER BY updated_at_ms DESC LIMIT 1",
+                    [provider.as_str()],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            let mut last_activity_ms = None;
+            let mut last_kind = None;
+            if let Some(sid) = latest {
+                let row: Option<(i64, String, String)> = self
+                    .conn
+                    .query_row(
+                        "SELECT timestamp_ms, role, blocks_json FROM messages WHERE session_id = ?1
+                         ORDER BY timestamp_ms DESC, rowid DESC LIMIT 1",
+                        [&sid],
+                        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                    )
+                    .optional()?;
+                if let Some((ts, role, blocks_json)) = row {
+                    last_activity_ms = Some(ts);
+                    let blocks: Vec<ContentBlock> =
+                        serde_json::from_str(&blocks_json).unwrap_or_default();
+                    last_kind = Some(activity_kind(Role::parse(&role), &blocks));
+                }
+            }
+            let active_sessions: i64 = self.conn.query_row(
+                "SELECT COUNT(*) FROM sessions WHERE provider = ?1 AND updated_at_ms >= ?2",
+                params![provider.as_str(), now_ms - 10 * 60_000],
+                |r| r.get(0),
+            )?;
+            out.push(ProviderActivity {
+                provider,
+                detected,
+                last_activity_ms,
+                last_kind,
+                active_sessions: active_sessions.max(0) as u32,
+            });
+        }
+        Ok(out)
     }
 
     /// 上次入库时记录的原件 size / mtime，用于增量跳过。
@@ -346,6 +582,7 @@ impl Store {
                     path: PathBuf::from(path),
                     size_bytes: get_u64(r, 0),
                     mtime_ms: r.get(1)?,
+                    compressed: false,
                 })
             })
             .optional()?)
@@ -368,8 +605,69 @@ const SESSION_SELECT: &str =
             agent_version, entrypoint, started_at_ms, ended_at_ms, updated_at_ms, models_json,
             input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cache_write_5m_tokens,
             cache_write_1h_tokens, reasoning_tokens, requests, input_includes_cache, message_count,
-            source_path, source_size_bytes, source_mtime_ms
+            source_path, source_size_bytes, source_mtime_ms, recorded_cost_usd, estimated_cost_usd,
+            source_compressed
      FROM sessions";
+
+/// 聚合列：7 个 usage 分量 + requests + 消息数 + 估算成本 + 总 token（排序用）。
+const USAGE_SUM_COLS: &str =
+    "COALESCE(SUM(m.input_tokens),0), COALESCE(SUM(m.output_tokens),0),
+     COALESCE(SUM(m.cache_read_tokens),0), COALESCE(SUM(m.cache_write_tokens),0),
+     COALESCE(SUM(m.cache_write_5m_tokens),0), COALESCE(SUM(m.cache_write_1h_tokens),0),
+     COALESCE(SUM(m.reasoning_tokens),0), COUNT(*), MAX(s.input_includes_cache),
+     COALESCE(SUM(m.cost_usd),0) AS cost,
+     COALESCE(SUM(m.input_tokens + m.output_tokens + m.cache_read_tokens + m.cache_write_tokens),0) AS total";
+
+/// 周期 + provider 过滤子句（以 ` AND` 开头）及其参数。
+fn period_filter(
+    period: Period,
+    provider: Option<&ProviderId>,
+) -> (String, Vec<Box<dyn rusqlite::ToSql>>) {
+    let mut sql = String::new();
+    let mut args: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+    if let Some(since) = period.since_ms() {
+        sql.push_str(" AND m.timestamp_ms >= ?");
+        args.push(Box::new(since));
+    }
+    if let Some(p) = provider {
+        sql.push_str(" AND s.provider = ?");
+        args.push(Box::new(p.as_str().to_string()));
+    }
+    (sql, args)
+}
+
+fn row_to_breakdown(r: &Row) -> rusqlite::Result<CostBreakdown> {
+    Ok(CostBreakdown {
+        provider: ProviderId::parse(&r.get::<_, String>(0)?),
+        key: r.get(1)?,
+        usage: Usage {
+            input_tokens: get_u64(r, 2),
+            output_tokens: get_u64(r, 3),
+            cache_read_tokens: get_u64(r, 4),
+            cache_write_tokens: get_u64(r, 5),
+            cache_write_5m_tokens: get_u64(r, 6),
+            cache_write_1h_tokens: get_u64(r, 7),
+            reasoning_tokens: get_u64(r, 8),
+            requests: get_u64(r, 9),
+            input_includes_cache: get_u64(r, 10) != 0,
+        },
+        cost_usd: r.get::<_, f64>(11)?,
+    })
+}
+
+/// 从最近一条消息推断活动类型：看角色，再看最后一个内容块。
+fn activity_kind(role: Role, blocks: &[ContentBlock]) -> ActivityKind {
+    match role {
+        Role::User => ActivityKind::UserMessage,
+        Role::Tool => ActivityKind::ToolResult,
+        Role::System => ActivityKind::SessionEnd,
+        Role::Assistant => match blocks.last() {
+            Some(ContentBlock::ToolCall { .. }) => ActivityKind::ToolCall,
+            Some(ContentBlock::Thinking { .. }) => ActivityKind::Thinking,
+            _ => ActivityKind::AssistantText,
+        },
+    }
+}
 
 fn upsert_session_tx(tx: &Connection, s: &Session) -> Result<()> {
     tx.execute(
@@ -377,8 +675,9 @@ fn upsert_session_tx(tx: &Connection, s: &Session) -> Result<()> {
              git_branch, machine_id, agent_version, entrypoint, started_at_ms, ended_at_ms, updated_at_ms,
              models_json, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
              cache_write_5m_tokens, cache_write_1h_tokens, reasoning_tokens, requests, input_includes_cache,
-             message_count, source_path, source_size_bytes, source_mtime_ms)
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24,?25,?26,?27,?28,?29)
+             message_count, source_path, source_size_bytes, source_mtime_ms, recorded_cost_usd,
+             estimated_cost_usd, source_compressed)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24,?25,?26,?27,?28,?29,?30,?31,?32)
          ON CONFLICT(id) DO UPDATE SET
              provider = excluded.provider, native_id = excluded.native_id,
              parent_session_id = excluded.parent_session_id, kind = excluded.kind, title = excluded.title,
@@ -394,7 +693,9 @@ fn upsert_session_tx(tx: &Connection, s: &Session) -> Result<()> {
              reasoning_tokens = excluded.reasoning_tokens, requests = excluded.requests,
              input_includes_cache = excluded.input_includes_cache, message_count = excluded.message_count,
              source_path = excluded.source_path, source_size_bytes = excluded.source_size_bytes,
-             source_mtime_ms = excluded.source_mtime_ms",
+             source_mtime_ms = excluded.source_mtime_ms, recorded_cost_usd = excluded.recorded_cost_usd,
+             estimated_cost_usd = excluded.estimated_cost_usd,
+             source_compressed = excluded.source_compressed",
         params![
             s.id,
             s.provider.as_str(),
@@ -425,6 +726,9 @@ fn upsert_session_tx(tx: &Connection, s: &Session) -> Result<()> {
             s.source.path.to_string_lossy(),
             s.source.size_bytes as i64,
             s.source.mtime_ms,
+            s.recorded_cost_usd,
+            s.estimated_cost_usd,
+            s.source.compressed as i64,
         ],
     )?;
     // 标题也进全文索引（message_id 为 NULL 的行）。
@@ -450,8 +754,8 @@ fn replace_messages_tx(tx: &Connection, session_id: &str, messages: &[Message]) 
     let mut ins = tx.prepare_cached(
         "INSERT INTO messages(id, session_id, native_id, parent_id, role, is_meta, timestamp_ms, model,
              stop_reason, blocks_json, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
-             cache_write_5m_tokens, cache_write_1h_tokens, reasoning_tokens)
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)",
+             cache_write_5m_tokens, cache_write_1h_tokens, reasoning_tokens, cost_usd)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18)",
     )?;
     let mut fts = tx.prepare_cached(
         "INSERT INTO message_fts(message_id, session_id, content) VALUES (?1, ?2, ?3)",
@@ -480,6 +784,10 @@ fn replace_messages_tx(tx: &Connection, session_id: &str, messages: &[Message]) 
             col(|u| u.cache_write_5m_tokens),
             col(|u| u.cache_write_1h_tokens),
             col(|u| u.reasoning_tokens),
+            m.model
+                .as_deref()
+                .zip(u)
+                .and_then(|(model, u)| crate::pricing::estimate_usd(model, u)),
         ])?;
         let text = m.text();
         if !text.is_empty() {
@@ -560,10 +868,13 @@ fn row_to_session(r: &Row) -> rusqlite::Result<Session> {
         models: models_from_json(&r.get::<_, String>(14)?, 14)?,
         usage: usage_from_row(r, 15)?,
         message_count: r.get::<_, i64>(24)?.max(0) as u32,
+        recorded_cost_usd: r.get(28)?,
+        estimated_cost_usd: r.get(29)?,
         source: SourceInfo {
             path: PathBuf::from(r.get::<_, String>(25)?),
             size_bytes: get_u64(r, 26),
             mtime_ms: r.get(27)?,
+            compressed: r.get::<_, i64>(30)? != 0,
         },
     })
 }

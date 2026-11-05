@@ -2,8 +2,9 @@
 //! 因此必须 `Send + Sync`；UI 线程只拿结果写 Entity。
 
 use agenthome_core::model::{
-    ContentBlock, DailyUsage, Message, ProviderId, Role, SessionKind, SessionQuery, SessionSummary,
-    Usage,
+    ContentBlock, CostBreakdown, CostSource, DailyUsage, Freshness, Message, Period,
+    ProviderActivity, ProviderHealth, ProviderId, QuotaSnapshot, QuotaWindow, Role, SessionKind,
+    SessionQuery, SessionSummary, Usage, UsageTotals,
 };
 
 /// 左栏项目行：按 `SessionSummary.project_name` 聚合。
@@ -19,9 +20,17 @@ pub trait DataSource: Send + Sync + 'static {
     fn projects(&self) -> anyhow::Result<Vec<ProjectRow>>;
     fn sessions(&self, q: &SessionQuery) -> anyhow::Result<Vec<SessionSummary>>;
     fn messages(&self, session_id: &str) -> anyhow::Result<Vec<Message>>;
-    /// 仪表盘（P1）才会调用，P0 先把签名定下来，避免接 SQLite 时再改 trait。
-    #[allow(dead_code)]
     fn daily(&self, days: u32) -> anyhow::Result<Vec<DailyUsage>>;
+    /// 周期汇总（provider 为 None 表示全部来源）。
+    fn totals(&self, period: Period, provider: Option<ProviderId>) -> anyhow::Result<UsageTotals>;
+    fn by_model(&self, period: Period) -> anyhow::Result<Vec<CostBreakdown>>;
+    /// 同一项目按来源多行；limit 为项目数上限。
+    fn by_project(&self, period: Period, limit: usize) -> anyhow::Result<Vec<CostBreakdown>>;
+    fn archive_health(&self) -> anyhow::Result<Vec<ProviderHealth>>;
+    /// 各来源最近活动（栖息地状态机的输入之一）。
+    fn activity(&self) -> anyhow::Result<Vec<ProviderActivity>>;
+    /// 额度快照（Claude statusline 文件、Codex rollout 快照），没有的来源不出现。
+    fn quota(&self) -> anyhow::Result<Vec<QuotaSnapshot>>;
 }
 
 /// 确定性伪随机（LCG），让每次启动的 mock 数据一致，便于复现界面问题。
@@ -371,6 +380,7 @@ impl DataSource for MockDataSource {
                             ..Usage::default()
                         },
                         message_count,
+                        cost_usd: 0.0,
                     },
                     DailyUsage {
                         day,
@@ -384,10 +394,196 @@ impl DataSource for MockDataSource {
                             ..Usage::default()
                         },
                         message_count: message_count / 3,
+                        cost_usd: 0.0,
                     },
                 ]
             })
             .collect();
         Ok(rows)
+    }
+    fn totals(&self, period: Period, provider: Option<ProviderId>) -> anyhow::Result<UsageTotals> {
+        let scale = match period {
+            Period::Today => 1.0,
+            Period::Week => 5.0,
+            Period::Month => 22.0,
+            Period::Days(n) => n as f64,
+            Period::All => 180.0,
+        };
+        let share = match provider {
+            Some(ProviderId::Codex) => 0.12,
+            Some(ProviderId::GeminiCli) => 0.0,
+            Some(_) => 0.88,
+            None => 1.0,
+        };
+        let k = scale * share;
+        Ok(UsageTotals {
+            period,
+            provider,
+            usage: Usage {
+                input_tokens: (84_000.0 * k) as u64,
+                output_tokens: (182_000.0 * k) as u64,
+                cache_read_tokens: (14_200_000.0 * k) as u64,
+                cache_write_tokens: (860_000.0 * k) as u64,
+                cache_write_5m_tokens: (736_000.0 * k) as u64,
+                cache_write_1h_tokens: (124_000.0 * k) as u64,
+                reasoning_tokens: (21_000.0 * k) as u64,
+                requests: (420.0 * k) as u64,
+                input_includes_cache: false,
+            },
+            cost_usd: 67.4 * k,
+            cost_source: CostSource::Mixed,
+            sessions: (19.0 * k) as u64,
+            messages: (2_190.0 * k) as u64,
+        })
+    }
+
+    fn by_model(&self, period: Period) -> anyhow::Result<Vec<CostBreakdown>> {
+        let k = self.totals(period, None)?.cost_usd / 67.4;
+        let rows = [
+            ("claude-opus-5-5", ProviderId::ClaudeCode, 0.58),
+            ("claude-fable-5-1", ProviderId::ClaudeCode, 0.24),
+            ("claude-sonnet-5-5", ProviderId::ClaudeCode, 0.07),
+            ("gpt-5-codex", ProviderId::Codex, 0.09),
+            ("gpt-5-mini", ProviderId::Codex, 0.02),
+        ];
+        Ok(rows
+            .iter()
+            .map(|(m, p, share)| CostBreakdown {
+                key: (*m).to_string(),
+                provider: p.clone(),
+                usage: Usage {
+                    output_tokens: (182_000.0 * k * share) as u64,
+                    ..Usage::default()
+                },
+                cost_usd: 67.4 * k * share,
+            })
+            .collect())
+    }
+
+    fn by_project(&self, period: Period, limit: usize) -> anyhow::Result<Vec<CostBreakdown>> {
+        let k = self.totals(period, None)?.cost_usd / 67.4;
+        let mut out = Vec::new();
+        for (i, p) in PROJECTS.iter().take(limit).enumerate() {
+            let share = 0.42 / (i as f64 + 1.0);
+            out.push(CostBreakdown {
+                key: (*p).to_string(),
+                provider: ProviderId::ClaudeCode,
+                usage: Usage::default(),
+                cost_usd: 67.4 * k * share * 0.88,
+            });
+            out.push(CostBreakdown {
+                key: (*p).to_string(),
+                provider: ProviderId::Codex,
+                usage: Usage::default(),
+                cost_usd: 67.4 * k * share * 0.12,
+            });
+        }
+        Ok(out)
+    }
+
+    fn archive_health(&self) -> anyhow::Result<Vec<ProviderHealth>> {
+        Ok(vec![
+            ProviderHealth {
+                provider: ProviderId::ClaudeCode,
+                sessions: 2_363,
+                archive_only: 269,
+                expiring_within_7d: 41,
+                compressed: 0,
+            },
+            ProviderHealth {
+                provider: ProviderId::Codex,
+                sessions: 418,
+                archive_only: 0,
+                expiring_within_7d: 0,
+                compressed: 311,
+            },
+        ])
+    }
+
+    fn activity(&self) -> anyhow::Result<Vec<ProviderActivity>> {
+        let now = crate::format::now_ms();
+        Ok(vec![
+            ProviderActivity {
+                provider: ProviderId::ClaudeCode,
+                detected: true,
+                last_activity_ms: Some(now - 12_000),
+                last_kind: Some(agenthome_core::model::ActivityKind::ToolCall),
+                active_sessions: 2,
+            },
+            ProviderActivity {
+                provider: ProviderId::Codex,
+                detected: true,
+                last_activity_ms: Some(now - 4 * 60_000),
+                last_kind: Some(agenthome_core::model::ActivityKind::AssistantText),
+                active_sessions: 1,
+            },
+            ProviderActivity {
+                provider: ProviderId::GeminiCli,
+                detected: false,
+                last_activity_ms: None,
+                last_kind: None,
+                active_sessions: 0,
+            },
+        ])
+    }
+
+    fn quota(&self) -> anyhow::Result<Vec<QuotaSnapshot>> {
+        let now = crate::format::now_ms();
+        Ok(vec![
+            QuotaSnapshot {
+                provider: ProviderId::ClaudeCode,
+                plan: Some("Max".to_string()),
+                windows: vec![
+                    QuotaWindow {
+                        id: "five_hour".to_string(),
+                        label: "5 小时".to_string(),
+                        used_percent: 42.0,
+                        resets_at_ms: Some(now + 2 * 3_600_000 + 10 * 60_000),
+                        window_minutes: Some(300),
+                    },
+                    QuotaWindow {
+                        id: "seven_day".to_string(),
+                        label: "7 天".to_string(),
+                        used_percent: 78.0,
+                        resets_at_ms: Some(now + 2 * 86_400_000 + 17 * 3_600_000),
+                        window_minutes: Some(10_080),
+                    },
+                ],
+                credits: None,
+                fetched_at_ms: now - 3 * 60_000,
+                source: "statusline".to_string(),
+                freshness: Freshness::Live,
+            },
+            QuotaSnapshot {
+                provider: ProviderId::Codex,
+                plan: Some("Plus".to_string()),
+                windows: vec![
+                    QuotaWindow {
+                        id: "primary".to_string(),
+                        label: "5 小时".to_string(),
+                        used_percent: 18.0,
+                        resets_at_ms: Some(now + 3 * 3_600_000 + 41 * 60_000),
+                        window_minutes: Some(300),
+                    },
+                    QuotaWindow {
+                        id: "secondary".to_string(),
+                        label: "每周".to_string(),
+                        used_percent: 37.0,
+                        resets_at_ms: Some(now + 4 * 86_400_000 + 2 * 3_600_000),
+                        window_minutes: Some(10_080),
+                    },
+                ],
+                credits: Some(agenthome_core::model::Credits {
+                    balance: Some("3".to_string()),
+                    unlimited: false,
+                    has_credits: true,
+                    reset_credits: Some(3),
+                    expires_at_ms: Some(now + 6 * 86_400_000 + 14 * 3_600_000),
+                }),
+                fetched_at_ms: now - 11 * 60_000,
+                source: "rollout".to_string(),
+                freshness: Freshness::Cached,
+            },
+        ])
     }
 }
