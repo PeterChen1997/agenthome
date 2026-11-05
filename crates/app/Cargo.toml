@@ -1,0 +1,16 @@
+[package]
+name = "agenthome-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "agenthome-app"
+path = "src/main.rs"
+
+[dependencies]
+agenthome-core.workspace = true
+anyhow.workspace = true
+chrono.workspace = true
+gpui-kit.workspace = true
+serde_json.workspace = true

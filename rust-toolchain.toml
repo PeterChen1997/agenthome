@@ -1,0 +1,4 @@
+# gpui-pre 0.3.11（gpui-kit 0.9.0 锁定的 GPUI 快照）需要 Rust ≥ 1.97；本机默认 stable 为 1.96。
+# 用项目级钉版，不改全局默认。
+[toolchain]
+channel = "1.99.1"

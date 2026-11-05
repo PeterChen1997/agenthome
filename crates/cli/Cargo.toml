@@ -1,0 +1,16 @@
+[package]
+name = "agenthome-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "agenthome"
+path = "src/main.rs"
+
+[dependencies]
+agenthome-core.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+chrono.workspace = true
+unicode-width.workspace = true

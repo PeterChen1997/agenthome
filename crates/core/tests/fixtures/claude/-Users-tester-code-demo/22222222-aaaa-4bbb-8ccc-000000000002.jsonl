@@ -1,0 +1,4 @@
+{"type":"summary","summary":"不该被选中的摘要","leafUuid":"x"}
+{"parentUuid":null,"isSidechain":false,"type":"user","message":{"role":"user","content":"第二个会话的首条消息"},"uuid":"b1","timestamp":"2026-01-03T00:00:00.000Z","cwd":"/Users/tester/code/other","sessionId":"22222222-aaaa-4bbb-8ccc-000000000002","version":"2.1.301","gitBranch":"dev","entrypoint":"claude-desktop"}
+{"parentUuid":"b1","isSidechain":false,"type":"assistant","requestId":"req_b","message":{"id":"msg_b1","type":"message","role":"assistant","model":"claude-test-model","content":[{"type":"text","text":"收到。"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":2,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}},"uuid":"b2","timestamp":"2026-01-03T00:00:01.000Z","cwd":"/Users/tester/code/other","sessionId":"22222222-aaaa-4bbb-8ccc-000000000002","version":"2.1.301"}
+{"type":"custom-title","customTitle":"用户自定义标题","sessionId":"22222222-aaaa-4bbb-8ccc-000000000002"}
