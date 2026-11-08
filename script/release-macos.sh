@@ -104,5 +104,6 @@ else
   echo "== 5/5 跳过公证（未找到 API 密钥 / NOTARY_PROFILE，或设置了 SKIP_NOTARIZE）"
 fi
 
-shasum -a 256 "$ZIP" | tee "$ZIP.sha256"
+# 校验和文件只写文件名，下载者在同一目录下可直接 `shasum -a 256 -c`
+(cd "$(dirname "$ZIP")" && shasum -a 256 "$(basename "$ZIP")") | tee "$ZIP.sha256"
 echo "完成：$ZIP"
