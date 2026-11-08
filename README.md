@@ -34,6 +34,8 @@ cargo build -p agenthome-app && ./script/bundle-dev.sh && open target/AgentHome.
 | [docs/07-P1-集成记录.md](docs/07-P1-集成记录.md) | P1 集成现状、真实数据数字、版本历史、已知偏差与待办 |
 | [docs/08-构建与发布流程.md](docs/08-构建与发布流程.md) | 发版全流程：工具链、签名、公证、GitHub Release、发布后验证，含踩坑 |
 | [docs/09-开发踩坑记录.md](docs/09-开发踩坑记录.md) | GPUI、数据解析、额度、生图素材、验证工具的坑 |
+| [docs/10-设计落地清单.md](docs/10-设计落地清单.md) | 设计稿与规格逐项对照代码的验收清单、收尾批次 |
+| [docs/11-开发流水线.md](docs/11-开发流水线.md) | 每项功能从认领到发布的关卡与检查项 |
 | [docs/design/](docs/design/README.md) | 设计稿 v2.1「会动的栖息地」源文件、素材、截图、方向头脑风暴，以及实现与设计稿的差异 |
 | [docs/research/01-gpui-framework.md](docs/research/01-gpui-framework.md) | GPUI 框架深度调研原始报告 |
 | [docs/research/02-gpui-kit-ecosystem.md](docs/research/02-gpui-kit-ecosystem.md) | GPUI Kit 组件库与生态应用原始报告 |
