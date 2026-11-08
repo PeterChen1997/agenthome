@@ -5,7 +5,7 @@ use agenthome_core::model::{
 };
 use agenthome_core::statusline_setup::{self, StatuslinePaths, StatuslineStatus};
 use agenthome_core::{
-    ClaudeCodeProvider, CodexProvider, SourceProvider, Store, claude_statusline,
+    ClaudeCodeProvider, CodexProvider, RawArchive, SourceProvider, Store, claude_statusline,
     codex_rollout_quota, ingest_all, paths, pricing,
 };
 use anyhow::{Context, Result, bail};
@@ -42,6 +42,9 @@ enum Cmd {
         /// 索引数据库路径，默认 ~/AgentHome/index/agenthome.db
         #[arg(long)]
         db: Option<PathBuf>,
+        /// 只入索引，不把原件归档到 raw 层（默认归档到索引库旁的 raw 目录）
+        #[arg(long)]
+        no_raw: bool,
     },
     /// 列出会话摘要
     Sessions {
@@ -124,7 +127,8 @@ fn main() -> Result<()> {
             root,
             codex_root,
             db,
-        } => scan(root, codex_root, db),
+            no_raw,
+        } => scan(root, codex_root, db, no_raw),
         Cmd::Sessions {
             db,
             limit,
@@ -166,7 +170,12 @@ fn providers(
     )
 }
 
-fn scan(root: Option<PathBuf>, codex_root: Option<PathBuf>, db: Option<PathBuf>) -> Result<()> {
+fn scan(
+    root: Option<PathBuf>,
+    codex_root: Option<PathBuf>,
+    db: Option<PathBuf>,
+    no_raw: bool,
+) -> Result<()> {
     let (claude, codex) = providers(root, codex_root);
     let list: [&dyn SourceProvider; 2] = [&claude, &codex];
     let detected: Vec<&dyn SourceProvider> = list.iter().copied().filter(|p| p.detect()).collect();
@@ -177,7 +186,17 @@ fn scan(root: Option<PathBuf>, codex_root: Option<PathBuf>, db: Option<PathBuf>)
             codex.root().display()
         );
     }
-    let mut store = open_store(db)?;
+    let db = db.unwrap_or_else(paths::default_index_db);
+    let raw = if no_raw {
+        None
+    } else {
+        let dir = paths::raw_dir_for_db(&db);
+        Some(
+            RawArchive::open(dir.clone())
+                .with_context(|| format!("打开 raw 层 {}", dir.display()))?,
+        )
+    };
+    let mut store = open_store(Some(db))?;
     let stderr = std::io::stderr();
     let mut progress = |p: agenthome_core::Progress| {
         if p.done.is_multiple_of(50) || p.done == p.total {
@@ -190,7 +209,7 @@ fn scan(root: Option<PathBuf>, codex_root: Option<PathBuf>, db: Option<PathBuf>)
             );
         }
     };
-    let report = ingest_all(&mut store, &detected, &mut progress);
+    let report = ingest_all(&mut store, &detected, raw.as_ref(), &mut progress);
     eprintln!();
 
     for (provider, r) in &report.per_provider {
@@ -227,6 +246,20 @@ fn scan(root: Option<PathBuf>, codex_root: Option<PathBuf>, db: Option<PathBuf>)
                 first.display()
             );
         }
+        if raw.is_some() {
+            println!(
+                "原件归档: 新建 {}  追加 {}  新版本 {}  改名 {}  未变 {}  写入 {}",
+                r.raw.created,
+                r.raw.appended,
+                r.raw.new_versions,
+                r.raw.restamped,
+                r.raw.unchanged,
+                human_bytes(r.raw.bytes_copied)
+            );
+            for (p, e) in &r.raw.failed {
+                println!("  归档失败: {}: {e}", p.display());
+            }
+        }
         if !r.failed.is_empty() {
             println!("失败: {} 个文件", r.failed.len());
             for (p, e) in &r.failed {
@@ -237,12 +270,45 @@ fn scan(root: Option<PathBuf>, codex_root: Option<PathBuf>, db: Option<PathBuf>)
     let (sessions, messages) = store.counts()?;
     println!("== 合计");
     println!("库内会话: {sessions}，消息: {messages}");
+    if let Some(raw) = &raw {
+        let stats = raw.stats();
+        println!(
+            "raw 层: {} 个原件、{} 个版本，内容 {}，占用 {}（{}）",
+            stats.sessions,
+            stats.versions,
+            human_bytes(stats.content_bytes),
+            human_bytes(stats.stored_bytes),
+            raw.root().display()
+        );
+        if stats.unreadable > 0 {
+            println!("  警告: {} 个清单读不懂", stats.unreadable);
+        }
+    }
     println!("总耗时: {:.1}s", report.elapsed.as_secs_f64());
-    if !report.failed.is_empty() {
-        println!("失败合计: {} 个文件", report.failed.len());
+    if !report.failed.is_empty() || !report.raw.failed.is_empty() {
+        println!(
+            "失败合计: 解析 {} 个文件，归档 {} 个文件",
+            report.failed.len(),
+            report.raw.failed.len()
+        );
         std::process::exit(1);
     }
     Ok(())
+}
+
+fn human_bytes(bytes: u64) -> String {
+    const UNITS: [&str; 4] = ["B", "KB", "MB", "GB"];
+    let mut value = bytes as f64;
+    let mut unit = 0;
+    while value >= 1024.0 && unit < UNITS.len() - 1 {
+        value /= 1024.0;
+        unit += 1;
+    }
+    if unit == 0 {
+        format!("{bytes} B")
+    } else {
+        format!("{value:.1} {}", UNITS[unit])
+    }
 }
 
 fn sessions(

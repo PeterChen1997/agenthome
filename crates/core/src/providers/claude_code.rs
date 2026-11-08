@@ -229,6 +229,9 @@ impl SourceProvider for ClaudeCodeProvider {
     fn detect(&self) -> bool {
         ClaudeCodeProvider::detect(self)
     }
+    fn root(&self) -> &Path {
+        ClaudeCodeProvider::root(self)
+    }
     fn discover(&self) -> Discovery {
         ClaudeCodeProvider::discover(self)
     }

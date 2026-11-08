@@ -402,7 +402,7 @@ fn 入库后可查() {
     let provider = CodexProvider::new(dir.path().to_path_buf());
     let mut store = agenthome_core::Store::in_memory().unwrap();
     let list: [&dyn SourceProvider; 1] = [&provider];
-    let report = agenthome_core::ingest_all(&mut store, &list, &mut |_| {});
+    let report = agenthome_core::ingest_all(&mut store, &list, None, &mut |_| {});
     assert_eq!(report.scanned, 2);
     assert_eq!(report.parsed, 2);
     assert!(report.failed.is_empty(), "{:?}", report.failed);
@@ -446,7 +446,7 @@ fn 入库后可查() {
         );
     }
     // 再扫一次：全部未变跳过
-    let report = agenthome_core::ingest_all(&mut store, &list, &mut |_| {});
+    let report = agenthome_core::ingest_all(&mut store, &list, None, &mut |_| {});
     assert_eq!(report.skipped_unchanged, 2);
     assert_eq!(report.parsed, 0);
 }

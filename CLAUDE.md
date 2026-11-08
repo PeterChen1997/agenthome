@@ -9,13 +9,13 @@
 ## 现状
 
 - **v0.1.2 已发布并公证**：https://github.com/PeterChen1997/agenthome/releases （私有仓库 `PeterChen1997/agenthome`，分支 `main`）。2026-11-08 第二轮的改动尚未发版。
-- 已实现：Claude Code 与 Codex 会话全量入库（本机约 2,800 会话 / 35 万条消息）；**实时同步**（app 启动即扫描、库不存在自动建库，notify / FSEvents 监听来源目录、防抖 2 秒只扫变化的来源，每小时兜底全量，标题栏显示「正在入库 x/y」/「监听中 · N 个来源 · X 同步」；新数据入库后仪表盘与归档静默刷新，打开的会话追加新消息）；仪表盘（住户额度、累计 token、到期与重置、30/90 天趋势、今天、按模型 / 项目、归档健康）；归档（按日分组列表、按父会话 id 折叠子代理、会话级成本、轮次 + Trace 折叠行的会话详情、打开即停在最新一条、中文全文搜索）；**设置页基础版**（来源与同步状态 + 立即扫描、Claude statusline 一键安装 / 卸载、归档位置与索引体积、外观跟随系统 / 浅色 / 深色并持久化、合规说明、定价表版本）；**Claude 订阅额度**（后台每 15 分钟在伪终端跑官方 `claude` 的 `/usage` 读屏，桌面版用户也有数据；套餐名读自 `~/.claude.json` 的 organizationType；与终端 statusline 两路合并）；会动的像素栖息地；左侧固定导航；CLI（含 `agenthome statusline status|install|uninstall`）。
-- 质量基线：`cargo fmt --check` 干净、`cargo clippy --workspace --all-targets` 零警告、`cargo test --workspace` 79 个全绿。索引库 `SCHEMA_VERSION` = 4（旧库自动重建）。
-- **设计稿落地约 55%**：`docs/10-设计落地清单.md` 第二轮（2026-11-08）共 272 项，完成 152、部分 43、未开始 71、有意偏离 6。
+- 已实现：Claude Code 与 Codex 会话全量入库（本机约 2,800 会话 / 35 万条消息）；**实时同步**（app 启动即扫描、库不存在自动建库，notify / FSEvents 监听来源目录、防抖 2 秒只扫变化的来源，每小时兜底全量，标题栏显示「正在入库 x/y」/「监听中 · N 个来源 · X 同步」；新数据入库后仪表盘与归档静默刷新，打开的会话追加新消息）；仪表盘（住户额度、累计 token、到期与重置、30/90 天趋势、今天、按模型 / 项目、归档健康）；归档（按日分组列表、按父会话 id 折叠子代理、会话级成本、轮次 + Trace 折叠行的会话详情、打开即停在最新一条、中文全文搜索）；**设置页基础版**（来源与同步状态 + 立即扫描、Claude statusline 一键安装 / 卸载、归档位置与索引体积、外观跟随系统 / 浅色 / 深色并持久化、合规说明、定价表版本）；**Claude 订阅额度**（后台每 15 分钟在伪终端跑官方 `claude` 的 `/usage` 读屏，桌面版用户也有数据；套餐名读自 `~/.claude.json` 的 organizationType；与终端 statusline 两路合并）；**raw 层原件归档**（每个会话 jsonl 入库前先逐字节归档到 `~/AgentHome/raw/<provider>/<machineId>/<相对路径>/`，zstd 压缩、变长按字节段追加、被改写另存新版本、`manifest.json` 记 sha256 与来源；本机 2,603 个原件 9.8 GB → 占用 3.6 GB，首次 55 秒，之后每次扫描 0.5 秒）；会动的像素栖息地；左侧固定导航；CLI（含 `agenthome statusline status|install|uninstall`）。
+- 质量基线：`cargo fmt --check` 干净、`cargo clippy --workspace --all-targets` 零警告、`cargo test --workspace` 91 个全绿。索引库 `SCHEMA_VERSION` = 4（旧库自动重建）。
+- **设计稿落地约 55%**：`docs/10-设计落地清单.md` 第二轮（2026-11-08）共 273 项，完成 156、部分 43、未开始 72、有意偏离 6。
 - 第一轮审计发现的两个口径缺陷（Codex 会话级 `input_includes_cache`、孤儿子代理被静默丢弃）**已于 2026-11-08 修复**。
 - **Claude 额度已有数据**（官方 `/usage`）。用户已在设置页装了 statusline 包装脚本（只在终端 `claude` 里触发）。
-- **⚠️ 284 个 Claude 会话的原件已被 Claude Code 的 30 天自动清理删掉（2026-11-08，会话日期 08-19 ~ 09-14），完整内容现在只存在于索引库里。raw 层做好之前不要升 `SCHEMA_VERSION`、不要删库重建，否则这些会话永久丢失。** 后台 `/usage` 启动 CLI 时已用 `--settings {"cleanupPeriodDays":36500}` 避免触发清理，但用户自己在终端开 `claude` 仍会清理。
-- **还没做的核心能力**：raw 层原件拷贝（对抗 Claude 30 天自动清理，产品立足点，**现在最紧急**）、user 层持久化（星标重启即丢）、菜单栏弹窗。
+- **⚠️ 284 个 Claude 会话的原件已被 Claude Code 的 30 天自动清理删掉（2026-11-08，会话日期 08-19 ~ 09-14），完整内容现在只存在于索引库里。raw 层是在它们被删之后才做好的，**救不回这 284 个原件**：在把它们从索引导出成「重建副本」之前，不要升 `SCHEMA_VERSION`、不要删库重建，否则永久丢失。** 其余会话的原件自 2026-11-08 起都在 raw 层里。 后台 `/usage` 启动 CLI 时已用 `--settings {"cleanupPeriodDays":36500}` 避免触发清理，但用户自己在终端开 `claude` 仍会清理。
+- **还没做的核心能力**：从 raw 层重建索引（现在 `SCHEMA_VERSION` 升级仍按原件目录重建）、raw 附属文件（tool-results 等，10.47）、user 层持久化（星标重启即丢）、菜单栏弹窗。
 
 ## 从哪里开始
 
@@ -125,13 +125,13 @@ cargo fmt --all --check && cargo clippy --workspace --all-targets && cargo test 
 - 批次 1：10.31 Codex 工具失败与退出码、10.16 每会话原件状态、5.6 工具输出进全文索引、6.16 估算与真值并列。
 - 批次 2：4.12「在 Finder 显示」只差接按钮（`source_path` 已有）；4.8 详情成本标签要区分真值 / 估算；其余 3.12、3.13、4.2、4.3、4.9、4.25、2.11、2.13、2.14、6.36。
 - 批次 3：10.13 按 byte offset 增量（现在变化文件整文件重解析）、11.8 CLI `watch`、7.14–7.16 栖息地触发规则（数据已实时，working 待目视确认）、7.23–7.28 toast 走真实事件。
-- 批次 6：9.2 来源启停与 ToS 风险标签、9.3 改归档位置 / 重建索引 / raw 体积、9.9 theme.json 热加载、7.19、6.10。
-- **最优先：批次 5 的 raw 层原件拷贝**（10.1–10.3），已有 284 个会话只剩索引里的副本。
-- Claude 额度：设置页「立即刷新」按钮与仪表盘额度卡还没在截图里核对（全屏控制当时没获批）；`/usage` 读屏依赖 CLI 2.1.x 的文字格式与未公开的 `CLAUDE_CODE_CHILD_SESSION` 标记，CLI 升级后先跑 `agenthome quota --refresh-claude` 验证。
+- 批次 6：9.2 来源启停与 ToS 风险标签、9.3 改归档位置 / 重建索引、9.9 theme.json 热加载、7.19、6.10。
+- **最优先**：让索引能从 raw 层重建（provider 解析归档里的 `.jsonl.zst`，原件被清理的会话也能重建），并把只剩索引副本的 284 个会话导出成重建副本；之后 `SCHEMA_VERSION` 才能放心升级。其次 10.47 附属文件、10.16 每会话「仅归档」状态。
+- Claude 额度：设置页「立即刷新」与仪表盘额度卡已截图核对（2026-11-08）；`/usage` 读屏依赖 CLI 2.1.x 的文字格式与未公开的 `CLAUDE_CODE_CHILD_SESSION` 标记，CLI 升级后先跑 `agenthome quota --refresh-claude` 验证。
 
 其余批次：
 4. 栖息地规则与视觉令牌（纯 app）：其中 2.5、7.29 两条要先请用户决定是否算有意偏离。
-5. 持久化：user 层（星标、笔记）与 raw 层原件拷贝（依赖的实时通道已就绪）。
+5. 持久化：raw 层 10.1–10.4 已完成；剩 user 层（星标、笔记）、10.5 预览模式、10.47 附属文件。
 7. 额度与仪表盘补齐：先用真实 rollout 核对 Codex credits 字段。
 8. 归档列表与搜索增强（依赖 2）。
 9. 菜单栏弹窗（依赖 3、7；先查 gpui 是否支持 status item）。

@@ -325,3 +325,26 @@ fn same_uuid_in_two_sessions_does_not_conflict() {
     assert_eq!(store.counts().unwrap(), (2, 12));
     assert_eq!(store.messages(&b_session.id).unwrap().len(), 6);
 }
+
+/// 老用户的库早已入库完毕（index 认为原件「未变」），开启 raw 层后的第一次扫描仍要把原件全部归档，
+/// 而且 `.superseded-*` 旧副本不进归档；再扫一次全部「未变」，不重复拷贝。
+#[test]
+fn raw_layer_backfills_already_indexed_sources() {
+    let p = provider();
+    let mut store = Store::in_memory().unwrap();
+    let r0 = ingest_claude(&mut store, &p, &mut |_| {});
+    assert_eq!(r0.parsed, 3);
+
+    let tmp = tempfile::tempdir().unwrap();
+    let raw = agenthome_core::RawArchive::open(tmp.path().join("raw")).unwrap();
+    let list: [&dyn agenthome_core::SourceProvider; 1] = [&p];
+    let r1 = agenthome_core::ingest_all(&mut store, &list, Some(&raw), &mut |_| {});
+    assert_eq!(r1.skipped_unchanged, 3, "index 层不该重新解析");
+    assert_eq!(r1.raw.created, 3);
+    assert!(r1.raw.failed.is_empty(), "{:?}", r1.raw.failed);
+    assert_eq!(raw.stats().sessions, 3);
+
+    let r2 = agenthome_core::ingest_all(&mut store, &list, Some(&raw), &mut |_| {});
+    assert_eq!(r2.raw.unchanged, 3);
+    assert!(!r2.raw.wrote_anything());
+}

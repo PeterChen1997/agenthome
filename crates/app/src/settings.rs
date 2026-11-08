@@ -25,7 +25,7 @@ use crate::config::{self, Appearance};
 use crate::format::{now_ms, relative_time};
 use crate::live::LiveState;
 use crate::message_row::provider_avatar;
-use crate::sync::{ProviderSync, SyncHandle, SyncState};
+use crate::sync::{ProviderSync, RawSync, SyncHandle, SyncState};
 
 /// 库体积等慢变化信息的刷新间隔。
 const DISK_POLL: Duration = Duration::from_secs(30);
@@ -455,15 +455,24 @@ impl SettingsView {
             (Some(db), None) => format!("{} · 计算中", db.display()),
             (None, _) => "演示数据，无索引库".to_string(),
         };
-        section("归档位置", "index 层可随时删除重建；raw 层保存原件", cx)
-            .child(kv("归档目录", data_dir, cx))
-            .child(kv("索引库", index, cx))
-            .child(kv(
-                "原件（raw 层）",
-                "未开启：原件拷贝在下一批实现，届时可对抗 Claude 的 30 天自动清理".to_string(),
-                cx,
-            ))
-            .into_any_element()
+        let raw = self.sync.read(cx).raw.clone();
+        let raw_line = raw_summary(&raw, self.sync_handle.is_some());
+        let mut section = section(
+            "归档位置",
+            "raw 层逐字节保存原件，agent 自己清理了也还在；index 层可随时从头重建",
+            cx,
+        )
+        .child(kv("归档目录", data_dir, cx))
+        .child(kv("索引库", index, cx))
+        .child(kv("原件（raw 层）", raw_line, cx));
+        if let Some(failure) = raw.last_failure.or(raw.open_error) {
+            section = section.child(
+                div()
+                    .pl(px(4.))
+                    .child(muted(format!("最近的归档错误：{failure}"), cx)),
+            );
+        }
+        section.into_any_element()
     }
 
     fn render_appearance(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -497,7 +506,7 @@ impl SettingsView {
                 cx,
             ))
             .child(muted(
-                "· 不读取、不保存任何登录凭据；只读取会话文件建索引，不改动 agent 原目录（原件拷贝尚未开启）。",
+                "· 不读取、不保存任何登录凭据；只读取会话文件：原件拷贝进 ~/AgentHome/raw、解析进索引，不改动 agent 原目录。",
                 cx,
             ))
             .child(kv(
@@ -793,6 +802,33 @@ fn freshness_label(freshness: Freshness) -> &'static str {
     }
 }
 
+/// 设置页「原件（raw 层）」一行。
+fn raw_summary(raw: &RawSync, live: bool) -> String {
+    if !live {
+        return "演示数据，不归档".to_string();
+    }
+    if let Some(error) = &raw.open_error {
+        return format!("打不开，只入索引、不归档：{error}");
+    }
+    let Some(stats) = &raw.stats else {
+        return "正在首次归档原件…".to_string();
+    };
+    let mut line = format!(
+        "{} 个原件 · {} 个版本 · 内容 {} · 占用 {}",
+        stats.sessions,
+        stats.versions,
+        human_bytes(stats.content_bytes),
+        human_bytes(stats.stored_bytes)
+    );
+    if raw.failed > 0 {
+        line.push_str(&format!(" · 最近一次扫描 {} 个归档失败", raw.failed));
+    }
+    if stats.unreadable > 0 {
+        line.push_str(&format!(" · {} 个清单读不懂", stats.unreadable));
+    }
+    line
+}
+
 fn human_bytes(bytes: u64) -> String {
     const UNITS: [&str; 4] = ["B", "KB", "MB", "GB"];
     let mut value = bytes as f64;
@@ -910,6 +946,30 @@ fn kv(key: &'static str, value: String, cx: &Context<SettingsView>) -> gpui_kit:
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn raw_summary_reports_failures_instead_of_hiding_them() {
+        let mut raw = RawSync::default();
+        assert_eq!(raw_summary(&raw, false), "演示数据，不归档");
+        assert_eq!(raw_summary(&raw, true), "正在首次归档原件…");
+        raw.stats = Some(agenthome_core::RawStats {
+            sessions: 2,
+            versions: 3,
+            content_bytes: 2048,
+            stored_bytes: 512,
+            unreadable: 1,
+        });
+        raw.failed = 4;
+        assert_eq!(
+            raw_summary(&raw, true),
+            "2 个原件 · 3 个版本 · 内容 2.0 KB · 占用 512 B · 最近一次扫描 4 个归档失败 · 1 个清单读不懂"
+        );
+        raw.open_error = Some("权限不足".into());
+        assert_eq!(
+            raw_summary(&raw, true),
+            "打不开，只入索引、不归档：权限不足"
+        );
+    }
 
     #[test]
     fn index_size_is_readable() {

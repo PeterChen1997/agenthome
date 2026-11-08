@@ -5,6 +5,8 @@
 //! - notify 监听各来源根目录（10.10），变化后防抖 [`DEBOUNCE`] 再只扫变了的来源。
 //! - 每 [`FALLBACK_SCAN`] 兜底扫一次全部来源（10.12），监听丢事件也能追上。
 //!
+//! 每个原件先归档到 raw 层（10.1–10.3，`agenthome_core::raw`）再入库，归档失败不挡入库但会展示。
+//!
 //! 入库在独立线程上跑，持有自己的 `Store` 连接（WAL 下与 UI 的只读查询互不阻塞）。
 //! 线程把状态写进共享快照，前台每 [`UI_POLL`] 看一眼版本号，有变化才写回 `SyncState` 并重绘。
 
@@ -16,8 +18,8 @@ use std::time::{Duration, Instant};
 
 use agenthome_core::model::ProviderId;
 use agenthome_core::{
-    ClaudeCodeProvider, CodexProvider, Report, SourceProvider, Store, WatchEvent, ingest_all,
-    paths, watch_roots,
+    ClaudeCodeProvider, CodexProvider, RawArchive, RawStats, Report, SourceProvider, Store,
+    WatchEvent, ingest_all, paths, watch_roots,
 };
 use gpui_kit::{App, AsyncApp, Entity, Task};
 
@@ -87,6 +89,19 @@ pub struct ClaudeProbe {
     pub skipped_at_ms: Option<i64>,
 }
 
+/// raw 层原件归档的状况。
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct RawSync {
+    pub root: Option<PathBuf>,
+    /// 打开 raw 层失败的原因；此时只入索引、不归档。
+    pub open_error: Option<String>,
+    /// 最近一次统计（每次有写入后重算）。
+    pub stats: Option<RawStats>,
+    /// 最近一次扫描里归档失败的文件数与最后一条原因。
+    pub failed: usize,
+    pub last_failure: Option<String>,
+}
+
 /// 同步状态快照。`SyncState` 实体里放的就是它。
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct SyncState {
@@ -101,6 +116,7 @@ pub struct SyncState {
     /// 打开索引库失败、监听后端报错等；UI 以文字展示。
     pub error: Option<String>,
     pub claude_probe: ClaudeProbe,
+    pub raw: RawSync,
     /// 内部版本号：快照任何字段变化都加一，前台据此判断要不要重绘。
     version: u64,
 }
@@ -248,6 +264,17 @@ fn run_worker(
     };
     let claude = ClaudeCodeProvider::new(paths::claude_projects_dir());
     let codex = CodexProvider::new(paths::codex_sessions_dir());
+    let raw_root = paths::raw_dir_for_db(&db_path);
+    let raw = match RawArchive::open(raw_root.clone()) {
+        Ok(raw) => Some(raw),
+        Err(error) => {
+            update(&shared, |s| {
+                s.raw.open_error = Some(format!("{error:#}"));
+            });
+            None
+        }
+    };
+    update(&shared, |s| s.raw.root = Some(raw_root));
 
     // 先挂监听再扫：扫描期间发生的变化会排进通道，扫完立刻补一轮。
     let error_sender = watch_sender.clone();
@@ -281,7 +308,7 @@ fn run_worker(
     }
 
     let all: HashSet<ProviderId> = roots.iter().map(|(p, _)| p.clone()).collect();
-    scan(&mut store, &all, &claude, &codex, &shared);
+    scan(&mut store, raw.as_ref(), &all, &claude, &codex, &shared);
     let mut next_full = Instant::now() + FALLBACK_SCAN;
 
     loop {
@@ -307,7 +334,7 @@ fn run_worker(
                 Err(RecvTimeoutError::Disconnected) => return,
             }
         }
-        scan(&mut store, &pending, &claude, &codex, &shared);
+        scan(&mut store, raw.as_ref(), &pending, &claude, &codex, &shared);
         if pending == all {
             next_full = Instant::now() + FALLBACK_SCAN;
         }
@@ -318,6 +345,7 @@ fn run_worker(
 /// 对选中的来源跑一次增量入库，并把报告写进共享状态。
 fn scan(
     store: &mut Store,
+    raw: Option<&RawArchive>,
     which: &HashSet<ProviderId>,
     claude: &ClaudeCodeProvider,
     codex: &CodexProvider,
@@ -332,7 +360,7 @@ fn scan(
     }
     // 进度回调每个文件一次；只在跨过 1% 或换来源时才写共享状态，避免锁竞争。
     let mut last_reported: Option<(ProviderId, usize)> = None;
-    let report = ingest_all(store, &providers, &mut |progress| {
+    let report = ingest_all(store, &providers, raw, &mut |progress| {
         let step = (progress.total / 100).max(1);
         let changed = last_reported
             .as_ref()
@@ -350,7 +378,23 @@ fn scan(
     });
     let now = now_ms();
     let full = providers.len() == 2;
+    // 统计要遍历全部清单，只在有写入或还没统计过时重算。
+    let stats_stale = shared.lock().map(|s| s.raw.stats.is_none()).unwrap_or(true);
+    let raw_stats = raw
+        .filter(|_| stats_stale || report.raw.wrote_anything())
+        .map(RawArchive::stats);
     update(shared, |s| {
+        if raw.is_some() {
+            if let Some(stats) = raw_stats {
+                s.raw.stats = Some(stats);
+            }
+            s.raw.failed = report.raw.failed.len();
+            s.raw.last_failure = report
+                .raw
+                .failed
+                .last()
+                .map(|(path, error)| format!("{}：{error}", path.display()));
+        }
         s.scanning = None;
         s.last_sync_ms = Some(now);
         if full {

@@ -35,6 +35,8 @@ pub trait SourceProvider {
     fn id(&self) -> ProviderId;
     /// 本机是否存在该 agent 的数据目录。
     fn detect(&self) -> bool;
+    /// 来源根目录；raw 层用原件相对它的路径作归档 key。
+    fn root(&self) -> &Path;
     fn discover(&self) -> Discovery;
     fn parse_file(&self, path: &Path) -> Result<Parsed>;
 }

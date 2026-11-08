@@ -316,6 +316,9 @@ impl SourceProvider for FakeProvider {
     fn detect(&self) -> bool {
         self.1
     }
+    fn root(&self) -> &std::path::Path {
+        std::path::Path::new("/nonexistent")
+    }
     fn discover(&self) -> Discovery {
         Discovery::default()
     }

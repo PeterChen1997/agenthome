@@ -229,6 +229,9 @@ impl SourceProvider for CodexProvider {
     fn detect(&self) -> bool {
         CodexProvider::detect(self)
     }
+    fn root(&self) -> &Path {
+        CodexProvider::root(self)
+    }
     fn discover(&self) -> Discovery {
         CodexProvider::discover(self)
     }

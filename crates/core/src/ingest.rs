@@ -1,8 +1,9 @@
-//! 扫描 + 解析 + 入库。只做 index 层，原件只读，不拷贝。
+//! 扫描 + 解析 + 入库。原件只读；开了 raw 层时先把原件归档（`raw.rs`），再解析进 index 层。
 
 use crate::model::ProviderId;
 use crate::providers::SourceProvider;
 use crate::providers::claude_code::ClaudeCodeProvider;
+use crate::raw::{RawArchive, RawReport};
 use crate::store::Store;
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
@@ -39,6 +40,8 @@ pub struct Report {
     /// 同一次扫描里两个文件算出同一个 session id：(后来者路径, 先到者路径)。后来者覆盖先到者。
     pub id_collisions: Vec<(PathBuf, PathBuf)>,
     pub elapsed: Duration,
+    /// raw 层归档结果；没开 raw 层时全是 0。
+    pub raw: RawReport,
     /// `ingest_all` 时按来源拆开的子报告（子报告自身的 `per_provider` 为空）。
     pub per_provider: Vec<(ProviderId, Report)>,
 }
@@ -63,14 +66,17 @@ impl Report {
         }
         self.id_collisions
             .extend(other.id_collisions.iter().cloned());
+        self.raw.merge(&other.raw);
         self.elapsed += other.elapsed;
     }
 }
 
 /// 顺序跑每个来源并合并报告。来源目录不存在（`detect() == false`）的跳过，不算失败。
+/// `raw` 为 `Some` 时每个原件先归档再入库；归档失败记进 `report.raw.failed`，不挡入库。
 pub fn ingest_all(
     store: &mut Store,
     providers: &[&dyn SourceProvider],
+    raw: Option<&RawArchive>,
     progress: &mut dyn FnMut(Progress),
 ) -> Report {
     let start = Instant::now();
@@ -79,7 +85,7 @@ pub fn ingest_all(
         if !p.detect() {
             continue;
         }
-        let r = ingest_one(store, *p, progress);
+        let r = ingest_one(store, *p, raw, progress);
         total.merge(&r);
         total.per_provider.push((p.id(), r));
     }
@@ -93,12 +99,13 @@ pub fn ingest_claude(
     provider: &ClaudeCodeProvider,
     progress: &mut dyn FnMut(Progress),
 ) -> Report {
-    ingest_one(store, provider, progress)
+    ingest_one(store, provider, None, progress)
 }
 
 fn ingest_one(
     store: &mut Store,
     provider: &dyn SourceProvider,
+    raw: Option<&RawArchive>,
     progress: &mut dyn FnMut(Progress),
 ) -> Report {
     let start = Instant::now();
@@ -110,6 +117,13 @@ fn ingest_one(
     let mut seen_ids: HashMap<String, PathBuf> = HashMap::new();
 
     for (i, path) in discovery.files.into_iter().enumerate() {
+        // 先归档：与 index 是否已最新无关（老用户的库早已入库，原件却从没拷过），解析失败的原件也要留。
+        if let Some(raw) = raw {
+            match raw.archive(&provider.id(), provider.root(), &path) {
+                Ok(outcome) => report.raw.record(&outcome),
+                Err(e) => report.raw.failed.push((path.clone(), format!("{e:#}"))),
+            }
+        }
         match process_one(store, provider, &path, &mut report, &mut seen_ids) {
             Ok(()) => {}
             Err(e) => report.failed.push((path.clone(), format!("{e:#}"))),
