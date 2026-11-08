@@ -234,7 +234,7 @@ impl Message {
 }
 
 /// 列表页用的轻量摘要，不带消息体。
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SessionSummary {
     pub id: String,
     pub provider: ProviderId,
@@ -248,6 +248,17 @@ pub struct SessionSummary {
     pub message_count: u32,
     pub usage: Usage,
     pub models: Vec<String>,
+    /// 父会话 id：Claude 子代理指向主会话，Codex 子线程 / 续写文件指向原会话。
+    pub parent_session_id: Option<String>,
+    /// 原件路径（入库时的 `source.path`）；空串视为 None。
+    pub source_path: Option<String>,
+    /// 会话级成本（USD）：有 agent 自记真值（Claude cost-state `totalCostUSD`）时用真值，
+    /// 否则为会话内消息 `cost_usd` 之和；全部消息都无法计价时为 None。
+    /// 注意：Claude 主会话的真值已含其子代理，不要再把子代理成本叠加上去。
+    pub cost_usd: Option<f64>,
+    /// `cost_usd` 的出处：`Recorded` = agent-reported，`Estimated` = 按定价表 computed，
+    /// `Unknown` = 无成本。会话级不会出现 `Mixed`。
+    pub cost_source: CostSource,
 }
 
 /// 列表查询。

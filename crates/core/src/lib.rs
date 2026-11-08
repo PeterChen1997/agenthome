@@ -8,6 +8,8 @@
 //! - `pricing`：内嵌定价表与成本估算。
 //! - `signals`：额度信号（Claude statusline 文件、Codex rollout 快照）。
 //! - `paths`：默认目录。
+//! - `statusline_setup`：Claude statusline 包装脚本的一键安装 / 卸载（改 ~/.claude/settings.json）。
+//! - `watch`：来源目录的文件监听（notify / FSEvents）。
 
 pub mod ingest;
 pub mod model;
@@ -15,11 +17,15 @@ pub mod paths;
 pub mod pricing;
 pub mod providers;
 pub mod signals;
+pub mod statusline_setup;
 pub mod store;
+pub mod watch;
 
 pub use ingest::{Progress, Report, ingest_all, ingest_claude};
 pub use providers::claude_code::ClaudeCodeProvider;
 pub use providers::codex::CodexProvider;
 pub use providers::{Discovery, Parsed, SourceProvider};
 pub use signals::{claude_statusline, codex_rollout_quota};
+pub use statusline_setup::{InstallReport, StatuslinePaths, StatuslineStatus, UninstallReport};
 pub use store::Store;
+pub use watch::{RootWatcher, WatchEvent, watch_roots};

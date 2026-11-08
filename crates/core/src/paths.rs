@@ -39,3 +39,16 @@ pub fn signals_dir() -> PathBuf {
 pub fn claude_statusline_path() -> PathBuf {
     signals_dir().join("claude-statusline.json")
 }
+
+/// `~/.claude/settings.json`：Claude Code 用户级设置（statusLine 在这里配置）。
+pub fn claude_settings_path() -> PathBuf {
+    dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".claude")
+        .join("settings.json")
+}
+
+/// `~/AgentHome/bin`：AgentHome 托管的可执行脚本（statusline 包装脚本）。
+pub fn agenthome_bin_dir() -> PathBuf {
+    default_data_dir().join("bin")
+}

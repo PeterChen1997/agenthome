@@ -1,12 +1,17 @@
 //! 额度信号：都来自本机文件，不走网络、不碰鉴权。
 //!
 //! - `claude_statusline`：statusline 包装脚本写下的最近一次 JSON（见 docs/06-statusline-安装.md）。
+//! - `claude_usage`：后台在伪终端跑官方 `claude` 的 `/usage` 读屏得到的快照（只用桌面版时的来源）。
 //! - `codex_rollout_quota`：最新 rollout 里最后一条 `token_count.rate_limits`。
 
 pub mod claude_statusline;
+pub mod claude_usage;
 pub mod codex_rollout;
 
 pub use claude_statusline::claude_statusline;
+pub use claude_usage::{
+    claude_usage_snapshot, find_claude_binary, merge_claude, refresh_claude_usage,
+};
 pub use codex_rollout::codex_rollout_quota;
 
 use crate::model::Freshness;

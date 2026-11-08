@@ -164,6 +164,9 @@ impl CodexProvider {
             m.session_id = session_id.clone();
         }
 
+        // 会话级 usage = 各消息 usage 之和；消息级已在 `parse_usage` / `diff_usage` 里减去缓存读，
+        // 所以这里沿用"新鲜输入"口径，`input_includes_cache` 保持 false，
+        // 否则 `pricing::estimate_usd` 会把缓存读再扣一次。
         let mut usage = Usage::default();
         let mut models: Vec<String> = Vec::new();
         for m in &messages {
@@ -176,7 +179,6 @@ impl CodexProvider {
                 models.push(model.clone());
             }
         }
-        usage.input_includes_cache = true;
 
         let title = messages.iter().find_map(first_user_title);
         let started_at_ms = st

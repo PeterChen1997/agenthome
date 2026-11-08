@@ -8,7 +8,8 @@ description = "AgentHome 数据层：规范化会话模型、Provider、SQLite �
 [dependencies]
 anyhow.workspace = true
 serde.workspace = true
-serde_json.workspace = true
+# preserve_order：statusline 安装器改写 ~/.claude/settings.json 时要保留用户原有键顺序（statusline_setup.rs）。
+serde_json = { workspace = true, features = ["preserve_order"] }
 rusqlite.workspace = true
 chrono.workspace = true
 dirs.workspace = true
@@ -16,6 +17,9 @@ walkdir.workspace = true
 sha2.workspace = true
 hostname.workspace = true
 zstd.workspace = true
+notify.workspace = true
+portable-pty.workspace = true
+vt100.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

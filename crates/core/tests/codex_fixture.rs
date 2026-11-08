@@ -307,7 +307,10 @@ fn 新格式_聚合与去重() {
     assert_eq!(s.usage.input_tokens, 600);
     assert_eq!(s.usage.output_tokens, 80);
     assert_eq!(s.usage.requests, 2);
-    assert!(s.usage.input_includes_cache);
+    assert!(
+        !s.usage.input_includes_cache,
+        "会话级 usage 由消息级累加，已是新鲜输入口径"
+    );
     assert_eq!(s.message_count, 6);
     assert_eq!(s.started_at_ms, 1_793_889_250_000);
     // 成本：gpt-5-codex，(400*1.25 + 600*0.125 + 50*10) + (200*1.25 + 1000*0.125 + 30*10) 每百万
@@ -412,8 +415,70 @@ fn 入库后可查() {
     assert_eq!(health.len(), 1);
     assert_eq!(health[0].compressed, 1);
     assert_eq!(health[0].archive_only, 0);
+    // 列表摘要的会话级成本 = 该会话各消息估算之和（Codex 无真值，来源为 computed）
+    let summaries = store
+        .list_sessions(&agenthome_core::model::SessionQuery::default())
+        .unwrap();
+    assert_eq!(summaries.len(), 2);
+    for sum in &summaries {
+        let expect: f64 = store
+            .messages(&sum.id)
+            .unwrap()
+            .iter()
+            .filter_map(|m| {
+                agenthome_core::pricing::estimate_usd(m.model.as_deref()?, m.usage.as_ref()?)
+            })
+            .sum();
+        let got = sum.cost_usd.expect("fixture 模型都在定价表里");
+        assert!(
+            (got - expect).abs() < 1e-12,
+            "{}: {got} vs {expect}",
+            sum.id
+        );
+        assert_eq!(
+            sum.cost_source,
+            agenthome_core::model::CostSource::Estimated
+        );
+        assert!(
+            sum.source_path
+                .as_deref()
+                .is_some_and(|p| p.contains("rollout-"))
+        );
+    }
     // 再扫一次：全部未变跳过
     let report = agenthome_core::ingest_all(&mut store, &list, &mut |_| {});
     assert_eq!(report.skipped_unchanged, 2);
     assert_eq!(report.parsed, 0);
+}
+
+/// 10.29：会话级 usage 与消息级同为"新鲜输入"口径。若会话级误标 `input_includes_cache = true`，
+/// 定价会把缓存读从 input 里再扣一次，列表上的 Codex 成本就会系统性偏低。
+/// 新旧两种格式（token_usage_record / token_count 差值）都要成立。
+#[test]
+fn 会话级估算成本等于消息之和_不二次扣缓存() {
+    let dir = tempfile::tempdir().unwrap();
+    let (p_new, p_old) = write_fixture(dir.path());
+    let provider = CodexProvider::new(dir.path().to_path_buf());
+    for path in [p_new, p_old] {
+        let parsed = provider.parse_file(&path).unwrap();
+        let s = &parsed.session;
+        let model = s.models.first().expect("fixture 只有一个模型");
+        assert!(
+            s.usage.cache_read_tokens > 0,
+            "fixture 必须带缓存读，否则测不出二次扣减"
+        );
+        let per_message: f64 = parsed
+            .messages
+            .iter()
+            .filter_map(|m| m.usage.as_ref())
+            .map(|u| agenthome_core::pricing::estimate_usd(model, u).unwrap())
+            .sum();
+        let session_level = agenthome_core::pricing::estimate_usd(model, &s.usage).unwrap();
+        assert!(
+            (session_level - per_message).abs() < 1e-12,
+            "{}: 会话级 {session_level} 与消息之和 {per_message} 不一致",
+            path.display()
+        );
+        assert!((s.estimated_cost_usd.unwrap() - per_message).abs() < 1e-12);
+    }
 }

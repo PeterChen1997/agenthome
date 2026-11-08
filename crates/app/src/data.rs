@@ -97,7 +97,80 @@ const ASSISTANT_MARKDOWN: [&str; 3] = [
     "我已经把三处 warning 处理完了：\n\n| 位置 | 原因 | 处理 |\n|---|---|---|\n| `data.rs:42` | 未使用的变量 | 删除 |\n| `format.rs:10` | 可用 `?` 简化 | 改写 |\n| `main.rs:5` | 多余的 `mut` | 删除 |\n\n`cargo clippy` 现在零 warning。",
 ];
 
-/// 内存 mock：8 个项目、约 60 个会话，其中第一个会话有 10,000 条消息。
+const SUBAGENT_TITLES: [&str; 3] = [
+    "子代理：搜索相关调用点",
+    "子代理：跑测试并汇总失败",
+    "子代理：审阅改动",
+];
+
+/// mock 会话的原料；`mock_summary` 据此补齐原件路径与会话级成本。
+struct MockSession {
+    id: String,
+    provider: ProviderId,
+    kind: SessionKind,
+    title: String,
+    cwd: String,
+    project_name: &'static str,
+    started_at_ms: i64,
+    updated_at_ms: i64,
+    message_count: u32,
+    usage: Usage,
+    models: Vec<String>,
+    parent_session_id: Option<String>,
+    /// Some(f)：有 agent 自记真值，取估算 × f；None：按定价表估算。
+    recorded_factor: Option<f64>,
+}
+
+/// 像真实库那样补齐 `source_path` / `cost_usd` / `cost_source`。
+fn mock_summary(m: MockSession) -> SessionSummary {
+    let native = m.id.splitn(3, ':').nth(2).unwrap_or(&m.id).to_string();
+    let source_path = match m.provider {
+        ProviderId::ClaudeCode => {
+            let dir = m.cwd.replace('/', "-");
+            match native.split_once('/') {
+                Some((parent, agent)) => {
+                    format!("/Users/peter/.claude/projects/{dir}/{parent}/subagents/{agent}.jsonl")
+                }
+                None => format!("/Users/peter/.claude/projects/{dir}/{native}.jsonl"),
+            }
+        }
+        ProviderId::Codex => {
+            format!(
+                "/Users/peter/.codex/sessions/2026/11/05/rollout-2026-11-05T09-00-00-{native}.jsonl"
+            )
+        }
+        _ => format!("/Users/peter/.gemini/tmp/{native}/chats/session.json"),
+    };
+    let estimated = m
+        .models
+        .first()
+        .and_then(|model| agenthome_core::pricing::estimate_usd(model, &m.usage));
+    let (cost_usd, cost_source) = match (m.recorded_factor, estimated) {
+        (Some(f), Some(c)) => (Some(c * f), CostSource::Recorded),
+        (_, Some(c)) => (Some(c), CostSource::Estimated),
+        (_, None) => (None, CostSource::Unknown),
+    };
+    SessionSummary {
+        id: m.id,
+        provider: m.provider,
+        kind: m.kind,
+        title: m.title,
+        cwd: Some(m.cwd),
+        project_name: m.project_name.to_string(),
+        started_at_ms: m.started_at_ms,
+        updated_at_ms: m.updated_at_ms,
+        message_count: m.message_count,
+        usage: m.usage,
+        models: m.models,
+        parent_session_id: m.parent_session_id,
+        source_path: Some(source_path),
+        cost_usd,
+        cost_source,
+    }
+}
+
+/// 内存 mock：8 个项目、约 60 个主会话，其中第一个会话有 10,000 条消息；
+/// 部分 Claude 会话带子代理（有 parent id），另有两个找不到父会话的孤儿子代理。
 pub struct MockDataSource {
     projects: Vec<ProjectRow>,
     sessions: Vec<SessionSummary>,
@@ -141,24 +214,105 @@ impl MockDataSource {
                 requests: u64::from(message_count) / 2,
                 ..Usage::default()
             };
-            sessions.push(SessionSummary {
-                id: format!("{}:mock-machine:{i:04}", provider.as_str()),
-                provider,
+            let id = format!("{}:mock-machine:{i:04}", provider.as_str());
+            let cwd = format!("/Users/peter/code_hub/{project_name}");
+            // 每三个 Claude 会话里有一个带 cost-state 真值（比估算略高），其余按定价表估算。
+            let recorded = (provider == ProviderId::ClaudeCode && i % 3 == 0).then_some(1.08);
+            let started_at_ms = updated_at_ms - duration_ms;
+            sessions.push(mock_summary(MockSession {
+                id: id.clone(),
+                provider: provider.clone(),
                 kind: SessionKind::Main,
                 title: if i == 0 {
                     "超长会话：一万条消息压力测试".to_string()
                 } else {
                     format!("{title}（{}）", i + 1)
                 },
-                cwd: Some(format!("/Users/peter/code_hub/{project_name}")),
-                project_name: project_name.to_string(),
-                started_at_ms: updated_at_ms - duration_ms,
+                cwd: cwd.clone(),
+                project_name,
+                started_at_ms,
                 updated_at_ms,
                 message_count,
                 usage,
                 models,
-            });
+                parent_session_id: None,
+                recorded_factor: recorded,
+            }));
+            // 约四分之一的 Claude 会话派生 1~3 个子代理，带 parent id，时间落在父会话区间内。
+            if provider == ProviderId::ClaudeCode && i % 4 == 1 {
+                let count = rng.below(3) + 1;
+                for k in 0..count {
+                    let offset =
+                        i64::try_from(rng.below(duration_ms.unsigned_abs() / 2)).unwrap_or(0);
+                    let sub_start = started_at_ms + offset;
+                    let sub_messages = u32::try_from(rng.below(24)).unwrap_or(0) + 4;
+                    sessions.push(mock_summary(MockSession {
+                        id: format!("{id}/agent-{k}"),
+                        provider: provider.clone(),
+                        kind: SessionKind::Subagent,
+                        title: SUBAGENT_TITLES
+                            .get(usize::try_from(k).unwrap_or(0) % SUBAGENT_TITLES.len())
+                            .copied()
+                            .unwrap_or("子代理")
+                            .to_string(),
+                        cwd: cwd.clone(),
+                        project_name,
+                        started_at_ms: sub_start,
+                        updated_at_ms: (sub_start + 300_000).min(updated_at_ms),
+                        message_count: sub_messages,
+                        usage: Usage {
+                            input_tokens: per_message * u64::from(sub_messages) / 2,
+                            output_tokens: per_message * u64::from(sub_messages) / 8,
+                            cache_read_tokens: per_message * u64::from(sub_messages) / 3,
+                            requests: u64::from(sub_messages) / 2,
+                            ..Usage::default()
+                        },
+                        models: vec!["claude-sonnet-4-5".to_string()],
+                        parent_session_id: Some(id.clone()),
+                        recorded_factor: None,
+                    }));
+                }
+            }
         }
+        // 两个孤儿子代理：一个的父会话原件已被清理（parent id 指向不存在的会话），
+        // 一个是旧版本没写 parent id、启发式也匹配不到。列表里必须仍能看到它们。
+        let orphan_usage = Usage {
+            input_tokens: 42_000,
+            output_tokens: 6_100,
+            cache_read_tokens: 180_000,
+            requests: 9,
+            ..Usage::default()
+        };
+        sessions.push(mock_summary(MockSession {
+            id: "claude-code:mock-machine:0999/agent-0".to_string(),
+            provider: ProviderId::ClaudeCode,
+            kind: SessionKind::Subagent,
+            title: "子代理：核对 Codex 成本口径".to_string(),
+            cwd: "/Users/peter/code_hub/agenthome".to_string(),
+            project_name: "agenthome",
+            started_at_ms: now_ms - 2 * 3_600_000,
+            updated_at_ms: now_ms - 2 * 3_600_000 + 240_000,
+            message_count: 18,
+            usage: orphan_usage,
+            models: vec!["claude-sonnet-4-5".to_string()],
+            parent_session_id: Some("claude-code:mock-machine:0999".to_string()),
+            recorded_factor: None,
+        }));
+        sessions.push(mock_summary(MockSession {
+            id: "claude-code:mock-machine:legacy/agent-7".to_string(),
+            provider: ProviderId::ClaudeCode,
+            kind: SessionKind::Subagent,
+            title: "子代理：整理旧脚本".to_string(),
+            cwd: "/Users/peter/code_hub/infra-scripts/legacy".to_string(),
+            project_name: "legacy",
+            started_at_ms: now_ms - 12 * 86_400_000,
+            updated_at_ms: now_ms - 12 * 86_400_000 + 600_000,
+            message_count: 11,
+            usage: orphan_usage,
+            models: vec!["claude-opus-4-1".to_string()],
+            parent_session_id: None,
+            recorded_factor: None,
+        }));
         sessions.sort_by_key(|s| std::cmp::Reverse(s.updated_at_ms));
 
         let projects = PROJECTS

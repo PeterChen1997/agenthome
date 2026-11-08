@@ -394,3 +394,53 @@ fn 到期判断看原件_mtime() {
     assert_eq!(h[0].archive_only, 0);
     assert_eq!(h[0].expiring_within_7d, 1);
 }
+
+/// 10.15 / 10.21 / 10.35：列表摘要要带父会话、原件路径与会话级成本。
+/// 成本口径与仪表盘 `All` 一致：真值优先（即使估算不同也不混用），无真值用估算，都没有就是 None
+/// ——列表不能因为"没价"而显示 $0，也不能把 Claude 真值与估算混成一个数。
+#[test]
+fn 列表摘要_父会话_原件路径_会话级成本() {
+    let mut store = Store::in_memory().unwrap();
+    seed(&mut store);
+    let now = now_ms();
+    let mut sub = session(
+        "claude-code:m:a/agent-1",
+        ProviderId::ClaudeCode,
+        "/w/proj-x",
+        now - 90_000,
+        None,
+    );
+    sub.kind = SessionKind::Subagent;
+    sub.parent_session_id = Some("claude-code:m:a".to_string());
+    store.store_parsed(&sub, &[]).unwrap();
+
+    let list = store
+        .list_sessions(&agenthome_core::model::SessionQuery::default())
+        .unwrap();
+    let get = |id: &str| list.iter().find(|s| s.id == id).unwrap().clone();
+
+    let a = get("claude-code:m:a");
+    assert_eq!(
+        a.cost_usd,
+        Some(9.0),
+        "有 cost-state 真值时用真值，不用估算 $4"
+    );
+    assert_eq!(a.cost_source, CostSource::Recorded);
+    assert_eq!(a.parent_session_id, None);
+    assert_eq!(
+        a.source_path.as_deref(),
+        Some("/nonexistent/claude-code:m:a.jsonl")
+    );
+
+    let b = get("claude-code:m:b");
+    assert_eq!(b.cost_usd, Some(4.0));
+    assert_eq!(b.cost_source, CostSource::Estimated);
+
+    let d = get("codex:m:d");
+    assert_eq!(d.cost_usd, None, "未知模型不可计价，不能当成 $0");
+    assert_eq!(d.cost_source, CostSource::Unknown);
+
+    let s = get("claude-code:m:a/agent-1");
+    assert_eq!(s.kind, SessionKind::Subagent);
+    assert_eq!(s.parent_session_id.as_deref(), Some("claude-code:m:a"));
+}

@@ -1,8 +1,9 @@
-//! agenthome 命令行：scan / sessions / show / stats / quota / activity。
+//! agenthome 命令行：scan / sessions / show / stats / quota / activity / statusline。
 
 use agenthome_core::model::{
     ContentBlock, CostSource, Freshness, Period, ProviderId, Role, SessionQuery,
 };
+use agenthome_core::statusline_setup::{self, StatuslinePaths, StatuslineStatus};
 use agenthome_core::{
     ClaudeCodeProvider, CodexProvider, SourceProvider, Store, claude_statusline,
     codex_rollout_quota, ingest_all, paths, pricing,
@@ -81,6 +82,9 @@ enum Cmd {
         /// statusline 快照文件，默认 ~/AgentHome/signals/claude-statusline.json
         #[arg(long)]
         statusline: Option<PathBuf>,
+        /// 先在后台跑一次官方 `claude` 的 /usage 刷新 Claude 订阅额度（约 10 秒，不发对话、不耗 token）
+        #[arg(long)]
+        refresh_claude: bool,
     },
     /// 各来源最近活动
     Activity {
@@ -91,6 +95,27 @@ enum Cmd {
         #[arg(long)]
         codex_root: Option<PathBuf>,
     },
+    /// Claude statusline 包装脚本：查看 / 安装 / 卸载（改 ~/.claude/settings.json，改前自动备份）
+    Statusline {
+        #[command(subcommand)]
+        action: StatuslineAction,
+        /// Claude Code 设置文件，默认 ~/.claude/settings.json
+        #[arg(long, global = true)]
+        settings: Option<PathBuf>,
+        /// 包装脚本目录，默认 ~/AgentHome/bin
+        #[arg(long, global = true)]
+        bin_dir: Option<PathBuf>,
+    },
+}
+
+#[derive(Subcommand)]
+enum StatuslineAction {
+    /// 只读：查看当前接入状态
+    Status,
+    /// 安装（或更新）包装脚本并接入 statusLine，保留原有 statusline 显示
+    Install,
+    /// 卸载：statusLine 还原为原命令（原来没有就删掉），不删 signals 数据
+    Uninstall,
 }
 
 fn main() -> Result<()> {
@@ -111,12 +136,18 @@ fn main() -> Result<()> {
         Cmd::Quota {
             codex_root,
             statusline,
-        } => quota(codex_root, statusline),
+            refresh_claude,
+        } => quota(codex_root, statusline, refresh_claude),
         Cmd::Activity {
             db,
             root,
             codex_root,
         } => activity(db, root, codex_root),
+        Cmd::Statusline {
+            action,
+            settings,
+            bin_dir,
+        } => statusline(action, settings, bin_dir),
     }
 }
 
@@ -533,9 +564,30 @@ fn stats(db: Option<PathBuf>, period: Option<PeriodArg>, days: Option<u32>) -> R
     Ok(())
 }
 
-fn quota(codex_root: Option<PathBuf>, statusline: Option<PathBuf>) -> Result<()> {
+fn quota(
+    codex_root: Option<PathBuf>,
+    statusline: Option<PathBuf>,
+    refresh_claude: bool,
+) -> Result<()> {
+    let usage_path = agenthome_core::signals::claude_usage::claude_usage_path();
+    if refresh_claude {
+        let claude = agenthome_core::signals::find_claude_binary().ok_or_else(|| {
+            anyhow::anyhow!("找不到官方 claude 命令（~/.local/bin、/opt/homebrew/bin、PATH）")
+        })?;
+        println!("正在后台运行 {} /usage …", claude.display());
+        agenthome_core::signals::refresh_claude_usage(
+            &claude,
+            &paths::default_data_dir(),
+            &usage_path,
+        )?;
+    }
+    println!("== Claude Code（/usage 快照 {}）", usage_path.display());
+    match agenthome_core::signals::claude_usage_snapshot(Some(&usage_path))? {
+        Some(s) => print_snapshot(&s),
+        None => println!("无快照：用 --refresh-claude 跑一次，或等 app 定时刷新。"),
+    }
     let sl_path = statusline.unwrap_or_else(paths::claude_statusline_path);
-    println!("== Claude Code（statusline 快照 {}）", sl_path.display());
+    println!("\n== Claude Code（statusline 快照 {}）", sl_path.display());
     match claude_statusline(Some(&sl_path))? {
         Some(s) => print_snapshot(&s),
         None => println!(
@@ -610,6 +662,128 @@ fn activity(db: Option<PathBuf>, root: Option<PathBuf>, codex_root: Option<PathB
         .collect();
     print_table(&header, &body);
     Ok(())
+}
+
+fn statusline(
+    action: StatuslineAction,
+    settings: Option<PathBuf>,
+    bin_dir: Option<PathBuf>,
+) -> Result<()> {
+    let defaults = StatuslinePaths::defaults();
+    let p = StatuslinePaths {
+        settings: settings.unwrap_or(defaults.settings),
+        bin_dir: bin_dir.unwrap_or(defaults.bin_dir),
+    };
+    match action {
+        StatuslineAction::Status => {
+            println!("设置文件: {}", p.settings.display());
+            println!("托管脚本: {}", p.script_path().display());
+            print_statusline_status(&statusline_setup::status(&p));
+        }
+        StatuslineAction::Install => {
+            let r = statusline_setup::install(&p)?;
+            println!(
+                "包装脚本: {}（{}）",
+                r.script_path.display(),
+                if r.script_written {
+                    "已写入"
+                } else {
+                    "已是最新，未改动"
+                }
+            );
+            if r.settings_changed {
+                println!(
+                    "已{} {} 的 statusLine",
+                    if r.settings_created {
+                        "新建设置文件并写入"
+                    } else {
+                        "修改"
+                    },
+                    p.settings.display()
+                );
+            } else {
+                println!("statusLine 已接入，未改动设置文件");
+            }
+            if let Some(b) = &r.backup_path {
+                println!("改动前的备份: {}", b.display());
+            }
+            match &r.wrapped_command {
+                Some(c) => println!("原 statusline 命令已保留并由包装脚本转交: {c}"),
+                None => println!("原来没有 statusline，将显示 AgentHome 的极简状态行"),
+            }
+            println!("当前命令: {}", r.command);
+            println!(
+                "下一步: 开一个新的 Claude Code 会话说一句话，再运行 `agenthome quota` 确认能看到 5 小时 / 7 天额度。"
+            );
+        }
+        StatuslineAction::Uninstall => {
+            let r = statusline_setup::uninstall(&p)?;
+            if !r.settings_changed {
+                println!("没有接入 AgentHome 包装脚本，未做任何改动");
+                return Ok(());
+            }
+            match &r.restored_command {
+                Some(c) => println!("statusLine 已还原为原命令: {c}"),
+                None => println!("原来没有 statusline，已删除 statusLine 键"),
+            }
+            if let Some(b) = &r.backup_path {
+                println!("改动前的备份: {}", b.display());
+            }
+            println!(
+                "未删除托管脚本与 {} 下的额度快照；不需要可手动删除。",
+                paths::signals_dir().display()
+            );
+        }
+    }
+    Ok(())
+}
+
+fn print_statusline_status(s: &StatuslineStatus) {
+    match s {
+        StatuslineStatus::SettingsMissing => {
+            println!("状态: 设置文件不存在（安装时会新建）");
+        }
+        StatuslineStatus::SettingsUnreadable { error } => {
+            println!("状态: 设置文件无法解析，安装 / 卸载都不会改动它");
+            println!("原因: {error}");
+        }
+        StatuslineStatus::NotConfigured => {
+            println!("状态: 未安装（当前没有 statusline）");
+        }
+        StatuslineStatus::OtherCommand { command } => {
+            println!("状态: 未安装（当前 statusline 是其他命令，安装后会保留它的显示）");
+            println!("当前命令: {command}");
+        }
+        StatuslineStatus::Installed {
+            wrapped_command,
+            script_up_to_date,
+        } => {
+            println!("状态: 已安装");
+            println!(
+                "被包装的原命令: {}",
+                wrapped_command.as_deref().unwrap_or("(无)")
+            );
+            if !script_up_to_date {
+                println!("提示: 托管脚本缺失或不是最新版本，重新运行 install 即可修复");
+            }
+        }
+        StatuslineStatus::InstalledElsewhere {
+            script_path,
+            wrapped_command,
+        } => {
+            println!("状态: 已安装（手工接入，脚本不在托管位置）");
+            println!("脚本: {script_path}");
+            println!(
+                "被包装的原命令: {}",
+                wrapped_command.as_deref().unwrap_or("(无)")
+            );
+            println!("提示: 运行 install 会改指托管脚本并保留原命令");
+        }
+        StatuslineStatus::Unrecognized { reason } => {
+            println!("状态: statusLine 无法识别，安装会拒绝，请手工处理");
+            println!("原因: {reason}");
+        }
+    }
 }
 
 fn cost_source_str(c: CostSource) -> &'static str {

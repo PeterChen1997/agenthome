@@ -403,7 +403,9 @@ impl Render for DueCard {
 
 /// 快照 `source` 是文件路径，界面只显示来源种类。
 fn source_label(source: &str) -> &'static str {
-    if source.contains("rollout") {
+    if source.contains("/usage") {
+        "官方 /usage"
+    } else if source.contains("rollout") {
         "rollout 快照"
     } else if source.contains("statusline") {
         "statusline"

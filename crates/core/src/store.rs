@@ -13,7 +13,8 @@ use anyhow::{Context, Result, bail};
 use rusqlite::{Connection, OptionalExtension, Row, params};
 use std::path::{Path, PathBuf};
 
-const SCHEMA_VERSION: i32 = 3;
+/// v4：Codex 会话级 `input_includes_cache` 改为 false（10.29），旧库里的 Codex 会话行需要重建。
+const SCHEMA_VERSION: i32 = 4;
 
 pub struct Store {
     conn: Connection,
@@ -105,7 +106,10 @@ impl Store {
         }
         let conn =
             Connection::open(path).with_context(|| format!("打开数据库 {}", path.display()))?;
-        conn.execute_batch("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;")?;
+        // busy_timeout：app 的同步线程与 CLI `scan` 可能同时写，写锁冲突时等待而不是立刻失败。
+        conn.execute_batch(
+            "PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA busy_timeout = 5000;",
+        )?;
         Self::init(conn)
     }
 
@@ -178,7 +182,8 @@ impl Store {
             "SELECT id, provider, kind, title, cwd, project_name, started_at_ms, updated_at_ms,
                     message_count, models_json, input_tokens, output_tokens, cache_read_tokens,
                     cache_write_tokens, cache_write_5m_tokens, cache_write_1h_tokens,
-                    reasoning_tokens, requests, input_includes_cache
+                    reasoning_tokens, requests, input_includes_cache,
+                    parent_session_id, source_path, recorded_cost_usd, estimated_cost_usd
              FROM sessions WHERE 1 = 1",
         );
         let mut args: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
@@ -834,6 +839,16 @@ fn models_from_json(s: &str, idx: usize) -> rusqlite::Result<Vec<String>> {
 
 fn row_to_summary(r: &Row) -> rusqlite::Result<SessionSummary> {
     let title: Option<String> = r.get(3)?;
+    // 会话级成本：agent 自记真值优先（agent-reported），否则用入库时的估算列。
+    // `estimated_cost_usd` 由 `pricing::estimate_messages` 算出，与该会话 messages.cost_usd 之和同口径
+    // （逐条 `estimate_usd`，未知模型跳过，全不可计价为 NULL），直接读列省掉每行一次子查询。
+    let recorded: Option<f64> = r.get(21)?;
+    let estimated: Option<f64> = r.get(22)?;
+    let (cost_usd, cost_source) = match (recorded, estimated) {
+        (Some(c), _) => (Some(c), CostSource::Recorded),
+        (None, Some(c)) => (Some(c), CostSource::Estimated),
+        (None, None) => (None, CostSource::Unknown),
+    };
     Ok(SessionSummary {
         id: r.get(0)?,
         provider: ProviderId::parse(&r.get::<_, String>(1)?),
@@ -846,6 +861,10 @@ fn row_to_summary(r: &Row) -> rusqlite::Result<SessionSummary> {
         message_count: r.get::<_, i64>(8)?.max(0) as u32,
         models: models_from_json(&r.get::<_, String>(9)?, 9)?,
         usage: usage_from_row(r, 10)?,
+        parent_session_id: r.get(19)?,
+        source_path: r.get::<_, Option<String>>(20)?.filter(|p| !p.is_empty()),
+        cost_usd,
+        cost_source,
     })
 }
 

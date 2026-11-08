@@ -8,12 +8,14 @@
 
 ## 现状
 
-- **v0.1.2 已发布并公证**：https://github.com/PeterChen1997/agenthome/releases （私有仓库 `PeterChen1997/agenthome`，分支 `main`）。
-- 已实现：Claude Code 与 Codex 会话全量入库（本机约 2,800 会话 / 35 万条消息）；仪表盘（住户额度、累计 token、到期与重置、30/90 天趋势、今天、按模型 / 项目、归档健康）；归档（按日分组列表、轮次 + Trace 折叠行的会话详情、中文全文搜索）；会动的像素栖息地；左侧固定导航；明暗主题跟随系统；CLI。
-- 质量基线：`cargo fmt --check` 干净、`cargo clippy --workspace --all-targets` 零警告、`cargo test --workspace` 48 个全绿。
-- **设计稿只落地了约一半**：`docs/10-设计落地清单.md` 审计了 270 项规格，完成 130、部分 51、未开始 83、有意偏离 6。
-- **已知两个口径缺陷**（清单第 1 批）：Codex 会话级 `input_includes_cache` 仍为 true（`crates/core/src/providers/codex.rs` 约 179 行），列表里 Codex 成本被二次扣减、偏低（仪表盘按消息算，不受影响）；匹配不到父会话的子代理在归档列表里被静默丢弃（`crates/app/src/archive.rs` 的 `arrange`）。
-- **还没做的核心能力**：raw 层原件拷贝（对抗 Claude 30 天自动清理，产品立足点）、文件监听（现在要手动 `agenthome scan`）、菜单栏弹窗、设置页。
+- **v0.1.2 已发布并公证**：https://github.com/PeterChen1997/agenthome/releases （私有仓库 `PeterChen1997/agenthome`，分支 `main`）。2026-11-08 第二轮的改动尚未发版。
+- 已实现：Claude Code 与 Codex 会话全量入库（本机约 2,800 会话 / 35 万条消息）；**实时同步**（app 启动即扫描、库不存在自动建库，notify / FSEvents 监听来源目录、防抖 2 秒只扫变化的来源，每小时兜底全量，标题栏显示「正在入库 x/y」/「监听中 · N 个来源 · X 同步」；新数据入库后仪表盘与归档静默刷新，打开的会话追加新消息）；仪表盘（住户额度、累计 token、到期与重置、30/90 天趋势、今天、按模型 / 项目、归档健康）；归档（按日分组列表、按父会话 id 折叠子代理、会话级成本、轮次 + Trace 折叠行的会话详情、打开即停在最新一条、中文全文搜索）；**设置页基础版**（来源与同步状态 + 立即扫描、Claude statusline 一键安装 / 卸载、归档位置与索引体积、外观跟随系统 / 浅色 / 深色并持久化、合规说明、定价表版本）；**Claude 订阅额度**（后台每 15 分钟在伪终端跑官方 `claude` 的 `/usage` 读屏，桌面版用户也有数据；套餐名读自 `~/.claude.json` 的 organizationType；与终端 statusline 两路合并）；会动的像素栖息地；左侧固定导航；CLI（含 `agenthome statusline status|install|uninstall`）。
+- 质量基线：`cargo fmt --check` 干净、`cargo clippy --workspace --all-targets` 零警告、`cargo test --workspace` 79 个全绿。索引库 `SCHEMA_VERSION` = 4（旧库自动重建）。
+- **设计稿落地约 55%**：`docs/10-设计落地清单.md` 第二轮（2026-11-08）共 272 项，完成 152、部分 43、未开始 71、有意偏离 6。
+- 第一轮审计发现的两个口径缺陷（Codex 会话级 `input_includes_cache`、孤儿子代理被静默丢弃）**已于 2026-11-08 修复**。
+- **Claude 额度已有数据**（官方 `/usage`）。用户已在设置页装了 statusline 包装脚本（只在终端 `claude` 里触发）。
+- **⚠️ 284 个 Claude 会话的原件已被 Claude Code 的 30 天自动清理删掉（2026-11-08，会话日期 08-19 ~ 09-14），完整内容现在只存在于索引库里。raw 层做好之前不要升 `SCHEMA_VERSION`、不要删库重建，否则这些会话永久丢失。** 后台 `/usage` 启动 CLI 时已用 `--settings {"cleanupPeriodDays":36500}` 避免触发清理，但用户自己在终端开 `claude` 仍会清理。
+- **还没做的核心能力**：raw 层原件拷贝（对抗 Claude 30 天自动清理，产品立足点，**现在最紧急**）、user 层持久化（星标重启即丢）、菜单栏弹窗。
 
 ## 从哪里开始
 
@@ -42,7 +44,7 @@
 | `docs/07-P1-集成记录.md` | P1 集成结果、视觉核对、版本历史、已知偏差（已全部并入 `docs/10-设计落地清单.md`） | 历史 |
 | `docs/08-构建与发布流程.md` | 发版全流程 + 踩坑（工具链、签名、公证、Release、验证） | 现行 |
 | `docs/09-开发踩坑记录.md` | GPUI、数据解析、额度、生图素材、验证工具的坑 | 现行，持续追加 |
-| `docs/10-设计落地清单.md` | **设计稿 + 规格逐项对照代码的验收清单**：270 项的状态、证据（path:line）、缺口，以及按依赖排好的 10 个收尾批次 | 现行，开发主清单 |
+| `docs/10-设计落地清单.md` | **设计稿 + 规格逐项对照代码的验收清单**：271 项的状态、证据（path:line）、缺口，以及按依赖排好的 10 个收尾批次 | 现行，开发主清单 |
 | `docs/11-开发流水线.md` | 每项功能从认领到发布的 10 道关卡（G0–G9）与勾选项，含多 agent 并行规则 | 现行，必须遵守 |
 | `docs/design/README.md` | 设计稿 v2.1 文件结构、实现与设计稿差异 | 现行 |
 | `docs/design/brainstorm/README.md` | 六个视觉方向与取舍（最终选「像素栖息地」） | 历史 |
@@ -60,26 +62,31 @@ crates/core   agenthome-core，零 UI 依赖
   model.rs            规范化模型：Session / Message / ContentBlock / Usage / Period / QuotaSnapshot / ProviderActivity …
   providers/          SourceProvider trait；claude_code.rs、codex.rs
   ingest.rs           ingest_all：按 size+mtime 增量，一个事务写会话 + 消息 + sources
-  store.rs            SQLite（WAL、FTS5 trigram），SCHEMA_VERSION=3；列表 / 详情 / 仪表盘查询 / 归档健康 / 活动
+  store.rs            SQLite（WAL、busy_timeout、FTS5 trigram），SCHEMA_VERSION=4；列表 / 详情 / 仪表盘查询 / 归档健康 / 活动
+  watch.rs            notify（FSEvents）监听来源根目录，只认 .jsonl / .jsonl.zst
+  statusline_setup.rs Claude statusline 包装脚本安装 / 卸载（改 ~/.claude/settings.json，改前备份）
   pricing.rs(.json)   LiteLLM 定价快照与 estimate_usd
-  signals/            claude_statusline、codex_rollout 额度快照
-  paths.rs            ~/AgentHome、~/.claude/projects、~/.codex/sessions
+  signals/            claude_statusline、claude_usage（伪终端跑官方 /usage 读屏 + 两路合并）、codex_rollout 额度快照
+  paths.rs            ~/AgentHome、~/.claude/projects、~/.codex/sessions、~/.claude/settings.json
   tests/              claude_code.rs、codex_fixture.rs、stats.rs + 合成 fixture
-crates/cli    agenthome：scan / sessions / show / stats / quota / activity
+crates/cli    agenthome：scan / sessions / show / stats / quota / activity / statusline
 crates/app    agenthome-app（gpui-kit =0.9.0）
-  main.rs             参数（--db --mock --habitat-demo --appearance）、主题 / 字体注册、开窗
-  workspace.rs        外壳：标题栏、左侧固定栏（导航 + 栖息地 + 住户行 + 页面专属区）、页面切换
+  main.rs             参数（--db --mock --habitat-demo --appearance）、主题 / 字体注册、开窗；库不存在时自动建库
+  workspace.rs        外壳：标题栏（同步状态）、左侧固定栏（导航 + 栖息地 + 住户行 + 页面专属区）、页面切换；新数据入库后通知各页刷新
+  sync.rs             同步引擎：独立线程 + 自有 Store 连接，启动扫描、监听防抖 2 秒、每小时兜底
+  settings.rs         设置页：来源、额度来源（statusline 安装）、归档位置、外观、合规与定价
+  config.rs           app 偏好 ~/AgentHome/config/app.json（外观）
   archive.rs          会话列表 + 详情；render_sidebar_sections 提供视图 / 项目
   message_row.rs      轮次切分与 Trace 行
   dashboard.rs + dashboard/   仪表盘页
   habitat/            state.rs（纯函数 reducer，有单测）、view.rs（渲染与动画）
-  live.rs             LiveFeed：每 5 秒拉活动与额度喂给栖息地
+  live.rs             LiveFeed：每 5 秒拉活动与额度，喂给栖息地、住户行与仪表盘额度卡
   data.rs             DataSource trait 与 Mock；sqlite_source.rs 真实实现
   assets.rs + assets/ 内置素材、字体（VT323、Pixelify Sans）、主题 pixel-habitat.json
 script/       bundle-dev.sh（开发用 .app）、release-macos.sh（发版）、agenthome-statusline.sh
 ```
 
-数据位置：索引库 `~/AgentHome/index/agenthome.db`（可随时删了重建）；额度信号 `~/AgentHome/signals/`。
+数据位置：索引库 `~/AgentHome/index/agenthome.db`（可随时删了重建）；额度信号 `~/AgentHome/signals/`（`claude-statusline.json`、`claude-usage.json`）；app 偏好 `~/AgentHome/config/app.json`；statusline 包装脚本装到 `~/AgentHome/bin/`。
 
 ## 常用命令
 
@@ -103,7 +110,7 @@ cargo fmt --all --check && cargo clippy --workspace --all-targets && cargo test 
 
 1. 产品名 AgentHome，归档目录 `~/AgentHome`。
 2. 存储：**拷贝，绝不软链、绝不动 agent 原目录**；仓库分 raw（原件，不可变）/ index（SQLite，可重建）/ user（星标笔记）三层。
-3. 额度只用合规来源：Claude 走 statusline，Codex 走 rollout 快照；**不做** Claude OAuth usage 端点、Codex wham 端点。
+3. 额度只用合规来源：Claude 走官方 `claude` CLI 的 `/usage`（后台伪终端读屏，2026-11-08 用户选定）与 statusline，Codex 走 rollout 快照；**不做** Claude OAuth usage 端点、Codex wham 端点，AgentHome 不读取任何凭据。
 4. core 自带 CLI；TUI 以后再说。
 5. 首次启动默认归档模式。
 6. 外部 Provider 协议：自定义最小协议，只借 ACP / MCP 的 JSON-RPC over stdio 传输层。
@@ -112,15 +119,20 @@ cargo fmt --all --check && cargo clippy --workspace --all-targets && cargo test 
 
 ## 下一步
 
-开发顺序以 `docs/10-设计落地清单.md` §13 的 10 个批次为准，每项按 `docs/11-开发流水线.md` 走完 G0–G9 才算完成。批次摘要：
+开发顺序以 `docs/10-设计落地清单.md` §13 的 10 个批次为准（表里有 2026-11-08 的「进度」列），每项按 `docs/11-开发流水线.md` 走完 G0–G9 才算完成。
 
-1. **core 补字段与口径修正**（先修上面两个缺陷）：会话级成本、`parent_session_id`、原件路径与状态、工具退出码、工具输出进全文索引。
-2. UI 去掉近似值与占位（依赖 1）：列表成本、子代理折叠、仅归档 / N 天后清理标签、在 Finder 显示。
-3. 实时数据通道（依赖 1）：文件监听 + 兜底扫描、app 内增量入库、栖息地事件与 toast 走真实数据。
-4. 栖息地规则与视觉令牌（纯 app，可与 1 并行）：其中 2.5、7.29 两条要先请用户决定是否算有意偏离。
-5. 持久化：user 层（星标、笔记）与 raw 层原件拷贝（依赖 3）。
-6. 设置页（依赖 5）。
-7. 额度与仪表盘补齐（依赖 1）：先用真实 rollout 核对 Codex credits 字段；Claude 额度需用户同意后按 `docs/06-statusline-安装.md` 安装脚本。
+本轮遗留（批次 1 / 3 / 6 的尾巴）：
+- 批次 1：10.31 Codex 工具失败与退出码、10.16 每会话原件状态、5.6 工具输出进全文索引、6.16 估算与真值并列。
+- 批次 2：4.12「在 Finder 显示」只差接按钮（`source_path` 已有）；4.8 详情成本标签要区分真值 / 估算；其余 3.12、3.13、4.2、4.3、4.9、4.25、2.11、2.13、2.14、6.36。
+- 批次 3：10.13 按 byte offset 增量（现在变化文件整文件重解析）、11.8 CLI `watch`、7.14–7.16 栖息地触发规则（数据已实时，working 待目视确认）、7.23–7.28 toast 走真实事件。
+- 批次 6：9.2 来源启停与 ToS 风险标签、9.3 改归档位置 / 重建索引 / raw 体积、9.9 theme.json 热加载、7.19、6.10。
+- **最优先：批次 5 的 raw 层原件拷贝**（10.1–10.3），已有 284 个会话只剩索引里的副本。
+- Claude 额度：设置页「立即刷新」按钮与仪表盘额度卡还没在截图里核对（全屏控制当时没获批）；`/usage` 读屏依赖 CLI 2.1.x 的文字格式与未公开的 `CLAUDE_CODE_CHILD_SESSION` 标记，CLI 升级后先跑 `agenthome quota --refresh-claude` 验证。
+
+其余批次：
+4. 栖息地规则与视觉令牌（纯 app）：其中 2.5、7.29 两条要先请用户决定是否算有意偏离。
+5. 持久化：user 层（星标、笔记）与 raw 层原件拷贝（依赖的实时通道已就绪）。
+7. 额度与仪表盘补齐：先用真实 rollout 核对 Codex credits 字段。
 8. 归档列表与搜索增强（依赖 2）。
 9. 菜单栏弹窗（依赖 3、7；先查 gpui 是否支持 status item）。
 10. P2 / P3 远期：更多来源（Gemini CLI、OpenCode、Pi）、语义搜索、外部 Provider 协议等。

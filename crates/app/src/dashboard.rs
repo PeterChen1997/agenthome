@@ -11,7 +11,7 @@ mod quota;
 
 use std::sync::Arc;
 
-use agenthome_core::model::Period;
+use agenthome_core::model::{Period, QuotaSnapshot};
 use gpui_kit::component::button::Button;
 use gpui_kit::component::tab::{Tab, TabBar};
 use gpui_kit::component::{ActiveTheme as _, IconName, Sizable as _, h_flex, v_flex};
@@ -106,6 +106,26 @@ impl DashboardView {
         this.load_tokens(cx);
         this.refresh_quota(cx);
         this
+    }
+
+    /// 索引库有新数据入库后重拉所有查询（同步引擎触发）；刷新期间保留旧数据，不闪。
+    pub fn refresh_data(&mut self, cx: &mut Context<Self>) {
+        self.load_overview(cx);
+        self.load_tokens(cx);
+    }
+
+    /// 外壳每 5 秒拉到的额度快照直接写进 `QuotaState`，不再各拉一份，也不显示加载态。
+    pub fn set_quota(&mut self, snapshots: Vec<QuotaSnapshot>, cx: &mut Context<Self>) {
+        self.quota.update(cx, |state, cx| {
+            if state.snapshots == snapshots && state.error.is_none() {
+                return;
+            }
+            state.snapshots = snapshots;
+            state.error = None;
+            state.loading = false;
+            state.now_ms = crate::format::now_ms();
+            cx.notify();
+        });
     }
 
     fn set_period(&mut self, period: Period, cx: &mut Context<Self>) {

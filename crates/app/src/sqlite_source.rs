@@ -90,7 +90,9 @@ impl DataSource for SqliteDataSource {
     fn quota(&self) -> anyhow::Result<Vec<QuotaSnapshot>> {
         // 两个信号互不依赖；一个读不到不影响另一个，但错误不吞：记到返回值里由 UI 展示。
         let mut out = Vec::new();
-        if let Some(s) = claude_statusline(None)? {
+        // Claude 有两路：终端的 statusline 与后台跑官方 /usage 的快照，合并成一份。
+        let usage = agenthome_core::signals::claude_usage_snapshot(None)?;
+        if let Some(s) = agenthome_core::signals::merge_claude(claude_statusline(None)?, usage) {
             out.push(s);
         }
         if let Some(s) = codex_rollout_quota(None)? {

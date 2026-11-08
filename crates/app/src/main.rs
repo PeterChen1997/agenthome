@@ -2,13 +2,16 @@
 
 mod archive;
 mod assets;
+mod config;
 mod dashboard;
 mod data;
 mod format;
 mod habitat;
 mod live;
 mod message_row;
+mod settings;
 mod sqlite_source;
+mod sync;
 mod workspace;
 
 use std::path::PathBuf;
@@ -26,7 +29,7 @@ use workspace::Workspace;
 /// 像素栖息地主题（`docs/design/canvas.json` 的设计令牌）。
 const PIXEL_HABITAT_THEME: &str = include_str!("../assets/themes/pixel-habitat.json");
 
-const USAGE: &str = "用法：agenthome-app [--db PATH] [--mock] [--habitat-demo] [--appearance light|dark]\n  --db PATH            索引库路径，默认 ~/AgentHome/index/agenthome.db（先用 `agenthome scan` 生成）\n  --mock               使用内存 mock 数据源\n  --habitat-demo       只开一个栖息地演示窗口\n  --appearance MODE    固定明 / 暗主题，不跟随系统（调试与截图用）";
+const USAGE: &str = "用法：agenthome-app [--db PATH] [--mock] [--habitat-demo] [--appearance light|dark]\n  --db PATH            索引库路径，默认 ~/AgentHome/index/agenthome.db（不存在时启动后自动建库）\n  --mock               使用内存 mock 数据源\n  --habitat-demo       只开一个栖息地演示窗口\n  --appearance MODE    固定明 / 暗主题，不跟随系统（调试与截图用）";
 
 fn main() {
     let mut mock = false;
@@ -68,19 +71,18 @@ fn main() {
         return;
     }
     let demo = mock;
+    // 真实数据源同时启动同步引擎（启动扫描 + 文件监听 + 兜底扫描）；mock 不同步。
+    let mut sync_db: Option<PathBuf> = None;
     let source: Arc<dyn DataSource> = if mock {
         Arc::new(MockDataSource::new())
     } else {
         let path = db.unwrap_or_else(agenthome_core::paths::default_index_db);
-        if !path.exists() {
-            eprintln!(
-                "索引库不存在：{}\n先运行 `agenthome scan` 生成，或用 --mock 启动。",
-                path.display()
-            );
-            std::process::exit(2);
-        }
+        // 库不存在时 `Store::open` 会建一个空库，同步引擎随后完成首次全量入库。
         match SqliteDataSource::open(&path) {
-            Ok(source) => Arc::new(source),
+            Ok(source) => {
+                sync_db = Some(path);
+                Arc::new(source)
+            }
             Err(error) => {
                 eprintln!("{error:#}");
                 std::process::exit(1);
@@ -94,8 +96,13 @@ fn main() {
             gpui_kit::init(cx);
             register_fonts(cx);
             apply_pixel_habitat_theme(cx);
-            if let Some(mode) = appearance {
-                Theme::change(mode, None, cx);
+            // 命令行 --appearance 优先（截图用，不写偏好）；否则用设置页保存的偏好。
+            match appearance {
+                Some(mode) => Theme::change(mode, None, cx),
+                None => match config::load_appearance() {
+                    Ok(saved) => config::apply_appearance(saved, None, cx),
+                    Err(error) => eprintln!("外观偏好读取失败，按跟随系统处理：{error:#}"),
+                },
             }
             let options = WindowOptions {
                 window_bounds: Some(WindowBounds::centered(size(px(1400.), px(860.)), cx)),
@@ -106,7 +113,7 @@ fn main() {
                 if appearance.is_none() {
                     follow_system_appearance(window);
                 }
-                cx.new(|cx| Workspace::new(source, demo, window, cx))
+                cx.new(|cx| Workspace::new(source, demo, sync_db, window, cx))
             })
             .expect("打开主窗口失败");
             cx.activate(true);
@@ -172,7 +179,10 @@ fn apply_pixel_habitat_theme(cx: &mut App) {
 fn follow_system_appearance(window: &mut gpui_kit::Window) {
     window
         .observe_window_appearance(|window, cx| {
-            Theme::sync_system_appearance(Some(window), cx);
+            // 用户在设置页固定了明 / 暗时不跟随。
+            if config::current_appearance() == config::Appearance::System {
+                Theme::sync_system_appearance(Some(window), cx);
+            }
         })
         .detach();
 }

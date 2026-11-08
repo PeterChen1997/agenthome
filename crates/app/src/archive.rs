@@ -7,7 +7,9 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::sync::Arc;
 
-use agenthome_core::model::{ProviderHealth, SessionKind, SessionQuery, SessionSummary};
+use agenthome_core::model::{
+    CostSource, ProviderHealth, SessionKind, SessionQuery, SessionSummary,
+};
 use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, Icon, IconName, Sizable as _, StyledExt as _,
     WindowExt as _,
@@ -82,34 +84,58 @@ enum ListRow {
     Session(usize),
 }
 
-/// 后台整理好的列表：只含主会话，子代理折叠成计数。
+/// 后台整理好的列表：主会话 + 找不到父会话的子代理；能归属的子代理折叠成父会话上的计数。
 struct Arranged {
     sessions: Vec<SessionSummary>,
     subagents: HashMap<String, u32>,
     rows: Vec<ListRow>,
 }
 
-/// 把查询结果整理成分组列表。子代理按「同来源、同目录、时间落在父会话区间内」归属，
-/// TODO: `SessionSummary` 带上 `parent_session_id` 后改为精确归属。
+/// 把查询结果整理成分组列表（输入已按 updated_at 倒序，输出保持该顺序）。
+///
+/// 子代理归属：
+/// 1. 有 `parent_session_id` 的按 id 精确归属；父会话不在本次结果里（被筛掉或超出上限）就不再猜。
+/// 2. 没有 parent id 的才用启发式：同来源、同目录、开始时间落在父会话区间（+10 分钟）内。
+/// 3. 仍找不到父会话的子代理作为独立行留在列表里，不静默丢弃（10.21 / 3.10）。
 fn arrange(all: Vec<SessionSummary>, now_ms: i64) -> Arranged {
-    let (subs, mains): (Vec<_>, Vec<_>) = all
-        .into_iter()
-        .partition(|s| s.kind == SessionKind::Subagent);
+    let is_sub = |s: &SessionSummary| s.kind == SessionKind::Subagent;
+    let main_ids: HashSet<&str> = all
+        .iter()
+        .filter(|s| !is_sub(s))
+        .map(|s| s.id.as_str())
+        .collect();
+    let parents: Vec<Option<String>> = all
+        .iter()
+        .map(|sub| {
+            if !is_sub(sub) {
+                return None;
+            }
+            match sub.parent_session_id.as_deref() {
+                Some(pid) => main_ids.contains(pid).then(|| pid.to_string()),
+                None => all
+                    .iter()
+                    .find(|m| {
+                        !is_sub(m)
+                            && m.provider == sub.provider
+                            && m.cwd == sub.cwd
+                            && (m.started_at_ms..=m.updated_at_ms + SUBAGENT_SLACK_MS)
+                                .contains(&sub.started_at_ms)
+                    })
+                    .map(|m| m.id.clone()),
+            }
+        })
+        .collect();
     let mut subagents: HashMap<String, u32> = HashMap::new();
-    for sub in &subs {
-        let parent = mains.iter().find(|m| {
-            m.provider == sub.provider
-                && m.cwd == sub.cwd
-                && (m.started_at_ms..=m.updated_at_ms + SUBAGENT_SLACK_MS)
-                    .contains(&sub.started_at_ms)
-        });
-        if let Some(parent) = parent {
-            *subagents.entry(parent.id.clone()).or_default() += 1;
+    let mut sessions = Vec::with_capacity(all.len());
+    for (session, parent) in all.into_iter().zip(parents) {
+        match parent {
+            Some(parent) => *subagents.entry(parent).or_default() += 1,
+            None => sessions.push(session),
         }
     }
-    let mut rows = Vec::with_capacity(mains.len() + 4);
+    let mut rows = Vec::with_capacity(sessions.len() + 4);
     let mut current: Option<DayGroup> = None;
-    for (ix, session) in mains.iter().enumerate() {
+    for (ix, session) in sessions.iter().enumerate() {
         let group = DayGroup::of(session.updated_at_ms, now_ms);
         if current != Some(group) {
             rows.push(ListRow::Group(group));
@@ -118,19 +144,17 @@ fn arrange(all: Vec<SessionSummary>, now_ms: i64) -> Arranged {
         rows.push(ListRow::Session(ix));
     }
     Arranged {
-        sessions: mains,
+        sessions,
         subagents,
         rows,
     }
 }
 
-/// 会话成本：优先按定价表估算，模型未知时退回 token 总量。
-/// TODO: `SessionSummary` 带上 `estimated_cost_usd` 后直接用真值。
+/// 会话成本：用 core 给出的会话级成本（agent 真值优先，否则消息估算之和）；
+/// 无法计价时退回 token 总量。
 fn session_cost_label(session: &SessionSummary) -> String {
     session
-        .models
-        .first()
-        .and_then(|model| agenthome_core::pricing::estimate_usd(model, &session.usage))
+        .cost_usd
         .map(short_cost)
         .unwrap_or_else(|| short_tokens(session.usage.total_tokens()))
 }
@@ -340,10 +364,21 @@ impl ArchiveView {
     }
 
     /// 按当前搜索词、项目与视图重新查询会话列表。
+    /// 同步引擎有新数据入库后调用：静默重拉左栏项目、会话列表与当前会话的消息，
+    /// 不显示加载态、不把列表滚回顶部；当前会话有新消息时追加到详情尾部。
+    pub fn refresh_data(&mut self, cx: &mut Context<Self>) {
+        self.load_sidebar(cx);
+        self.reload_sessions_with(true, cx);
+    }
+
     fn reload_sessions(&mut self, cx: &mut Context<Self>) {
+        self.reload_sessions_with(false, cx);
+    }
+
+    fn reload_sessions_with(&mut self, quiet: bool, cx: &mut Context<Self>) {
         self.sessions_revision += 1;
         let revision = self.sessions_revision;
-        self.loading_sessions = true;
+        self.loading_sessions = !quiet;
         self.sessions_error = None;
         self.now_ms = now_ms();
         let now = self.now_ms;
@@ -375,10 +410,24 @@ impl ArchiveView {
                 this.loading_sessions = false;
                 match result {
                     Ok(arranged) => {
+                        // 当前会话在后台有更新（正在进行的会话）：换上新摘要并追加新消息。
+                        let updated = this.selected_session.as_ref().and_then(|selected| {
+                            arranged
+                                .sessions
+                                .iter()
+                                .find(|s| s.id == selected.id)
+                                .filter(|s| s.updated_at_ms != selected.updated_at_ms)
+                                .cloned()
+                        });
                         this.sessions = Arc::new(arranged.sessions);
                         this.subagents = Arc::new(arranged.subagents);
                         this.rows = Arc::new(arranged.rows);
-                        this.session_scroll.scroll_to_item(0, ScrollStrategy::Top);
+                        if !quiet {
+                            this.session_scroll.scroll_to_item(0, ScrollStrategy::Top);
+                        }
+                        if let Some(summary) = updated {
+                            this.refresh_selected_messages(summary, cx);
+                        }
                     }
                     Err(error) => {
                         this.sessions_error = Some(format!("读取会话列表失败：{error:#}"))
@@ -442,8 +491,8 @@ impl ArchiveView {
                         this.transcript = Some(Arc::new(transcript));
                         this.scroller.update(cx, |state, cx| {
                             state.reset(count, cx);
-                            // 回放从第一条读起，而不是跟随尾部。
-                            _ = state.scroll_to_item(0, cx);
+                            // 打开会话直接停在最新一条：多数时候是回来看刚发生的事。
+                            state.scroll_to_end(cx);
                         });
                     }
                     Err(error) => this.messages_error = Some(format!("读取消息失败：{error:#}")),
@@ -452,6 +501,47 @@ impl ArchiveView {
             });
         });
         cx.notify();
+    }
+
+    /// 静默重拉当前会话的消息：前缀不变时只把新增的行追加到虚拟列表，保住阅读位置。
+    fn refresh_selected_messages(&mut self, summary: SessionSummary, cx: &mut Context<Self>) {
+        self.messages_revision += 1;
+        let revision = self.messages_revision;
+        let id = summary.id.clone();
+        self.selected_session = Some(summary);
+        let source = self.source.clone();
+        self._messages_task = cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_spawn(async move { source.messages(&id).map(Transcript::build) })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                if this.messages_revision != revision {
+                    return;
+                }
+                // 静默刷新失败不覆盖已显示的内容，只在详情顶部提示。
+                let transcript = match result {
+                    Ok(transcript) => transcript,
+                    Err(error) => {
+                        this.messages_error = Some(format!("刷新消息失败：{error:#}"));
+                        cx.notify();
+                        return;
+                    }
+                };
+                let old_count = this.transcript.as_ref().map_or(0, |t| t.messages.len());
+                let new_count = transcript.messages.len();
+                this.transcript = Some(Arc::new(transcript));
+                this.messages_error = None;
+                this.loading_messages = false;
+                this.scroller.update(cx, |state, cx| {
+                    if new_count >= old_count && state.item_count() == old_count {
+                        state.append(new_count - old_count, cx);
+                    } else {
+                        state.reset(new_count, cx);
+                    }
+                });
+                cx.notify();
+            });
+        });
     }
 
     /// 展开 / 折叠一个内容块；行高变了，必须让虚拟列表重新测量该行。
@@ -753,6 +843,18 @@ impl ArchiveView {
         let session = session.clone();
         let transcript = self.transcript.clone();
         let starred = self.starred.contains(&session.id);
+        // 原件可能已被 agent 清理（Claude 默认 30 天）；不在磁盘上时按钮置灰并说明。
+        let source_path = session
+            .source_path
+            .clone()
+            .filter(|path| std::path::Path::new(path).exists());
+        let reveal_tip = if source_path.is_some() {
+            "在 Finder 中定位会话原件"
+        } else if session.source_path.is_some() {
+            "原件已不在磁盘上"
+        } else {
+            "没有原件路径"
+        };
         let subagents = self.subagents.get(&session.id).copied().unwrap_or(0);
         let usage = session.usage;
         let meta = format!(
@@ -768,9 +870,10 @@ impl ArchiveView {
             [one] => one.clone(),
             [first, rest @ ..] => format!("{first} +{}", rest.len()),
         };
-        let cost_label = transcript
-            .as_ref()
-            .and_then(|t| t.estimated_cost_usd)
+        // 与列表同一口径：会话级成本（有 agent 自报真值时用真值）优先，详情的逐条估算兜底。
+        let cost_label = session
+            .cost_usd
+            .or_else(|| transcript.as_ref().and_then(|t| t.estimated_cost_usd))
             .map(short_cost)
             .unwrap_or_else(|| session_cost_label(&session));
         let (tool_calls, tool_failures) = transcript
@@ -809,13 +912,24 @@ impl ArchiveView {
                     .on_click(cx.listener(|this, _, _, cx| this.toggle_star(cx))),
             )
             .child(
-                // TODO: `DataSource` 暂未暴露原件路径，接上后用 `open -R <path>`。
                 Button::new("reveal")
                     .outline()
                     .small()
                     .label("在 Finder 显示")
-                    .disabled(true)
-                    .tooltip("待 core 提供原件路径"),
+                    .disabled(source_path.is_none())
+                    .tooltip(reveal_tip)
+                    .on_click(move |_, _, _| {
+                        if let Some(path) = &source_path {
+                            // `open -R` 只在 Finder 里选中文件，不打开、不修改。
+                            if let Err(error) = std::process::Command::new("open")
+                                .arg("-R")
+                                .arg(path)
+                                .spawn()
+                            {
+                                eprintln!("在 Finder 显示失败：{error}");
+                            }
+                        }
+                    }),
             )
             .child(
                 Button::new("export")
@@ -924,7 +1038,11 @@ impl ArchiveView {
                         cx,
                     ))
                     .child(stat_text(
-                        "估算成本",
+                        if session.cost_source == CostSource::Recorded {
+                            "成本"
+                        } else {
+                            "估算成本"
+                        },
                         cost_label,
                         Some(cx.theme().primary),
                         cx,
@@ -1246,7 +1364,7 @@ fn stat_text(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agenthome_core::model::{ProviderId, Usage};
+    use agenthome_core::model::{CostSource, ProviderId, Usage};
 
     fn summary(id: &str, kind: SessionKind, started: i64, updated: i64) -> SessionSummary {
         SessionSummary {
@@ -1261,7 +1379,120 @@ mod tests {
             message_count: 1,
             usage: Usage::default(),
             models: vec![],
+            parent_session_id: None,
+            source_path: None,
+            cost_usd: None,
+            cost_source: CostSource::Unknown,
         }
+    }
+
+    fn sub_of(id: &str, parent: Option<&str>, started: i64, updated: i64) -> SessionSummary {
+        SessionSummary {
+            parent_session_id: parent.map(str::to_string),
+            ..summary(id, SessionKind::Subagent, started, updated)
+        }
+    }
+
+    fn listed_ids(arranged: &Arranged) -> Vec<&str> {
+        arranged.sessions.iter().map(|s| s.id.as_str()).collect()
+    }
+
+    /// 子代理的父会话不在结果里（被筛掉 / 超出上限 / 原件已删）时，它不能从列表里凭空消失，
+    /// 否则用户搜到的内容、花掉的 token 都看不见。
+    #[test]
+    fn orphan_subagent_stays_in_list() {
+        let now = 1_800_000_000_000;
+        let arranged = arrange(
+            vec![
+                sub_of(
+                    "claude-code:m:gone/agent-1",
+                    Some("claude-code:m:gone"),
+                    now - 120_000,
+                    now - 60_000,
+                ),
+                summary(
+                    "claude-code:m:a",
+                    SessionKind::Main,
+                    now - 3_600_000,
+                    now - 90_000,
+                ),
+                // 无 parent id、启发式也匹配不到（开始时间远早于任何主会话）
+                sub_of(
+                    "claude-code:m:x/agent-2",
+                    None,
+                    now - 9_000_000,
+                    now - 100_000,
+                ),
+            ],
+            now,
+        );
+        assert_eq!(
+            listed_ids(&arranged),
+            vec![
+                "claude-code:m:gone/agent-1",
+                "claude-code:m:a",
+                "claude-code:m:x/agent-2"
+            ],
+            "孤儿子代理作为独立行保留，且保持 updated_at 倒序"
+        );
+        assert!(arranged.subagents.is_empty());
+        assert_eq!(arranged.rows.len(), 4, "一个「今天」分组头 + 三行");
+    }
+
+    /// 有 parent id 时必须按 id 归属：时间启发式在并行会话、同目录多开时会挂错父会话。
+    #[test]
+    fn parent_id_wins_over_time_heuristic() {
+        let now = 1_800_000_000_000;
+        let arranged = arrange(
+            vec![
+                // a 的时间区间覆盖子代理开始时间，启发式会选 a
+                summary(
+                    "claude-code:m:a",
+                    SessionKind::Main,
+                    now - 3_600_000,
+                    now - 60_000,
+                ),
+                // b 早已结束，按时间不可能是父会话，但 parent id 指向它
+                summary(
+                    "claude-code:m:b",
+                    SessionKind::Main,
+                    now - 9_000_000,
+                    now - 8_000_000,
+                ),
+                sub_of(
+                    "claude-code:m:b/agent-1",
+                    Some("claude-code:m:b"),
+                    now - 1_800_000,
+                    now - 120_000,
+                ),
+            ],
+            now,
+        );
+        assert_eq!(arranged.subagents.get("claude-code:m:b"), Some(&1));
+        assert_eq!(arranged.subagents.get("claude-code:m:a"), None);
+        assert_eq!(
+            listed_ids(&arranged),
+            vec!["claude-code:m:a", "claude-code:m:b"]
+        );
+    }
+
+    /// 列表成本直接用 core 的会话级成本（真值或消息估算之和），不再用「首个模型 × 会话 usage」近似；
+    /// 无法计价时退回 token 总量，而不是显示 $0。
+    #[test]
+    fn cost_label_uses_session_cost_or_falls_back_to_tokens() {
+        let mut s = summary("codex:m:c", SessionKind::Main, 0, 0);
+        s.models = vec!["gpt-5-codex".into()];
+        s.usage = Usage {
+            input_tokens: 1_000,
+            cache_read_tokens: 1_000_000,
+            ..Usage::default()
+        };
+        s.cost_usd = Some(3.5);
+        s.cost_source = CostSource::Estimated;
+        assert_eq!(session_cost_label(&s), short_cost(3.5));
+        s.cost_usd = None;
+        s.cost_source = CostSource::Unknown;
+        assert_eq!(session_cost_label(&s), short_tokens(s.usage.total_tokens()));
     }
 
     #[test]
@@ -1291,7 +1522,7 @@ mod tests {
             ],
             now,
         );
-        assert_eq!(arranged.sessions.len(), 2, "子代理不单独出现在列表");
+        assert_eq!(arranged.sessions.len(), 2, "能归属的子代理不单独出现在列表");
         assert_eq!(arranged.subagents.get("claude-code:m:a"), Some(&1));
         assert!(matches!(arranged.rows[0], ListRow::Group(DayGroup::Today)));
         assert!(matches!(arranged.rows[1], ListRow::Session(0)));

@@ -4,6 +4,7 @@
 //! 左栏公共部分（品牌、导航、栖息地与住户）归外壳；归档页专属的「视图 / 项目」由
 //! `ArchiveView::render_sidebar_sections` 提供，点击仍由归档页处理。
 
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -28,6 +29,8 @@ use crate::format::{countdown, now_ms, relative_time};
 use crate::habitat::{HabitatSize, HabitatView, ResidentId, ResidentState};
 use crate::live::{LiveFeed, LiveState, primary_window};
 use crate::message_row::{provider_avatar, secondary};
+use crate::settings::SettingsView;
+use crate::sync::{SyncEngine, SyncState};
 
 actions!(agenthome, [FocusSearch]);
 
@@ -111,7 +114,12 @@ impl ResidentPanel {
             "未接入".into()
         } else {
             quota
-                .and_then(|q| q.plan.clone())
+                .map(|q| match (&q.plan, q.windows.is_empty()) {
+                    (Some(plan), _) => plan.clone(),
+                    // 有额度窗口但不知道套餐名：不能再说「未接入」。
+                    (None, false) => "订阅".to_string(),
+                    (None, true) => "未接入额度".to_string(),
+                })
                 .unwrap_or_else(|| "未接入额度".to_string())
                 .into()
         };
@@ -250,17 +258,25 @@ pub struct Workspace {
     residents: Entity<ResidentPanel>,
     archive: Entity<ArchiveView>,
     dashboard: Entity<DashboardView>,
+    settings: Entity<SettingsView>,
     search: Entity<InputState>,
     focus_handle: FocusHandle,
+    /// 同步引擎状态；mock 模式下没有引擎，保持默认值。
+    sync: Entity<SyncState>,
+    sync_engine: Option<SyncEngine>,
+    /// 已经让页面重拉过的数据版本。
+    seen_data_revision: u64,
     _feed: LiveFeed,
     _subscriptions: Vec<Subscription>,
 }
 
 impl Workspace {
     /// `demo` 为真时栖息地跑演示剧本（mock 数据源），否则只吃真实信号。
+    /// `sync_db` 为索引库路径时启动同步引擎，把来源目录的新内容实时入库。
     pub fn new(
         source: Arc<dyn DataSource>,
         demo: bool,
+        sync_db: Option<PathBuf>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -289,6 +305,19 @@ impl Workspace {
         let dashboard = cx.new(|cx| DashboardView::new(source, habitat_hero, window, cx));
         let search =
             cx.new(|cx| InputState::new(window, cx).placeholder("搜索标题、正文、工具输出…"));
+        let sync = cx.new(|_| SyncState::default());
+        let sync_engine = sync_db
+            .clone()
+            .map(|db| SyncEngine::start(db, sync.clone(), cx));
+        let settings = cx.new(|cx| {
+            SettingsView::new(
+                sync.clone(),
+                sync_engine.as_ref().map(SyncEngine::handle),
+                live.clone(),
+                sync_db,
+                cx,
+            )
+        });
         let subscriptions = vec![
             cx.subscribe_in(&search, window, |this, state, event: &InputEvent, _, cx| {
                 if matches!(event, InputEvent::Change) {
@@ -297,9 +326,26 @@ impl Workspace {
                         .update(cx, |archive, cx| archive.set_search(text, cx));
                 }
             }),
-            cx.observe(&live, |_, _, cx| cx.notify()),
+            cx.observe(&live, |this, live, cx| {
+                // 仪表盘的额度卡与左栏共用这一份 5 秒一拉的快照。
+                let quota = live.read(cx).quota.clone();
+                this.dashboard
+                    .update(cx, |dashboard, cx| dashboard.set_quota(quota, cx));
+                cx.notify();
+            }),
             // 左栏的「视图 / 项目」选中态随归档页状态变化，归档页重绘时外壳跟着重绘。
             cx.observe(&archive, |_, _, cx| cx.notify()),
+            cx.observe(&sync, |this, sync, cx| {
+                let revision = sync.read(cx).data_revision;
+                if revision != this.seen_data_revision {
+                    this.seen_data_revision = revision;
+                    this.dashboard
+                        .update(cx, |dashboard, cx| dashboard.refresh_data(cx));
+                    this.archive
+                        .update(cx, |archive, cx| archive.refresh_data(cx));
+                }
+                cx.notify();
+            }),
         ];
         Self {
             page: Page::Archive,
@@ -307,26 +353,58 @@ impl Workspace {
             residents,
             archive,
             dashboard,
+            settings,
             search,
             focus_handle: cx.focus_handle(),
+            sync,
+            sync_engine,
+            seen_data_revision: 0,
             _feed: feed,
             _subscriptions: subscriptions,
         }
     }
 
+    /// 标题栏状态：扫描进度 > 同步 / 信号错误 > 监听中。
     fn render_status(&self, cx: &mut Context<Self>) -> AnyElement {
         let live = self.live.read(cx);
-        let (dot, text) = match (&live.error, live.refreshed_at_ms) {
-            (Some(error), _) => (cx.theme().danger, error.clone()),
-            (None, Some(at)) => (
-                cx.theme().success,
+        let sync = self.sync.read(cx);
+        let now = now_ms();
+        let (dot, text) = if let Some(scan) = &sync.scanning {
+            (
+                cx.theme().warning,
                 format!(
-                    "监听中 · {} 个来源 · {}",
-                    live.detected_count(),
-                    relative_time(at, now_ms())
+                    "正在入库 {} {}/{}",
+                    scan.provider.as_str(),
+                    scan.done,
+                    scan.total
                 ),
-            ),
-            (None, None) => (cx.theme().muted_foreground, "正在接入信号…".to_string()),
+            )
+        } else if let Some(error) = sync.error.as_ref().or(live.error.as_ref()) {
+            (cx.theme().danger, error.clone())
+        } else if self.sync_engine.is_some() {
+            match sync.last_sync_ms {
+                Some(at) => (
+                    cx.theme().success,
+                    format!(
+                        "监听中 · {} 个来源 · {}同步",
+                        sync.watching_count(),
+                        relative_time(at, now)
+                    ),
+                ),
+                None => (cx.theme().muted_foreground, "正在启动同步…".to_string()),
+            }
+        } else {
+            match live.refreshed_at_ms {
+                Some(at) => (
+                    cx.theme().success,
+                    format!(
+                        "演示数据 · {} 个来源 · {}",
+                        live.detected_count(),
+                        relative_time(at, now)
+                    ),
+                ),
+                None => (cx.theme().muted_foreground, "正在接入信号…".to_string()),
+            }
         };
         h_flex()
             .gap(px(6.))
@@ -438,23 +516,11 @@ impl Workspace {
             .into_any_element()
     }
 
-    fn render_page(&self, cx: &mut Context<Self>) -> AnyElement {
+    fn render_page(&self) -> AnyElement {
         match self.page {
             Page::Archive => self.archive.clone().into_any_element(),
             Page::Dashboard => self.dashboard.clone().into_any_element(),
-            Page::Settings => v_flex()
-                .size_full()
-                .items_center()
-                .justify_center()
-                .gap_2()
-                .text_color(cx.theme().muted_foreground)
-                .child("设置（待实现）")
-                .child(
-                    div()
-                        .text_sm()
-                        .child("来源接入、statusline 脚本安装与清理策略将放在这里。"),
-                )
-                .into_any_element(),
+            Page::Settings => self.settings.clone().into_any_element(),
         }
     }
 }
@@ -480,13 +546,7 @@ impl Render for Workspace {
                     .min_h_0()
                     .min_w_0()
                     .child(self.render_sidebar(cx))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .min_h_0()
-                            .child(self.render_page(cx)),
-                    ),
+                    .child(div().flex_1().min_w_0().min_h_0().child(self.render_page())),
             )
     }
 }
