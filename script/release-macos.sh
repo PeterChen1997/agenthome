@@ -5,12 +5,28 @@
 # 用法：script/release-macos.sh [版本号]
 #   环境变量：
 #     CODESIGN_IDENTITY   默认 "Developer ID Application: YANG CHEN (R85345VS2J)"
-#     NOTARY_PROFILE      notarytool 的钥匙串 profile 名；不设则跳过公证（包能跑，但首次打开需右键“打开”）
+#     ASC_KEY_ID / ASC_ISSUER / ASC_KEY_PATH
+#                         App Store Connect API 密钥（与 Twnkle 桌面端共用同一把）；密钥文件存在即公证
+#     NOTARY_PROFILE      备选：notarytool 钥匙串 profile 名（API 密钥不可用时）
+#     SKIP_NOTARIZE=1     跳过公证（包能跑，但别的 Mac 首次打开需右键“打开”）
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 VERSION="${1:-$(grep -m1 '^version' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')}"
 IDENTITY="${CODESIGN_IDENTITY:-Developer ID Application: YANG CHEN (R85345VS2J)}"
+# 密钥 ID 与 Issuer ID 不是机密（机密的是 .p8 文件本身，只按路径引用）；取值同 tick-me/desktop/scripts/release.sh
+ASC_KEY_ID="${ASC_KEY_ID:-68W68734N8}"
+ASC_ISSUER="${ASC_ISSUER:-20201e41-a5f0-43d7-a531-827f80cc98ee}"
+ASC_KEY_PATH="${ASC_KEY_PATH:-$HOME/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8}"
+if [ -n "${SKIP_NOTARIZE:-}" ]; then
+  NOTARY=()
+elif [ -f "$ASC_KEY_PATH" ]; then
+  NOTARY=(--key "$ASC_KEY_PATH" --key-id "$ASC_KEY_ID" --issuer "$ASC_ISSUER")
+elif [ -n "${NOTARY_PROFILE:-}" ]; then
+  NOTARY=(--keychain-profile "$NOTARY_PROFILE")
+else
+  NOTARY=()
+fi
 APP=dist/AgentHome.app
 ZIP="dist/AgentHome-${VERSION}-macos-arm64.zip"
 ICON_SRC=docs/design/assets/processed/app-icon.png
@@ -68,13 +84,24 @@ spctl --assess --type execute --verbose=2 "$APP" || echo "（未公证时 spctl 
 echo "== 4/5 打包 zip"
 ditto -c -k --keepParent "$APP" "$ZIP"
 
-if [ -n "${NOTARY_PROFILE:-}" ]; then
-  echo "== 5/5 公证（profile: ${NOTARY_PROFILE}）"
-  xcrun notarytool submit "$ZIP" --keychain-profile "$NOTARY_PROFILE" --wait
+if [ ${#NOTARY[@]} -gt 0 ]; then
+  echo "== 5/5 公证"
+  # notarytool --wait 在 Invalid 时退出码也可能是 0，必须看 status；不通过就拉日志并失败
+  OUT="$(xcrun notarytool submit "$ZIP" "${NOTARY[@]}" --wait --output-format json)"
+  STATUS="$(printf '%s' "$OUT" | /usr/bin/python3 -c 'import json,sys; print(json.load(sys.stdin).get("status",""))')"
+  SUBMISSION="$(printf '%s' "$OUT" | /usr/bin/python3 -c 'import json,sys; print(json.load(sys.stdin).get("id",""))')"
+  echo "公证结果：${STATUS}（${SUBMISSION}）"
+  if [ "$STATUS" != "Accepted" ]; then
+    xcrun notarytool log "$SUBMISSION" "${NOTARY[@]}" >&2 || true
+    echo "公证未通过" >&2
+    exit 1
+  fi
   xcrun stapler staple "$APP"
+  xcrun stapler validate "$APP"
+  spctl --assess --type execute --verbose=2 "$APP"
   rm -f "$ZIP" && ditto -c -k --keepParent "$APP" "$ZIP"
 else
-  echo "== 5/5 跳过公证（未设置 NOTARY_PROFILE）"
+  echo "== 5/5 跳过公证（未找到 API 密钥 / NOTARY_PROFILE，或设置了 SKIP_NOTARIZE）"
 fi
 
 shasum -a 256 "$ZIP" | tee "$ZIP.sha256"
