@@ -123,7 +123,8 @@ impl Store {
             // 索引层可重建：版本不符直接推倒重来。
             conn.execute_batch(
                 "DROP TABLE IF EXISTS sessions; DROP TABLE IF EXISTS messages;
-                 DROP TABLE IF EXISTS sources; DROP TABLE IF EXISTS message_fts;",
+                 DROP TABLE IF EXISTS sources; DROP TABLE IF EXISTS message_fts;
+                 DROP TABLE IF EXISTS message_fts_map; DROP TABLE IF EXISTS meta;",
             )?;
         }
         conn.execute_batch(SCHEMA)?;
@@ -137,6 +138,8 @@ impl Store {
             )?;
         }
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+        migrate_incremental(&conn)?;
+        reprice_if_needed(&conn)?;
         Ok(Store { conn })
     }
 
@@ -156,24 +159,104 @@ impl Store {
         Ok(())
     }
 
-    /// 一次解析结果整体落库：会话 + 消息 + 来源状态，一个事务。
+    /// 一次解析结果整体落库：会话 + 消息 + 来源状态，一个事务。来源的续读位置清零（下次整文件解析）。
     pub fn store_parsed(&mut self, session: &Session, messages: &[Message]) -> Result<()> {
+        self.store_full(session, messages, None).map(|_| ())
+    }
+
+    /// 整文件解析的结果整体落库：该会话旧消息全删再写。`resume` 为下次增量续读的起点。
+    pub fn store_full(
+        &mut self,
+        session: &Session,
+        messages: &[Message],
+        resume: Option<&ResumePoint>,
+    ) -> Result<WriteStats> {
         let tx = self.conn.transaction()?;
-        upsert_session_tx(&tx, session)?;
-        replace_messages_tx(&tx, &session.id, messages)?;
-        tx.execute(
-            "INSERT INTO sources(path, size_bytes, mtime_ms, session_id) VALUES (?1, ?2, ?3, ?4)
-             ON CONFLICT(path) DO UPDATE SET size_bytes = excluded.size_bytes,
-                 mtime_ms = excluded.mtime_ms, session_id = excluded.session_id",
-            params![
-                session.source.path.to_string_lossy(),
-                session.source.size_bytes as i64,
-                session.source.mtime_ms,
-                session.id
-            ],
-        )?;
+        let existed = session_title_tx(&tx, &session.id)?.is_some();
+        let mut stats = WriteStats::default();
+        if existed {
+            upsert_session_tx(&tx, session)?;
+            replace_messages_tx(&tx, &session.id, messages)?;
+        } else {
+            // 新会话：没有旧行可删，省掉两次对 FTS 表的全表扫描（首次建库时差别很大）。
+            upsert_session_row_tx(&tx, session)?;
+            stats.fts += replace_title_fts_tx(&tx, session, false)?;
+            for m in messages {
+                if m.session_id != session.id {
+                    bail!("消息 {} 的 session_id 与目标会话不一致", m.id);
+                }
+                upsert_message_tx(&tx, m)?;
+                stats.fts += insert_message_fts_tx(&tx, m)?;
+            }
+        }
+        stats.sessions += 1;
+        stats.messages += messages.len();
+        upsert_source_tx(&tx, session, resume)?;
         tx.commit()?;
-        Ok(())
+        Ok(stats)
+    }
+
+    /// 增量落库：只 upsert 新增或改动的消息，FTS 只动正文变了的那几行；会话行整行覆盖（它只有一行）。
+    pub fn store_increment(
+        &mut self,
+        session: &Session,
+        changed: &[Message],
+        resume: &ResumePoint,
+    ) -> Result<WriteStats> {
+        let tx = self.conn.transaction()?;
+        let old_title = session_title_tx(&tx, &session.id)?;
+        upsert_session_row_tx(&tx, session)?;
+        let mut stats = WriteStats {
+            sessions: 1,
+            ..WriteStats::default()
+        };
+        if old_title.as_ref() != Some(&session.title) {
+            stats.fts += replace_title_fts_tx(&tx, session, old_title.is_some())?;
+        }
+        for m in changed {
+            if m.session_id != session.id {
+                bail!("消息 {} 的 session_id 与目标会话不一致", m.id);
+            }
+            upsert_message_tx(&tx, m)?;
+            stats.messages += 1;
+            stats.fts += sync_message_fts_tx(&tx, m)?;
+        }
+        upsert_source_tx(&tx, session, Some(resume))?;
+        tx.commit()?;
+        Ok(stats)
+    }
+
+    /// 上次入库时记录的原件状态与续读位置。
+    pub fn source_record(&self, path: &Path) -> Result<Option<SourceRecord>> {
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT size_bytes, mtime_ms, session_id, parsed_offset, parsed_lines, fingerprint, inode
+             FROM sources WHERE path = ?1",
+        )?;
+        Ok(stmt
+            .query_row([path.to_string_lossy()], |r| {
+                Ok(SourceRecord {
+                    size_bytes: get_u64(r, 0),
+                    mtime_ms: r.get(1)?,
+                    session_id: r.get(2)?,
+                    resume: ResumePoint {
+                        offset: get_u64(r, 3),
+                        lines: get_u64(r, 4),
+                        fingerprint: r.get(5)?,
+                        inode: r.get::<_, Option<i64>>(6)?.map(|i| i as u64),
+                    },
+                })
+            })
+            .optional()?)
+    }
+
+    /// 某会话里的一条消息（增量续读时取回要改的旧消息）。
+    pub fn get_message(&self, session_id: &str, id: &str) -> Result<Option<Message>> {
+        let mut stmt = self.conn.prepare_cached(&format!(
+            "{MESSAGE_SELECT} WHERE session_id = ?1 AND id = ?2"
+        ))?;
+        Ok(stmt
+            .query_row([session_id, id], row_to_message)
+            .optional()?)
     }
 
     /// 按 updated_at 倒序列出会话；`text` 非空时先走 FTS 取会话集合。
@@ -315,47 +398,10 @@ impl Store {
 
     /// 某会话的消息，按时间升序。
     pub fn messages(&self, session_id: &str) -> Result<Vec<Message>> {
-        let mut stmt = self.conn.prepare_cached(
-            "SELECT id, session_id, native_id, parent_id, role, is_meta, timestamp_ms, model,
-                    stop_reason, blocks_json, input_tokens, output_tokens, cache_read_tokens,
-                    cache_write_tokens, cache_write_5m_tokens, cache_write_1h_tokens, reasoning_tokens
-             FROM messages WHERE session_id = ?1 ORDER BY timestamp_ms, rowid",
-        )?;
-        let rows = stmt.query_map([session_id], |r| {
-            let blocks_json: String = r.get(9)?;
-            let blocks: Vec<ContentBlock> = serde_json::from_str(&blocks_json).map_err(|e| {
-                rusqlite::Error::FromSqlConversionFailure(
-                    9,
-                    rusqlite::types::Type::Text,
-                    Box::new(e),
-                )
-            })?;
-            let input: Option<i64> = r.get(10)?;
-            let usage = input.map(|_| Usage {
-                input_tokens: get_u64(r, 10),
-                output_tokens: get_u64(r, 11),
-                cache_read_tokens: get_u64(r, 12),
-                cache_write_tokens: get_u64(r, 13),
-                cache_write_5m_tokens: get_u64(r, 14),
-                cache_write_1h_tokens: get_u64(r, 15),
-                reasoning_tokens: get_u64(r, 16),
-                requests: 1,
-                input_includes_cache: false,
-            });
-            Ok(Message {
-                id: r.get(0)?,
-                session_id: r.get(1)?,
-                native_id: r.get(2)?,
-                parent_id: r.get(3)?,
-                role: Role::parse(&r.get::<_, String>(4)?),
-                is_meta: r.get::<_, i64>(5)? != 0,
-                timestamp_ms: r.get(6)?,
-                model: r.get(7)?,
-                stop_reason: r.get(8)?,
-                blocks,
-                usage,
-            })
-        })?;
+        let mut stmt = self.conn.prepare_cached(&format!(
+            "{MESSAGE_SELECT} WHERE session_id = ?1 ORDER BY timestamp_ms, rowid"
+        ))?;
+        let rows = stmt.query_map([session_id], row_to_message)?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
@@ -372,7 +418,7 @@ impl Store {
     /// 最近 `days` 天（本地时区）按 天 × provider × 模型 聚合 assistant 用量。
     pub fn stats_daily(&self, days: u32) -> Result<Vec<DailyUsage>> {
         let since_ms = chrono::Local::now().timestamp_millis() - i64::from(days) * 86_400_000;
-        let mut stmt = self.conn.prepare(
+        let mut stmt = self.conn.prepare(&format!(
             "SELECT date(m.timestamp_ms / 1000, 'unixepoch', 'localtime') AS day,
                     s.provider, COALESCE(m.model, ''),
                     SUM(m.input_tokens), SUM(m.output_tokens), SUM(m.cache_read_tokens),
@@ -380,9 +426,9 @@ impl Store {
                     SUM(m.cache_write_1h_tokens), SUM(m.reasoning_tokens), COUNT(*),
                     COALESCE(SUM(m.cost_usd), 0)
              FROM messages m JOIN sessions s ON s.id = m.session_id
-             WHERE m.input_tokens IS NOT NULL AND m.timestamp_ms >= ?1
-             GROUP BY day, s.provider, m.model ORDER BY day DESC, s.provider, m.model",
-        )?;
+             WHERE m.input_tokens IS NOT NULL AND m.timestamp_ms >= ?1 {CLAUDE_DEDUP}
+             GROUP BY day, s.provider, m.model ORDER BY day DESC, s.provider, m.model"
+        ))?;
         let rows = stmt.query_map([since_ms], |r| {
             let n = get_u64(r, 10);
             Ok(DailyUsage {
@@ -409,9 +455,8 @@ impl Store {
 
     /// 周期汇总。时间按消息 timestamp（本地时区边界见 `Period::since_ms`）。
     ///
-    /// 成本口径：`All` 时优先用会话级真值（Claude cost-state），没有的用估算；
-    /// 有真值的主会话，其子代理的估算不再加（cost-state 已含子代理）。
-    /// 其余周期只能按消息估算（真值无法切到天）。
+    /// 成本口径：所有周期都按消息估算（`messages.cost_usd`）求和，Claude 跨会话复制的消息只计一次。
+    /// agent 自记的真值（Claude cost-state）不混进来，见 [`Store::recorded_cost_total`]。
     pub fn stats_totals(
         &self,
         period: Period,
@@ -426,7 +471,8 @@ impl Store {
                     SUM(m.input_tokens IS NOT NULL), MAX(s.input_includes_cache),
                     COUNT(*), COUNT(DISTINCT m.session_id),
                     COALESCE(SUM(m.cost_usd),0), SUM(m.cost_usd IS NOT NULL)
-             FROM messages m JOIN sessions s ON s.id = m.session_id WHERE 1 = 1 {filter}"
+             FROM messages m JOIN sessions s ON s.id = m.session_id
+             WHERE 1 = 1 {filter} {CLAUDE_DEDUP}"
         );
         let mut stmt = self.conn.prepare(&sql)?;
         let (usage, messages, sessions, est_cost, priced) =
@@ -452,34 +498,9 @@ impl Store {
                 ))
             })?;
 
-        let (cost_usd, cost_source) = if period == Period::All {
-            let mut sql = String::from(
-                "SELECT COALESCE(SUM(CASE WHEN s.recorded_cost_usd IS NOT NULL THEN s.recorded_cost_usd
-                                          WHEN p.recorded_cost_usd IS NOT NULL THEN 0
-                                          ELSE COALESCE(s.estimated_cost_usd, 0) END), 0),
-                        SUM(s.recorded_cost_usd IS NOT NULL),
-                        SUM(s.recorded_cost_usd IS NULL AND p.recorded_cost_usd IS NULL
-                            AND s.estimated_cost_usd IS NOT NULL)
-                 FROM sessions s LEFT JOIN sessions p ON p.id = s.parent_session_id WHERE 1 = 1",
-            );
-            let mut a: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
-            if let Some(p) = provider {
-                sql.push_str(" AND s.provider = ?");
-                a.push(Box::new(p.as_str().to_string()));
-            }
-            let (cost, recorded, estimated): (f64, u64, u64) =
-                self.conn
-                    .query_row(&sql, rusqlite::params_from_iter(a.iter()), |r| {
-                        Ok((r.get(0)?, get_u64(r, 1), get_u64(r, 2)))
-                    })?;
-            let src = match (recorded, estimated) {
-                (0, 0) => CostSource::Unknown,
-                (_, 0) => CostSource::Recorded,
-                (0, _) => CostSource::Estimated,
-                _ => CostSource::Mixed,
-            };
-            (cost, src)
-        } else if priced == 0 {
+        // 所有周期（含 All）都按消息估算求和：cost-state 只记最后一个进程的累计，
+        // resume 过的会话会低估到 1/3~1/10，且没法切到天。真值另由 `recorded_cost_total` 并列提供。
+        let (cost_usd, cost_source) = if priced == 0 {
             (0.0, CostSource::Unknown)
         } else {
             (est_cost, CostSource::Estimated)
@@ -495,13 +516,31 @@ impl Store {
         })
     }
 
+    /// agent 自记的成本真值（Claude cost-state `totalCostUSD`）之和与会话数，与估算并列展示用。
+    /// 只有主会话有（已含其子代理）；resume 过的会话只记最后一个进程的累计，所以通常比估算低。
+    pub fn recorded_cost_total(&self, provider: Option<&ProviderId>) -> Result<(f64, u64)> {
+        let mut sql = String::from(
+            "SELECT COALESCE(SUM(recorded_cost_usd), 0), COUNT(recorded_cost_usd) FROM sessions WHERE 1 = 1",
+        );
+        let mut args: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+        if let Some(p) = provider {
+            sql.push_str(" AND provider = ?");
+            args.push(Box::new(p.as_str().to_string()));
+        }
+        Ok(self
+            .conn
+            .query_row(&sql, rusqlite::params_from_iter(args.iter()), |r| {
+                Ok((r.get::<_, f64>(0)?, get_u64(r, 1)))
+            })?)
+    }
+
     /// 周期内按 provider × 模型 的用量与估算成本，按成本倒序。
     pub fn stats_by_model(&self, period: Period) -> Result<Vec<CostBreakdown>> {
         let (filter, args) = period_filter(period, None);
         let sql = format!(
             "SELECT s.provider, COALESCE(m.model, ''), {USAGE_SUM_COLS}
              FROM messages m JOIN sessions s ON s.id = m.session_id
-             WHERE m.input_tokens IS NOT NULL {filter}
+             WHERE m.input_tokens IS NOT NULL {filter} {CLAUDE_DEDUP}
              GROUP BY s.provider, m.model ORDER BY cost DESC, total DESC, m.model, s.provider"
         );
         let mut stmt = self.conn.prepare(&sql)?;
@@ -515,7 +554,7 @@ impl Store {
         let sql = format!(
             "SELECT s.provider, s.project_name, {USAGE_SUM_COLS}
              FROM messages m JOIN sessions s ON s.id = m.session_id
-             WHERE m.input_tokens IS NOT NULL {filter}
+             WHERE m.input_tokens IS NOT NULL {filter} {CLAUDE_DEDUP}
              GROUP BY s.provider, s.project_name
              ORDER BY cost DESC, total DESC, s.project_name, s.provider LIMIT {}",
             if limit == 0 { -1 } else { limit as i64 }
@@ -649,6 +688,11 @@ impl Store {
             .optional()?)
     }
 
+    /// 本连接打开以来 INSERT / UPDATE / DELETE 改动的行数（含 FTS 虚表）。基准与测试用来量化写放大。
+    pub fn total_changes(&self) -> u64 {
+        self.conn.total_changes()
+    }
+
     /// (会话数, 消息数)
     pub fn counts(&self) -> Result<(u64, u64)> {
         let s: i64 = self
@@ -661,6 +705,83 @@ impl Store {
     }
 }
 
+/// 一次落库改动的行数（基准与报告用）。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct WriteStats {
+    pub sessions: usize,
+    /// upsert 的消息行数（整文件路径为写入的全部消息）。
+    pub messages: usize,
+    /// 增删的全文索引行数（增量路径精确计数；整文件路径只计新增）。
+    pub fts: usize,
+}
+
+impl WriteStats {
+    pub fn add(&mut self, other: &WriteStats) {
+        self.sessions += other.sessions;
+        self.messages += other.messages;
+        self.fts += other.fts;
+    }
+}
+
+/// 下次增量续读的起点。
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ResumePoint {
+    /// 已解析到的字节偏移（之后从这里读）；0 表示没有可续读的位置。
+    pub offset: u64,
+    /// 已解析的行数（含空行），续读的行号从 `lines + 1` 起。
+    pub lines: u64,
+    /// 已解析部分首尾各 4 KB 的哈希，判断原件前段有没有被改写。
+    pub fingerprint: Option<String>,
+    pub inode: Option<u64>,
+}
+
+/// `sources` 表的一行。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SourceRecord {
+    pub size_bytes: u64,
+    pub mtime_ms: i64,
+    pub session_id: String,
+    pub resume: ResumePoint,
+}
+
+const MESSAGE_SELECT: &str =
+    "SELECT id, session_id, native_id, parent_id, role, is_meta, timestamp_ms, model,
+            stop_reason, blocks_json, input_tokens, output_tokens, cache_read_tokens,
+            cache_write_tokens, cache_write_5m_tokens, cache_write_1h_tokens, reasoning_tokens
+     FROM messages";
+
+fn row_to_message(r: &Row) -> rusqlite::Result<Message> {
+    let blocks_json: String = r.get(9)?;
+    let blocks: Vec<ContentBlock> = serde_json::from_str(&blocks_json).map_err(|e| {
+        rusqlite::Error::FromSqlConversionFailure(9, rusqlite::types::Type::Text, Box::new(e))
+    })?;
+    let input: Option<i64> = r.get(10)?;
+    let usage = input.map(|_| Usage {
+        input_tokens: get_u64(r, 10),
+        output_tokens: get_u64(r, 11),
+        cache_read_tokens: get_u64(r, 12),
+        cache_write_tokens: get_u64(r, 13),
+        cache_write_5m_tokens: get_u64(r, 14),
+        cache_write_1h_tokens: get_u64(r, 15),
+        reasoning_tokens: get_u64(r, 16),
+        requests: 1,
+        input_includes_cache: false,
+    });
+    Ok(Message {
+        id: r.get(0)?,
+        session_id: r.get(1)?,
+        native_id: r.get(2)?,
+        parent_id: r.get(3)?,
+        role: Role::parse(&r.get::<_, String>(4)?),
+        is_meta: r.get::<_, i64>(5)? != 0,
+        timestamp_ms: r.get(6)?,
+        model: r.get(7)?,
+        stop_reason: r.get(8)?,
+        blocks,
+        usage,
+    })
+}
+
 const SESSION_SELECT: &str =
     "SELECT id, provider, native_id, parent_session_id, kind, title, cwd, git_branch, machine_id,
             agent_version, entrypoint, started_at_ms, ended_at_ms, updated_at_ms, models_json,
@@ -669,6 +790,16 @@ const SESSION_SELECT: &str =
             source_path, source_size_bytes, source_mtime_ms, recorded_cost_usd, estimated_cost_usd,
             source_compressed
      FROM sessions";
+
+/// Claude 的 fork / resume 会把历史 assistant 行（含 `message.id`）原样复制进新会话文件，
+/// 同一次 API 请求于是出现在多个会话里（真实库 1,569 个 message.id，多算约 $446）。
+/// 跨会话的汇总（按天 / 周期 / 模型 / 项目）只计最早的那一条：同 native_id 里 (时间, 会话 id) 最小者。
+/// 会话详情与会话级成本不去重——每个会话自己看是完整的。Codex 不受影响。
+const CLAUDE_DEDUP: &str = " AND NOT (s.provider = 'claude-code' AND m.native_id IS NOT NULL
+     AND EXISTS (SELECT 1 FROM messages d
+                 WHERE d.native_id = m.native_id AND d.session_id LIKE 'claude-code:%'
+                   AND (d.timestamp_ms < m.timestamp_ms
+                        OR (d.timestamp_ms = m.timestamp_ms AND d.session_id < m.session_id))))";
 
 /// 聚合列：7 个 usage 分量 + requests + 消息数 + 估算成本 + 总 token（排序用）。
 const USAGE_SUM_COLS: &str =
@@ -730,8 +861,16 @@ fn activity_kind(role: Role, blocks: &[ContentBlock]) -> ActivityKind {
     }
 }
 
+/// 会话行 + 标题的全文索引行（标题行先按映射删，没有映射时退回全表扫描删）。
 fn upsert_session_tx(tx: &Connection, s: &Session) -> Result<()> {
-    tx.execute(
+    upsert_session_row_tx(tx, s)?;
+    replace_title_fts_tx(tx, s, true)?;
+    Ok(())
+}
+
+/// 只写 sessions 表那一行，不碰全文索引。
+fn upsert_session_row_tx(tx: &Connection, s: &Session) -> Result<()> {
+    tx.prepare_cached(
         "INSERT INTO sessions(id, provider, native_id, parent_session_id, kind, title, cwd, project_name,
              git_branch, machine_id, agent_version, entrypoint, started_at_ms, ended_at_ms, updated_at_ms,
              models_json, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
@@ -757,7 +896,8 @@ fn upsert_session_tx(tx: &Connection, s: &Session) -> Result<()> {
              source_mtime_ms = excluded.source_mtime_ms, recorded_cost_usd = excluded.recorded_cost_usd,
              estimated_cost_usd = excluded.estimated_cost_usd,
              source_compressed = excluded.source_compressed",
-        params![
+    )?
+    .execute(params![
             s.id,
             s.provider.as_str(),
             s.native_id,
@@ -790,72 +930,424 @@ fn upsert_session_tx(tx: &Connection, s: &Session) -> Result<()> {
             s.recorded_cost_usd,
             s.estimated_cost_usd,
             s.source.compressed as i64,
-        ],
-    )?;
-    // 标题也进全文索引（message_id 为 NULL 的行）。
-    tx.execute(
-        "DELETE FROM message_fts WHERE session_id = ?1 AND message_id IS NULL",
-        [&s.id],
-    )?;
-    if let Some(t) = s.title.as_deref().filter(|t| !t.is_empty()) {
-        tx.execute(
-            "INSERT INTO message_fts(message_id, session_id, content) VALUES (NULL, ?1, ?2)",
-            params![s.id, t],
-        )?;
+        ])?;
+    Ok(())
+}
+
+/// `Some(title)`：会话已存在（title 可能为 NULL）；`None`：会话不存在。
+fn session_title_tx(tx: &Connection, id: &str) -> Result<Option<Option<String>>> {
+    Ok(tx
+        .prepare_cached("SELECT title FROM sessions WHERE id = ?1")?
+        .query_row([id], |r| r.get::<_, Option<String>>(0))
+        .optional()?)
+}
+
+/// 换掉会话标题在全文索引里的那一行（message_id 为 NULL，映射表里记作 ''）。返回改动的 FTS 行数。
+fn replace_title_fts_tx(tx: &Connection, s: &Session, existed: bool) -> Result<usize> {
+    let mut changed = 0;
+    if existed {
+        let n = delete_mapped_fts_tx(tx, &s.id, TITLE_KEY)?;
+        changed += n;
+        if n == 0 {
+            // 没有映射（映射表建立之前由旧版本写入的行）：退回按列扫描删除。
+            changed += tx.execute(
+                "DELETE FROM message_fts WHERE session_id = ?1 AND message_id IS NULL",
+                [&s.id],
+            )?;
+        }
     }
+    if let Some(t) = s.title.as_deref().filter(|t| !t.is_empty()) {
+        insert_fts_tx(tx, &s.id, None, t)?;
+        changed += 1;
+    }
+    Ok(changed)
+}
+
+/// 标题行在映射表里的 message_id。
+const TITLE_KEY: &str = "";
+
+/// 写一行全文索引并记下它的 rowid，之后按 rowid 删（FTS5 的 UNINDEXED 列做条件只能全表扫描）。
+fn insert_fts_tx(
+    tx: &Connection,
+    session_id: &str,
+    message_id: Option<&str>,
+    text: &str,
+) -> Result<()> {
+    tx.prepare_cached(
+        "INSERT INTO message_fts(message_id, session_id, content) VALUES (?1, ?2, ?3)",
+    )?
+    .execute(params![message_id, session_id, text])?;
+    let rowid = tx.last_insert_rowid();
+    tx.prepare_cached(
+        "INSERT OR REPLACE INTO message_fts_map(session_id, message_id, fts_rowid, text_hash)
+         VALUES (?1, ?2, ?3, ?4)",
+    )?
+    .execute(params![
+        session_id,
+        message_id.unwrap_or(TITLE_KEY),
+        rowid,
+        text_hash(text)
+    ])?;
+    Ok(())
+}
+
+/// 按映射删一行全文索引。rowid 之外再核对会话与消息 id，映射过期（旧版本写过库）时不会误删别人的行。
+fn delete_mapped_fts_tx(tx: &Connection, session_id: &str, key: &str) -> Result<usize> {
+    let rowid: Option<i64> = tx
+        .prepare_cached(
+            "SELECT fts_rowid FROM message_fts_map WHERE session_id = ?1 AND message_id = ?2",
+        )?
+        .query_row([session_id, key], |r| r.get(0))
+        .optional()?;
+    let Some(rowid) = rowid else {
+        return Ok(0);
+    };
+    let message_id = (key != TITLE_KEY).then_some(key);
+    let n = tx
+        .prepare_cached(
+            "DELETE FROM message_fts WHERE rowid = ?1 AND session_id = ?2 AND message_id IS ?3",
+        )?
+        .execute(params![rowid, session_id, message_id])?;
+    tx.prepare_cached("DELETE FROM message_fts_map WHERE session_id = ?1 AND message_id = ?2")?
+        .execute([session_id, key])?;
+    Ok(n)
+}
+
+/// 新消息的全文索引（正文为空不写）。返回写入的 FTS 行数。
+fn insert_message_fts_tx(tx: &Connection, m: &Message) -> Result<usize> {
+    let text = m.text();
+    if text.is_empty() {
+        return Ok(0);
+    }
+    insert_fts_tx(tx, &m.session_id, Some(&m.id), &text)?;
+    Ok(1)
+}
+
+/// 增量路径：消息正文没变（映射里的哈希相同）就不动全文索引，变了才删旧行写新行。返回改动的 FTS 行数。
+fn sync_message_fts_tx(tx: &Connection, m: &Message) -> Result<usize> {
+    let text = m.text();
+    let hash = text_hash(&text);
+    let mapped: Option<Option<i64>> = tx
+        .prepare_cached(
+            "SELECT text_hash FROM message_fts_map WHERE session_id = ?1 AND message_id = ?2",
+        )?
+        .query_row([&m.session_id, &m.id], |r| r.get(0))
+        .optional()?;
+    if mapped == Some(Some(hash)) {
+        return Ok(0);
+    }
+    let mut changed = 0;
+    if mapped.is_some() {
+        changed += delete_mapped_fts_tx(tx, &m.session_id, &m.id)?;
+    }
+    changed += insert_message_fts_tx(tx, m)?;
+    Ok(changed)
+}
+
+/// 正文的 64 位指纹（sha256 前 8 字节），判断全文索引要不要重写。
+fn text_hash(text: &str) -> i64 {
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(text.as_bytes());
+    let mut bytes = [0u8; 8];
+    bytes.copy_from_slice(&digest[..8]);
+    i64::from_le_bytes(bytes)
+}
+
+/// 写或覆盖一条消息。用 UPSERT 而不是 `INSERT OR REPLACE`：后者先删后插会换 rowid，
+/// 同一时间戳的消息排序（`ORDER BY timestamp_ms, rowid`）就会变。
+fn upsert_message_tx(tx: &Connection, m: &Message) -> Result<()> {
+    let u = m.usage.as_ref();
+    let col = |f: fn(&Usage) -> u64| u.map(|u| f(u) as i64);
+    tx.prepare_cached(
+        "INSERT INTO messages(id, session_id, native_id, parent_id, role, is_meta, timestamp_ms, model,
+             stop_reason, blocks_json, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
+             cache_write_5m_tokens, cache_write_1h_tokens, reasoning_tokens, cost_usd)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18)
+         ON CONFLICT(session_id, id) DO UPDATE SET
+             native_id = excluded.native_id, parent_id = excluded.parent_id, role = excluded.role,
+             is_meta = excluded.is_meta, timestamp_ms = excluded.timestamp_ms, model = excluded.model,
+             stop_reason = excluded.stop_reason, blocks_json = excluded.blocks_json,
+             input_tokens = excluded.input_tokens, output_tokens = excluded.output_tokens,
+             cache_read_tokens = excluded.cache_read_tokens,
+             cache_write_tokens = excluded.cache_write_tokens,
+             cache_write_5m_tokens = excluded.cache_write_5m_tokens,
+             cache_write_1h_tokens = excluded.cache_write_1h_tokens,
+             reasoning_tokens = excluded.reasoning_tokens, cost_usd = excluded.cost_usd",
+    )?
+    .execute(params![
+        m.id,
+        m.session_id,
+        m.native_id,
+        m.parent_id,
+        m.role.as_str(),
+        m.is_meta as i64,
+        m.timestamp_ms,
+        m.model,
+        m.stop_reason,
+        serde_json::to_string(&m.blocks)?,
+        col(|u| u.input_tokens),
+        col(|u| u.output_tokens),
+        col(|u| u.cache_read_tokens),
+        col(|u| u.cache_write_tokens),
+        col(|u| u.cache_write_5m_tokens),
+        col(|u| u.cache_write_1h_tokens),
+        col(|u| u.reasoning_tokens),
+        m.model
+            .as_deref()
+            .zip(u)
+            .and_then(|(model, u)| crate::pricing::estimate_usd(model, u)),
+    ])?;
     Ok(())
 }
 
 fn replace_messages_tx(tx: &Connection, session_id: &str, messages: &[Message]) -> Result<()> {
     tx.execute("DELETE FROM messages WHERE session_id = ?1", [session_id])?;
+    // 整会话重写时按列扫描删（连同映射建立前写入、没有映射的旧行），再清映射。
     tx.execute(
         "DELETE FROM message_fts WHERE session_id = ?1 AND message_id IS NOT NULL",
         [session_id],
     )?;
-    let mut ins = tx.prepare_cached(
-        "INSERT INTO messages(id, session_id, native_id, parent_id, role, is_meta, timestamp_ms, model,
-             stop_reason, blocks_json, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
-             cache_write_5m_tokens, cache_write_1h_tokens, reasoning_tokens, cost_usd)
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18)",
-    )?;
-    let mut fts = tx.prepare_cached(
-        "INSERT INTO message_fts(message_id, session_id, content) VALUES (?1, ?2, ?3)",
+    tx.execute(
+        "DELETE FROM message_fts_map WHERE session_id = ?1 AND message_id != ''",
+        [session_id],
     )?;
     for m in messages {
         if m.session_id != session_id {
             bail!("消息 {} 的 session_id 与目标会话不一致", m.id);
         }
-        let u = m.usage.as_ref();
-        let col = |f: fn(&Usage) -> u64| u.map(|u| f(u) as i64);
-        ins.execute(params![
-            m.id,
-            m.session_id,
-            m.native_id,
-            m.parent_id,
-            m.role.as_str(),
-            m.is_meta as i64,
-            m.timestamp_ms,
-            m.model,
-            m.stop_reason,
-            serde_json::to_string(&m.blocks)?,
-            col(|u| u.input_tokens),
-            col(|u| u.output_tokens),
-            col(|u| u.cache_read_tokens),
-            col(|u| u.cache_write_tokens),
-            col(|u| u.cache_write_5m_tokens),
-            col(|u| u.cache_write_1h_tokens),
-            col(|u| u.reasoning_tokens),
-            m.model
-                .as_deref()
-                .zip(u)
-                .and_then(|(model, u)| crate::pricing::estimate_usd(model, u)),
-        ])?;
-        let text = m.text();
-        if !text.is_empty() {
-            fts.execute(params![m.id, m.session_id, text])?;
-        }
+        upsert_message_tx(tx, m)?;
+        insert_message_fts_tx(tx, m)?;
     }
     Ok(())
+}
+
+/// 来源状态与续读位置。`resume` 为 None 时清零（下次整文件解析）。
+fn upsert_source_tx(
+    tx: &Connection,
+    session: &Session,
+    resume: Option<&ResumePoint>,
+) -> Result<()> {
+    let empty = ResumePoint::default();
+    let r = resume.unwrap_or(&empty);
+    tx.prepare_cached(
+        "INSERT INTO sources(path, size_bytes, mtime_ms, session_id, parsed_offset, parsed_lines,
+             fingerprint, inode) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+         ON CONFLICT(path) DO UPDATE SET size_bytes = excluded.size_bytes,
+             mtime_ms = excluded.mtime_ms, session_id = excluded.session_id,
+             parsed_offset = excluded.parsed_offset, parsed_lines = excluded.parsed_lines,
+             fingerprint = excluded.fingerprint, inode = excluded.inode",
+    )?
+    .execute(params![
+        session.source.path.to_string_lossy(),
+        session.source.size_bytes as i64,
+        session.source.mtime_ms,
+        session.id,
+        r.offset as i64,
+        r.lines as i64,
+        r.fingerprint,
+        r.inode.map(|i| i as i64),
+    ])?;
+    Ok(())
+}
+
+/// 增量入库用到的表结构变更，全部原地加列 / 加表，不升 `SCHEMA_VERSION`、不重建：
+/// 库里有原件已被 agent 清理的会话，重建会让它们永久消失。
+///
+/// - `sources` 加续读位置：`parsed_offset`（已解析到的字节）、`parsed_lines`（已解析的行数，
+///   Codex 的消息 id 是行号）、`fingerprint`（已解析部分首尾各 4 KB 的哈希）、`inode`。老库缺省 0，第一次走整文件解析。
+/// - `message_fts_map`：全文索引行的 rowid 映射。FTS5 的 UNINDEXED 列做条件只能全表扫描，
+///   按消息删索引行得先知道 rowid。首次建表时从现有索引回填。
+fn migrate_incremental(conn: &Connection) -> Result<()> {
+    if !needs_incremental_migration(conn)? {
+        return Ok(());
+    }
+    // IMMEDIATE：app 的同步线程、UI 连接、CLI 可能同时打开，检查与加列要串行。
+    // 回填映射表要读一遍全文索引（真实库约 3 秒），等锁的一方不能按平时的 5 秒超时失败。
+    conn.execute_batch("PRAGMA busy_timeout = 120000; BEGIN IMMEDIATE")?;
+    let result = (|| -> Result<()> {
+        let mut cols = Vec::new();
+        {
+            let mut stmt = conn.prepare("PRAGMA table_info(sources)")?;
+            for c in stmt.query_map([], |r| r.get::<_, String>(1))? {
+                cols.push(c?);
+            }
+        }
+        for (name, ddl) in [
+            ("parsed_offset", "INTEGER NOT NULL DEFAULT 0"),
+            ("parsed_lines", "INTEGER NOT NULL DEFAULT 0"),
+            ("fingerprint", "TEXT"),
+            ("inode", "INTEGER"),
+        ] {
+            if !cols.iter().any(|c| c == name) {
+                conn.execute_batch(&format!("ALTER TABLE sources ADD COLUMN {name} {ddl}"))?;
+            }
+        }
+        let has_map: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'message_fts_map')",
+            [],
+            |r| r.get(0),
+        )?;
+        // 汇总时按 native_id 去掉跨会话复制的 Claude 消息（见 `CLAUDE_DEDUP`）；部分索引只收有 native_id 的行。
+        conn.execute_batch(
+            "CREATE INDEX IF NOT EXISTS idx_messages_native
+                 ON messages(native_id, timestamp_ms, session_id) WHERE native_id IS NOT NULL;
+             CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);",
+        )?;
+        if !has_map {
+            conn.execute_batch(
+                "CREATE TABLE message_fts_map (
+                     session_id  TEXT NOT NULL,
+                     message_id  TEXT NOT NULL,
+                     fts_rowid   INTEGER NOT NULL,
+                     text_hash   INTEGER,
+                     PRIMARY KEY (session_id, message_id)
+                 ) WITHOUT ROWID;
+                 INSERT OR IGNORE INTO message_fts_map(session_id, message_id, fts_rowid, text_hash)
+                     SELECT session_id, COALESCE(message_id, ''), rowid, NULL FROM message_fts;",
+            )?;
+        }
+        Ok(())
+    })();
+    let done = match result {
+        Ok(()) => conn.execute_batch("COMMIT").map_err(anyhow::Error::from),
+        Err(e) => {
+            let _ = conn.execute_batch("ROLLBACK");
+            Err(e)
+        }
+    };
+    conn.execute_batch("PRAGMA busy_timeout = 5000;")?;
+    done
+}
+
+/// 不加锁先看一眼：老库缺列或缺映射表才需要迁移（迁移完的库每次打开不再抢写锁）。
+fn needs_incremental_migration(conn: &Connection) -> Result<bool> {
+    let offset_col: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('sources') WHERE name = 'inode')",
+        [],
+        |r| r.get(0),
+    )?;
+    let has_map: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'message_fts_map')",
+        [],
+        |r| r.get(0),
+    )?;
+    let has_rest: bool = conn.query_row(
+        "SELECT (SELECT COUNT(*) FROM sqlite_master
+                 WHERE (type = 'index' AND name = 'idx_messages_native')
+                    OR (type = 'table' AND name = 'meta')) = 2",
+        [],
+        |r| r.get(0),
+    )?;
+    Ok(!(offset_col && has_map && has_rest))
+}
+
+/// 内嵌定价表的身份：版本（抓取日期）+ 内容哈希。只改了单价没改日期也能发现。
+fn pricing_stamp() -> String {
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(include_str!("pricing.json").as_bytes());
+    let hex: String = digest[..8].iter().map(|b| format!("{b:02x}")).collect();
+    format!("{}#{hex}", crate::pricing::pricing_version())
+}
+
+const PRICING_KEY: &str = "pricing_stamp";
+
+/// 成本是入库时按当时的定价表算好存下的（`messages.cost_usd`、`sessions.estimated_cost_usd`）。
+/// 定价表一换（新模型、长上下文分档、改价），老消息的成本不会自己变，只有原件变了的会话才重算，
+/// 新旧口径就混在一起。所以打开库时比对 `meta` 里记的定价表身份，不同就用 token 列全量重算一遍：
+/// 一个事务，逐条消息重估、只写变了的行，再逐会话 SQL 聚合 `estimated_cost_usd`。不升 `SCHEMA_VERSION`。
+fn reprice_if_needed(conn: &Connection) -> Result<()> {
+    let stamp = pricing_stamp();
+    let stored = |conn: &Connection| -> Result<Option<String>> {
+        Ok(conn
+            .query_row(
+                "SELECT value FROM meta WHERE key = ?1",
+                [PRICING_KEY],
+                |r| r.get(0),
+            )
+            .optional()?)
+    };
+    if stored(conn)?.as_deref() == Some(stamp.as_str()) {
+        return Ok(());
+    }
+    conn.execute_batch("PRAGMA busy_timeout = 120000; BEGIN IMMEDIATE")?;
+    let result = (|| -> Result<()> {
+        // 等锁期间别的连接可能已经重算过。
+        if stored(conn)?.as_deref() == Some(stamp.as_str()) {
+            return Ok(());
+        }
+        reprice_tx(conn)?;
+        conn.execute(
+            "INSERT INTO meta(key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![PRICING_KEY, stamp],
+        )?;
+        Ok(())
+    })();
+    let done = match result {
+        Ok(()) => conn.execute_batch("COMMIT").map_err(anyhow::Error::from),
+        Err(e) => {
+            let _ = conn.execute_batch("ROLLBACK");
+            Err(e)
+        }
+    };
+    conn.execute_batch("PRAGMA busy_timeout = 5000;")?;
+    done
+}
+
+/// 按当前定价表重算全部消息成本与会话估算。返回成本变了的消息数。
+pub(crate) fn reprice_tx(conn: &Connection) -> Result<usize> {
+    let mut changed_sessions: std::collections::BTreeSet<String> = Default::default();
+    let mut updates: Vec<(i64, Option<f64>)> = Vec::new();
+    {
+        let mut stmt = conn.prepare(
+            "SELECT rowid, session_id, model, cost_usd, input_tokens, output_tokens,
+                    cache_read_tokens, cache_write_tokens, cache_write_5m_tokens,
+                    cache_write_1h_tokens, reasoning_tokens
+             FROM messages WHERE input_tokens IS NOT NULL OR cost_usd IS NOT NULL",
+        )?;
+        let mut rows = stmt.query([])?;
+        while let Some(r) = rows.next()? {
+            let model: Option<String> = r.get(2)?;
+            let old: Option<f64> = r.get(3)?;
+            let has_usage = r.get::<_, Option<i64>>(4)?.is_some();
+            let usage = Usage {
+                input_tokens: get_u64(r, 4),
+                output_tokens: get_u64(r, 5),
+                cache_read_tokens: get_u64(r, 6),
+                cache_write_tokens: get_u64(r, 7),
+                cache_write_5m_tokens: get_u64(r, 8),
+                cache_write_1h_tokens: get_u64(r, 9),
+                reasoning_tokens: get_u64(r, 10),
+                requests: 1,
+                input_includes_cache: false,
+            };
+            let new = model
+                .as_deref()
+                .filter(|_| has_usage)
+                .and_then(|m| crate::pricing::estimate_usd(m, &usage));
+            let same = match (old, new) {
+                (Some(a), Some(b)) => (a - b).abs() <= 1e-12 * a.abs().max(1.0),
+                (None, None) => true,
+                _ => false,
+            };
+            if !same {
+                updates.push((r.get(0)?, new));
+                changed_sessions.insert(r.get(1)?);
+            }
+        }
+    }
+    let mut upd = conn.prepare_cached("UPDATE messages SET cost_usd = ?1 WHERE rowid = ?2")?;
+    for (rowid, cost) in &updates {
+        upd.execute(params![cost, rowid])?;
+    }
+    let mut agg = conn.prepare_cached(
+        "UPDATE sessions SET estimated_cost_usd =
+             (SELECT SUM(cost_usd) FROM messages WHERE session_id = ?1) WHERE id = ?1",
+    )?;
+    for sid in &changed_sessions {
+        agg.execute([sid])?;
+    }
+    Ok(updates.len())
 }
 
 /// cwd 最后一段；无 cwd 时为空串。
@@ -895,14 +1387,14 @@ fn models_from_json(s: &str, idx: usize) -> rusqlite::Result<Vec<String>> {
 
 fn row_to_summary(r: &Row) -> rusqlite::Result<SessionSummary> {
     let title: Option<String> = r.get(3)?;
-    // 会话级成本：agent 自记真值优先（agent-reported），否则用入库时的估算列。
-    // `estimated_cost_usd` 由 `pricing::estimate_messages` 算出，与该会话 messages.cost_usd 之和同口径
-    // （逐条 `estimate_usd`，未知模型跳过，全不可计价为 NULL），直接读列省掉每行一次子查询。
+    // 会话级成本：默认用估算列（与仪表盘各周期同口径）。cost-state 真值对 resume 过的会话会严重低估，
+    // 只在完全没法估算（未知模型）时兜底；真值本身在 `Session::recorded_cost_usd`（`get_session`）里。
+    // `estimated_cost_usd` 与该会话 messages.cost_usd 之和同口径，直接读列省掉每行一次子查询。
     let recorded: Option<f64> = r.get(21)?;
     let estimated: Option<f64> = r.get(22)?;
-    let (cost_usd, cost_source) = match (recorded, estimated) {
-        (Some(c), _) => (Some(c), CostSource::Recorded),
-        (None, Some(c)) => (Some(c), CostSource::Estimated),
+    let (cost_usd, cost_source) = match (estimated, recorded) {
+        (Some(c), _) => (Some(c), CostSource::Estimated),
+        (None, Some(c)) => (Some(c), CostSource::Recorded),
         (None, None) => (None, CostSource::Unknown),
     };
     Ok(SessionSummary {

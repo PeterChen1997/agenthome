@@ -22,9 +22,11 @@ use crate::model::ProviderId;
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, Read, Write};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Component, Path, PathBuf};
+use std::sync::Mutex;
 
 const MANIFEST: &str = "manifest.json";
 const MANIFEST_SCHEMA: u32 = 1;
@@ -157,6 +159,19 @@ pub struct RawArchive {
     root: PathBuf,
     machine_id: String,
     lock: File,
+    /// 版本文件 → 已归档内容的 sha256 中间状态。活跃原件每追加几行就归档一次，
+    /// 没有它就得每次把已归档的几十 MB 前缀重读重算一遍（sha256 状态无法从摘要恢复）。
+    hashes: Mutex<HashMap<PathBuf, HashState>>,
+}
+
+/// 某个版本文件归档到 `content_size` 时的哈希状态，以及当时原件的身份（路径、inode、首尾指纹）。
+struct HashState {
+    content_size: u64,
+    content_sha256: String,
+    hasher: Sha256,
+    path: PathBuf,
+    inode: Option<u64>,
+    fingerprint: [u8; 32],
 }
 
 impl RawArchive {
@@ -189,6 +204,7 @@ impl RawArchive {
             root,
             machine_id,
             lock,
+            hashes: Mutex::new(HashMap::new()),
         })
     }
 
@@ -272,7 +288,7 @@ impl RawArchive {
         let now = now_ms();
 
         let extend = match manifest.versions.last_mut() {
-            Some(latest) => Some(try_extend(&dir, latest, path, &stamp, now)?),
+            Some(latest) => Some(try_extend(&dir, latest, path, &stamp, now, &self.hashes)?),
             None => None,
         };
         let outcome = match extend {
@@ -344,12 +360,16 @@ enum Extend {
 }
 
 /// 尝试把原件接到当前版本末尾。
+///
+/// 要先确认原件前段与已归档内容一致。同一原件（路径、inode 不变、没变短）且已归档部分首尾各 4 KB 没变时，
+/// 直接用内存里缓存的 sha256 中间状态，只读新增的字节；否则（程序刚启动、原件被替换等）重读前缀重算。
 fn try_extend(
     dir: &Path,
     latest: &mut RawVersion,
     path: &Path,
     stamp: &SourceStamp,
     now: i64,
+    hashes: &Mutex<HashMap<PathBuf, HashState>>,
 ) -> Result<Extend> {
     let stored = dir.join(&latest.file);
     match fs::metadata(&stored).map(|m| m.len()) {
@@ -368,26 +388,51 @@ fn try_extend(
         Ok(_) => {}
     }
 
-    let mut reader = open_content(path)?;
-    let mut hasher = Sha256::new();
+    let cached = if stamp.compressed {
+        None
+    } else {
+        hashes.lock().ok().and_then(|mut h| h.remove(&stored))
+    }
+    .filter(|c| {
+        c.content_size == latest.content_size
+            && c.content_sha256 == latest.content_sha256
+            && c.path == stamp.path
+            && c.inode == stamp.inode
+            && stamp.size >= c.content_size
+            && source_fingerprint(path, c.content_size).ok() == Some(c.fingerprint)
+    });
+
     let mut buf = vec![0u8; CHUNK];
-    let mut remaining = latest.content_size;
-    while remaining > 0 {
-        let want = usize::try_from(remaining.min(CHUNK as u64)).unwrap_or(CHUNK);
-        let n = read_some(&mut reader, &mut buf[..want])?;
-        if n == 0 {
-            return Ok(Extend::Diverged("原件变短了（被截断或替换）".into()));
+    let (mut reader, mut hasher): (Box<dyn Read>, Sha256) = match cached {
+        Some(state) => {
+            let mut file = File::open(path).with_context(|| format!("打开 {}", path.display()))?;
+            file.seek(SeekFrom::Start(state.content_size))?;
+            (Box::new(file), state.hasher)
         }
-        hasher.update(&buf[..n]);
-        remaining -= n as u64;
-    }
-    if format!("{:x}", hasher.clone().finalize()) != latest.content_sha256 {
-        return Ok(Extend::Diverged("原件已归档的部分被改写了".into()));
-    }
+        None => {
+            let mut reader = open_content(path)?;
+            let mut hasher = Sha256::new();
+            let mut remaining = latest.content_size;
+            while remaining > 0 {
+                let want = usize::try_from(remaining.min(CHUNK as u64)).unwrap_or(CHUNK);
+                let n = read_some(&mut reader, &mut buf[..want])?;
+                if n == 0 {
+                    return Ok(Extend::Diverged("原件变短了（被截断或替换）".into()));
+                }
+                hasher.update(&buf[..n]);
+                remaining -= n as u64;
+            }
+            if format!("{:x}", hasher.clone().finalize()) != latest.content_sha256 {
+                return Ok(Extend::Diverged("原件已归档的部分被改写了".into()));
+            }
+            (reader, hasher)
+        }
+    };
 
     let first = read_some(&mut reader, &mut buf)?;
     if first == 0 {
         upsert_stamp(&mut latest.sources, stamp.clone());
+        remember_hash(hashes, &stored, latest, hasher, path, stamp);
         return Ok(Extend::Same);
     }
     let file = OpenOptions::new()
@@ -406,12 +451,60 @@ fn try_extend(
     encoder.finish()?.sync_all()?;
 
     latest.content_size += added;
-    latest.content_sha256 = format!("{:x}", hasher.finalize());
+    latest.content_sha256 = format!("{:x}", hasher.clone().finalize());
     latest.stored_size = fs::metadata(&stored)?.len();
     latest.segments += 1;
     latest.last_copied_ms = now;
     upsert_stamp(&mut latest.sources, stamp.clone());
+    remember_hash(hashes, &stored, latest, hasher, path, stamp);
     Ok(Extend::Appended(added))
+}
+
+/// 记下版本文件当前的哈希中间状态，供下次追加时跳过前缀重读。压缩原件不缓存（不能按偏移续读）。
+fn remember_hash(
+    hashes: &Mutex<HashMap<PathBuf, HashState>>,
+    stored: &Path,
+    latest: &RawVersion,
+    hasher: Sha256,
+    path: &Path,
+    stamp: &SourceStamp,
+) {
+    if stamp.compressed {
+        return;
+    }
+    let Ok(fingerprint) = source_fingerprint(path, latest.content_size) else {
+        return;
+    };
+    if let Ok(mut h) = hashes.lock() {
+        h.insert(
+            stored.to_path_buf(),
+            HashState {
+                content_size: latest.content_size,
+                content_sha256: latest.content_sha256.clone(),
+                hasher,
+                path: path.to_path_buf(),
+                inode: stamp.inode,
+                fingerprint,
+            },
+        );
+    }
+}
+
+/// 原件 `[0, len)` 首尾各 4 KB 的 sha256：只在末尾追加的原件这两段不会变。
+fn source_fingerprint(path: &Path, len: u64) -> io::Result<[u8; 32]> {
+    const SPAN: u64 = 4096;
+    let mut file = File::open(path)?;
+    let mut hasher = Sha256::new();
+    let mut head = vec![0u8; len.min(SPAN) as usize];
+    file.read_exact(&mut head)?;
+    hasher.update(&head);
+    let tail_start = len.saturating_sub(SPAN);
+    let mut tail = vec![0u8; (len - tail_start) as usize];
+    file.seek(SeekFrom::Start(tail_start))?;
+    file.read_exact(&mut tail)?;
+    hasher.update(&tail);
+    hasher.update(len.to_le_bytes());
+    Ok(hasher.finalize().into())
 }
 
 /// 整份写一个新版本：先写临时文件，压完再改名。
@@ -709,6 +802,42 @@ mod tests {
     }
 
     /// 原件被截断或改写时，旧内容一个字节都不能丢：旧版本原样保留，新内容另存。
+    /// 追加时用缓存的哈希状态跳过前缀重读；但同一文件（同 inode）的开头被改写仍要发现，另存新版本。
+    #[test]
+    fn cached_hash_still_detects_rewritten_head() {
+        let fx = fixture();
+        let path = fx.source_root.join("-Users-me-proj/abc.jsonl");
+        let provider = ProviderId::ClaudeCode;
+        write(&path, b"line1\n");
+        fx.archive
+            .archive(&provider, &fx.source_root, &path)
+            .unwrap();
+        append(&path, b"line2\n");
+        fx.archive
+            .archive(&provider, &fx.source_root, &path)
+            .unwrap();
+        // 原地改写开头（不换 inode）并变长。
+        let mut f = OpenOptions::new().write(true).open(&path).unwrap();
+        f.write_all(b"LINE1").unwrap();
+        drop(f);
+        append(&path, b"line3\n");
+        let outcome = fx
+            .archive
+            .archive(&provider, &fx.source_root, &path)
+            .unwrap();
+        assert!(
+            matches!(outcome, RawOutcome::NewVersion { .. }),
+            "{outcome:?}"
+        );
+        assert_eq!(
+            restore_all(&fx, &path),
+            vec![
+                b"line1\nline2\n".to_vec(),
+                b"LINE1\nline2\nline3\n".to_vec()
+            ]
+        );
+    }
+
     #[test]
     fn rewritten_source_keeps_old_version() {
         let fx = fixture();

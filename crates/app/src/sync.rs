@@ -2,15 +2,16 @@
 //! 不再依赖手动 `agenthome scan`。
 //!
 //! - 启动即增量扫描一次（10.11）；索引库不存在时这一次就是首次全量建库。
-//! - notify 监听各来源根目录（10.10），变化后防抖 [`DEBOUNCE`] 再只扫变了的来源。
-//! - 每 [`FALLBACK_SCAN`] 兜底扫一次全部来源（10.12），监听丢事件也能追上。
+//! - notify 监听各来源根目录（10.10），只处理变了的那几个文件（`ingest_paths`，按字节偏移增量续读），
+//!   不为每次变化遍历来源目录。合并策略见 [`QUIET`] / [`MAX_DELAY`]。
+//! - 每 [`FALLBACK_SCAN`] 兜底扫一次全部来源（10.12），监听丢事件也能追上；监听报错时立即补一次全量。
 //!
 //! 每个原件先归档到 raw 层（10.1–10.3，`agenthome_core::raw`）再入库，归档失败不挡入库但会展示。
 //!
 //! 入库在独立线程上跑，持有自己的 `Store` 连接（WAL 下与 UI 的只读查询互不阻塞）。
 //! 线程把状态写进共享快照，前台每 [`UI_POLL`] 看一眼版本号，有变化才写回 `SyncState` 并重绘。
 
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 use std::path::PathBuf;
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
@@ -18,15 +19,18 @@ use std::time::{Duration, Instant};
 
 use agenthome_core::model::ProviderId;
 use agenthome_core::{
-    ClaudeCodeProvider, CodexProvider, RawArchive, RawStats, Report, SourceProvider, Store,
-    WatchEvent, ingest_all, paths, watch_roots,
+    ClaudeCodeProvider, CodexProvider, IngestCache, RawArchive, RawStats, Report, SourceProvider,
+    Store, WatchEvent, ingest_all_cached, ingest_paths, paths, watch_roots,
 };
 use gpui_kit::{App, AsyncApp, Entity, Task};
 
 use crate::format::now_ms;
 
-/// 文件变化后等这么久没有新变化再入库：活跃会话每秒都在追加，没必要每次都扫。
-const DEBOUNCE: Duration = Duration::from_secs(2);
+/// 合并文件变化：首个事件后至少等这么久，期间安静了就入库。活跃会话每秒都在追加，没必要每行都入一次库。
+const QUIET: Duration = Duration::from_secs(2);
+/// 持续写入时最多攒这么久就入库一次。原来的「安静 2 秒才入库」在 agent 连续输出时会一直等下去，
+/// 界面迟迟不更新；增量入库每次只写新增的几行，10 秒一次的代价很小。
+const MAX_DELAY: Duration = Duration::from_secs(10);
 /// 兜底全量扫描间隔。
 const FALLBACK_SCAN: Duration = Duration::from_secs(3_600);
 /// 后台跑官方 `claude /usage` 刷新 Claude 订阅额度的间隔（每次约 10 秒、不耗 token）。
@@ -39,8 +43,8 @@ const UI_POLL: Duration = Duration::from_millis(500);
 /// 发给入库线程的指令。
 #[derive(Clone, Debug)]
 enum Command {
-    /// 某来源目录有变化（来自文件监听）。
-    Changed(ProviderId),
+    /// 某来源目录下这些文件有变化（来自文件监听）。
+    Changed(ProviderId, Vec<PathBuf>),
     /// 扫全部来源（设置页「立即扫描」、监听报错后的补救）。
     ScanAll,
 }
@@ -277,10 +281,15 @@ fn run_worker(
     update(&shared, |s| s.raw.root = Some(raw_root));
 
     // 先挂监听再扫：扫描期间发生的变化会排进通道，扫完立刻补一轮。
+    // 除各来源主目录外还监听 Codex 的归档目录（会话被归档时 rollout 挪到那里）；它不存在属正常，不算没挂上。
+    let mut watch_list = roots.clone();
+    if let Some(archive) = codex.archive_root() {
+        watch_list.push((ProviderId::Codex, archive.to_path_buf()));
+    }
     let error_sender = watch_sender.clone();
-    let watcher = watch_roots(&roots, move |event| match event {
-        WatchEvent::Changed(provider) => {
-            let _ = watch_sender.send(Command::Changed(provider));
+    let watcher = watch_roots(&watch_list, move |event| match event {
+        WatchEvent::Changed { provider, paths } => {
+            let _ = watch_sender.send(Command::Changed(provider, paths));
         }
         WatchEvent::Error(_) => {
             // FSEvents 可能丢事件；补一次全量扫描追上，不让数据悄悄落后。
@@ -295,7 +304,10 @@ fn run_worker(
                     p.watch_note = None;
                 }
             }
-            for (provider, _, reason) in &watcher.unwatched {
+            for (provider, root, reason) in &watcher.unwatched {
+                if !roots.iter().any(|(_, r)| r == root) {
+                    continue;
+                }
                 if let Some(p) = s.provider_mut(provider) {
                     p.watching = false;
                     p.watch_note = Some(reason.clone());
@@ -308,7 +320,19 @@ fn run_worker(
     }
 
     let all: HashSet<ProviderId> = roots.iter().map(|(p, _)| p.clone()).collect();
-    scan(&mut store, raw.as_ref(), &all, &claude, &codex, &shared);
+    // 续读状态（各活跃原件的解析器）跨扫描复用，增量入库不必每次重放已解析的部分。
+    let mut cache = IngestCache::new();
+    let mut batch = Batch::default();
+    batch.full.extend(all.iter().cloned());
+    scan(
+        &mut store,
+        raw.as_ref(),
+        &batch,
+        &claude,
+        &codex,
+        &mut cache,
+        &shared,
+    );
     let mut next_full = Instant::now() + FALLBACK_SCAN;
 
     loop {
@@ -318,49 +342,95 @@ fn run_worker(
             Err(RecvTimeoutError::Timeout) => Command::ScanAll,
             Err(RecvTimeoutError::Disconnected) => break,
         };
-        // 防抖：收齐这一阵子的所有变化，再一次性扫。
-        let mut pending: HashSet<ProviderId> = HashSet::new();
-        let absorb = |command: Command, pending: &mut HashSet<ProviderId>| match command {
-            Command::Changed(provider) => {
-                pending.insert(provider);
-            }
-            Command::ScanAll => pending.extend(all.iter().cloned()),
-        };
-        absorb(first, &mut pending);
+        // 合并：首个事件后至少等 QUIET；期间有新事件就再等（每次最多 QUIET），但总共不超过 MAX_DELAY。
+        let mut batch = Batch::default();
+        batch.absorb(first, &all);
+        let started = Instant::now();
         loop {
-            match receiver.recv_timeout(DEBOUNCE) {
-                Ok(command) => absorb(command, &mut pending),
+            let left = MAX_DELAY.saturating_sub(started.elapsed());
+            if left.is_zero() {
+                break;
+            }
+            match receiver.recv_timeout(QUIET.min(left)) {
+                Ok(command) => batch.absorb(command, &all),
                 Err(RecvTimeoutError::Timeout) => break,
                 Err(RecvTimeoutError::Disconnected) => return,
             }
         }
-        scan(&mut store, raw.as_ref(), &pending, &claude, &codex, &shared);
-        if pending == all {
+        scan(
+            &mut store,
+            raw.as_ref(),
+            &batch,
+            &claude,
+            &codex,
+            &mut cache,
+            &shared,
+        );
+        if batch.full == all {
             next_full = Instant::now() + FALLBACK_SCAN;
         }
     }
     drop(watcher);
 }
 
-/// 对选中的来源跑一次增量入库，并把报告写进共享状态。
+/// 一次要处理的变化：要全量扫描的来源 + 其余来源里变了的文件。
+#[derive(Default)]
+struct Batch {
+    full: HashSet<ProviderId>,
+    paths: BTreeSet<PathBuf>,
+}
+
+impl Batch {
+    fn absorb(&mut self, command: Command, all: &HashSet<ProviderId>) {
+        match command {
+            Command::Changed(provider, paths) => {
+                if !self.full.contains(&provider) {
+                    self.paths.extend(paths);
+                }
+            }
+            Command::ScanAll => self.full.extend(all.iter().cloned()),
+        }
+    }
+}
+
+/// 全量扫描 `batch.full` 里的来源（遍历目录，未变文件按 size + mtime 跳过），
+/// 其余来源只处理 `batch.paths`；两者都按字节偏移增量入库。报告写进共享状态。
 fn scan(
     store: &mut Store,
     raw: Option<&RawArchive>,
-    which: &HashSet<ProviderId>,
+    batch: &Batch,
     claude: &ClaudeCodeProvider,
     codex: &CodexProvider,
+    cache: &mut IngestCache,
     shared: &Mutex<SyncState>,
 ) {
-    let mut providers: Vec<&dyn SourceProvider> = Vec::new();
-    if which.contains(&ProviderId::ClaudeCode) {
-        providers.push(claude);
-    }
-    if which.contains(&ProviderId::Codex) {
-        providers.push(codex);
-    }
+    let both: [(&ProviderId, &dyn SourceProvider); 2] = [
+        (&ProviderId::ClaudeCode, claude),
+        (&ProviderId::Codex, codex),
+    ];
+    let full: Vec<&dyn SourceProvider> = both
+        .iter()
+        .filter(|(id, _)| batch.full.contains(id))
+        .map(|(_, p)| *p)
+        .collect();
+    let partial: Vec<&dyn SourceProvider> = both
+        .iter()
+        .filter(|(id, _)| !batch.full.contains(id))
+        .map(|(_, p)| *p)
+        .collect();
+    let paths: Vec<PathBuf> = batch
+        .paths
+        .iter()
+        .filter(|p| {
+            partial
+                .iter()
+                .any(|provider| provider.source_root(p).is_some())
+        })
+        .cloned()
+        .collect();
     // 进度回调每个文件一次；只在跨过 1% 或换来源时才写共享状态，避免锁竞争。
     let mut last_reported: Option<(ProviderId, usize)> = None;
-    let report = ingest_all(store, &providers, raw, &mut |progress| {
+    let mut on_progress = |progress: agenthome_core::Progress| {
         let step = (progress.total / 100).max(1);
         let changed = last_reported
             .as_ref()
@@ -375,9 +445,23 @@ fn scan(
                 });
             });
         }
-    });
+    };
+    let full_report =
+        (!full.is_empty()).then(|| ingest_all_cached(store, &full, raw, cache, &mut on_progress));
+    let path_report = (!paths.is_empty())
+        .then(|| ingest_paths(store, &partial, &paths, raw, cache, &mut on_progress));
+    let mut report = Report::default();
+    for r in full_report.iter().chain(path_report.iter()) {
+        report.merge_from(r);
+    }
+    let which: HashSet<ProviderId> = report
+        .per_provider
+        .iter()
+        .map(|(p, _)| p.clone())
+        .chain(batch.full.iter().cloned())
+        .collect();
     let now = now_ms();
-    let full = providers.len() == 2;
+    let full = batch.full.len() == both.len();
     // 统计要遍历全部清单，只在有写入或还没统计过时重算。
     let stats_stale = shared.lock().map(|s| s.raw.stats.is_none()).unwrap_or(true);
     let raw_stats = raw
@@ -403,22 +487,25 @@ fn scan(
         if report.parsed > 0 {
             s.data_revision += 1;
         }
-        for provider in which {
+        for provider in &which {
             if let Some(p) = s.provider_mut(provider) {
                 p.detected = p.root.is_dir();
             }
         }
         for (provider, sub) in &report.per_provider {
             if let Some(p) = s.provider_mut(provider) {
-                apply_report(p, sub, now);
+                apply_report(p, sub, now, batch.full.contains(provider));
             }
         }
     });
 }
 
-fn apply_report(p: &mut ProviderSync, report: &Report, now: i64) {
+/// `full`：这次遍历了来源目录（文件数才是全量的）；只处理变化路径时保留上次全量扫描的文件数。
+fn apply_report(p: &mut ProviderSync, report: &Report, now: i64, full: bool) {
     p.last_scan_ms = Some(now);
-    p.files = report.scanned;
+    if full {
+        p.files = report.scanned;
+    }
     p.parsed = report.parsed;
     p.failed = report.failed.len();
     p.warnings = report.warnings;

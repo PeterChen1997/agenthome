@@ -12,18 +12,16 @@ use std::time::Duration;
 
 use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, Icon, IconName, InteractiveElementExt as _, Sizable as _,
-    StyledExt as _,
+    StyledExt as _, WindowExt as _,
     button::{Button, ButtonVariants as _},
-    h_flex,
-    input::{Input, InputEvent, InputState},
-    v_flex,
+    h_flex, v_flex,
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AnyElement, AppContext as _, Context, Entity, FocusHandle, Focusable as _,
-    InteractiveElement as _, IntoElement, KeyBinding, MouseButton, ParentElement as _, Render,
-    SharedString, StatefulInteractiveElement as _, Styled as _, Subscription, Task, Window,
-    actions, div, img, px,
+    AnyElement, AppContext as _, Context, Entity, FocusHandle, InteractiveElement as _,
+    IntoElement, KeyBinding, MouseButton, ParentElement as _, Render, SharedString,
+    StatefulInteractiveElement as _, Styled as _, Subscription, Task, Window, actions, div, img,
+    px,
 };
 
 use crate::archive::{ArchiveView, side_item};
@@ -34,10 +32,11 @@ use crate::format::{countdown, now_ms, relative_time};
 use crate::habitat::{HabitatSize, HabitatView, ResidentId, ResidentState};
 use crate::live::{LiveFeed, LiveState, primary_window};
 use crate::message_row::{provider_avatar, secondary};
+use crate::search_palette::{PaletteEvent, SearchPalette};
 use crate::settings::SettingsView;
 use crate::sync::{SyncEngine, SyncState};
 
-actions!(agenthome, [FocusSearch]);
+actions!(agenthome, [OpenSearch]);
 
 /// 左栏宽，所有页面共用。
 pub(crate) const SIDEBAR_WIDTH: f32 = 240.;
@@ -130,7 +129,7 @@ impl ResidentPanel {
         };
         let (sub_label, sub_value): (SharedString, SharedString) = match (away, window) {
             (true, _) => ("在设置里接入".into(), "".into()),
-            (false, None) => ("装 statusline 后显示额度".into(), "".into()),
+            (false, None) => ("等待 /usage 读取额度".into(), "".into()),
             (false, Some(w)) => (
                 format!("{} 重置", w.label).into(),
                 w.resets_at_ms
@@ -222,6 +221,8 @@ impl Render for ResidentPanel {
             .filter(|r| r.state == ResidentState::Away)
             .count();
         let caption = format!("{} 位在线 · {} 外出", residents.len() - away, away);
+        // 事件气泡和在线人数都在小屋顶部，气泡出现时先让出位置。
+        let show_caption = !self.habitat.read(cx).showing_toast();
         v_flex()
             .w_full()
             .child(
@@ -234,20 +235,22 @@ impl Render for ResidentPanel {
                     .border_color(cx.theme().border)
                     .overflow_hidden()
                     .child(self.habitat.clone())
-                    .child(
-                        div()
-                            .absolute()
-                            .left_2()
-                            .top(px(6.))
-                            .px(px(5.))
-                            .py(px(1.))
-                            .rounded(px(2.))
-                            .bg(cx.theme().background.opacity(0.78))
-                            .font_family(FONT_PIXEL_MONO)
-                            .text_size(px(11.))
-                            .text_color(cx.theme().primary)
-                            .child(caption),
-                    ),
+                    .when(show_caption, |frame| {
+                        frame.child(
+                            div()
+                                .absolute()
+                                .left_2()
+                                .top(px(6.))
+                                .px(px(5.))
+                                .py(px(1.))
+                                .rounded(px(2.))
+                                .bg(cx.theme().background.opacity(0.78))
+                                .font_family(FONT_PIXEL_MONO)
+                                .text_size(px(11.))
+                                .text_color(cx.theme().primary)
+                                .child(caption),
+                        )
+                    }),
             )
             .child(
                 v_flex()
@@ -264,16 +267,18 @@ pub struct Workspace {
     archive: Entity<ArchiveView>,
     dashboard: Entity<DashboardView>,
     settings: Entity<SettingsView>,
-    search: Entity<InputState>,
+    palette: Entity<SearchPalette>,
     focus_handle: FocusHandle,
     /// 同步引擎状态；mock 模式下没有引擎，保持默认值。
     sync: Entity<SyncState>,
     sync_engine: Option<SyncEngine>,
     /// 已经让页面重拉过的数据版本。
     seen_data_revision: u64,
+    /// 已经让额度重读过的后台 /usage 成功时刻。
+    seen_probe_ok_ms: Option<i64>,
     /// 顶行按下鼠标后、首次移动时开始拖窗口（同 gpui-kit TitleBar 的做法）。
     drag_pending: bool,
-    _feed: LiveFeed,
+    feed: LiveFeed,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -288,7 +293,7 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> Self {
         window.set_window_title("AgentHome");
-        cx.bind_keys([KeyBinding::new("cmd-k", FocusSearch, None)]);
+        cx.bind_keys([KeyBinding::new("cmd-k", OpenSearch, None)]);
 
         let habitat_compact = cx.new(|cx| {
             let mut view = HabitatView::new(HabitatSize::Compact, cx);
@@ -304,8 +309,8 @@ impl Workspace {
         );
         let residents = cx.new(|cx| ResidentPanel::new(live.clone(), habitat_compact.clone(), cx));
         let archive = cx.new(|cx| ArchiveView::new(source.clone(), window, cx));
+        let palette = cx.new(|cx| SearchPalette::new(source.clone(), window, cx));
         let dashboard = cx.new(|cx| DashboardView::new(source, habitat_compact, window, cx));
-        let search = cx.new(|cx| InputState::new(window, cx).placeholder("搜索会话"));
         let sync = cx.new(|_| SyncState::default());
         let sync_engine = sync_db
             .clone()
@@ -320,20 +325,30 @@ impl Workspace {
             )
         });
         let subscriptions = vec![
-            cx.subscribe_in(&search, window, |this, state, event: &InputEvent, _, cx| {
-                if matches!(event, InputEvent::Change) {
-                    let text = state.read(cx).value().to_string();
-                    // 搜索只作用于归档：在别的页输入时自动切过去，结果立刻可见。
-                    if !text.trim().is_empty() && this.page != Page::Archive {
+            // ⌘K 面板选中一条：切到归档页，打开会话并定位到命中的消息。
+            cx.subscribe_in(
+                &palette,
+                window,
+                |this, _, event: &PaletteEvent, window, cx| match event {
+                    PaletteEvent::Open {
+                        session_id,
+                        message_id,
+                    } => {
                         this.page = Page::Archive;
+                        this.archive.update(cx, |archive, cx| {
+                            archive.open_session_at(
+                                session_id.clone(),
+                                message_id.clone(),
+                                window,
+                                cx,
+                            )
+                        });
+                        cx.notify();
                     }
-                    this.archive
-                        .update(cx, |archive, cx| archive.set_search(text, cx));
-                    cx.notify();
-                }
-            }),
+                },
+            ),
             cx.observe(&live, |this, live, cx| {
-                // 仪表盘的额度卡与左栏共用这一份 5 秒一拉的快照。
+                // 仪表盘的额度卡与左栏共用同一份快照（`set_quota` 内部去重，没变不重绘）。
                 let quota = live.read(cx).quota.clone();
                 this.dashboard
                     .update(cx, |dashboard, cx| dashboard.set_quota(quota, cx));
@@ -343,8 +358,16 @@ impl Workspace {
             cx.observe(&archive, |_, _, cx| cx.notify()),
             cx.observe(&sync, |this, sync, cx| {
                 let revision = sync.read(cx).data_revision;
+                let probe_ok = sync.read(cx).claude_probe.last_ok_ms;
+                // 后台 /usage 刚读完新额度：不等 60 秒的额度轮询。
+                if probe_ok != this.seen_probe_ok_ms {
+                    this.seen_probe_ok_ms = probe_ok;
+                    this.feed.request_quota();
+                }
                 if revision != this.seen_data_revision {
                     this.seen_data_revision = revision;
+                    // 新会话数据可能带来 Codex rollout 里的新额度快照。
+                    this.feed.request_quota();
                     this.dashboard
                         .update(cx, |dashboard, cx| dashboard.refresh_data(cx));
                     this.archive
@@ -353,6 +376,9 @@ impl Workspace {
                 cx.notify();
             }),
         ];
+        // 启动即让外壳持有焦点，⌘K 等外壳级动作才有派发路径。
+        let focus_handle = cx.focus_handle();
+        window.focus(&focus_handle, cx);
         Self {
             page: Page::Archive,
             live,
@@ -360,13 +386,14 @@ impl Workspace {
             archive,
             dashboard,
             settings,
-            search,
-            focus_handle: cx.focus_handle(),
+            palette,
+            focus_handle,
             sync,
             sync_engine,
             seen_data_revision: 0,
+            seen_probe_ok_ms: None,
             drag_pending: false,
-            _feed: feed,
+            feed,
             _subscriptions: subscriptions,
         }
     }
@@ -508,20 +535,72 @@ impl Workspace {
             .into_any_element()
     }
 
-    /// 左栏搜索框：搜标题、正文与工具输出，结果在归档页；⌘K 聚焦。
+    /// 弹出 ⌘K 全局搜索面板；已经开着浮层时不重复弹。
+    /// 启动参数 `--page` / `--search`：打开指定页面，或直接弹出带查询的 ⌘K 面板。
+    pub fn apply_startup(
+        &mut self,
+        page: Option<&str>,
+        search: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match page {
+            Some("dashboard") => self.page = Page::Dashboard,
+            Some("settings") => self.page = Page::Settings,
+            Some("archive") => self.page = Page::Archive,
+            _ => {}
+        }
+        if let Some(query) = search {
+            let (recent, label) = self.archive.read(cx).recent_for_palette();
+            self.palette.update(cx, |palette, cx| {
+                palette.show_with_query(recent, label, &query, window, cx)
+            });
+        }
+        cx.notify();
+    }
+
+    fn open_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if window.has_active_dialog(cx) {
+            return;
+        }
+        let (recent, label) = self.archive.read(cx).recent_for_palette();
+        self.palette
+            .update(cx, |palette, cx| palette.show(recent, label, window, cx));
+    }
+
+    /// 左栏搜索入口：长得像输入框，点击（或 ⌘K）弹出全局搜索面板。
+    /// 图标、占位文字与 ⌘K 徽标放在同一行、统一垂直居中。
     fn render_search(&self, cx: &mut Context<Self>) -> AnyElement {
         div()
             .flex_none()
             .px_3()
             .pb_2()
             .child(
-                Input::new(&self.search)
-                    .small()
-                    .prefix(Icon::new(IconName::Search).small())
-                    .suffix(
+                h_flex()
+                    .id("sidebar-search")
+                    .h(px(28.))
+                    .px(px(8.))
+                    .gap(px(6.))
+                    .items_center()
+                    .rounded(cx.theme().radius)
+                    .border_1()
+                    .border_color(cx.theme().input)
+                    .bg(cx.theme().background)
+                    .cursor_pointer()
+                    .hover(|style| style.bg(cx.theme().secondary))
+                    .text_color(cx.theme().muted_foreground)
+                    .child(
+                        Icon::new(IconName::Search)
+                            .small()
+                            .flex_none()
+                            .text_color(cx.theme().muted_foreground),
+                    )
+                    .child(div().flex_1().min_w_0().truncate().text_sm().child("搜索"))
+                    .child(
                         div()
-                            .px(px(5.))
+                            .flex_none()
                             .h(px(18.))
+                            .px(px(5.))
                             .flex()
                             .items_center()
                             .rounded(px(2.))
@@ -530,10 +609,10 @@ impl Workspace {
                             .bg(cx.theme().group_box)
                             .font_family(FONT_PIXEL_MONO)
                             .text_size(px(14.))
-                            .text_color(cx.theme().muted_foreground)
+                            .line_height(px(14.))
                             .child("⌘K"),
                     )
-                    .cleanable(true),
+                    .on_click(cx.listener(|this, _, window, cx| this.open_search(window, cx))),
             )
             .into_any_element()
     }
@@ -600,10 +679,7 @@ impl Render for Workspace {
             .min_w_0()
             .min_h_0()
             .track_focus(&self.focus_handle)
-            .on_action(cx.listener(|this, _: &FocusSearch, window, cx| {
-                let handle = this.search.read(cx).focus_handle(cx);
-                window.focus(&handle, cx);
-            }))
+            .on_action(cx.listener(|this, _: &OpenSearch, window, cx| this.open_search(window, cx)))
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
             .items_stretch()

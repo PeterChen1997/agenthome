@@ -3,8 +3,9 @@
 
 use agenthome_core::model::{
     ContentBlock, CostBreakdown, CostSource, DailyUsage, Freshness, Message, Period,
-    ProviderActivity, ProviderHealth, ProviderId, QuotaSnapshot, QuotaWindow, Role, SessionKind,
-    SessionQuery, SessionSummary, Usage, UsageTotals,
+    ProviderActivity, ProviderHealth, ProviderId, QuotaSnapshot, QuotaWindow, Role,
+    SEARCH_MARK_END, SEARCH_MARK_START, SearchHit, SessionKind, SessionQuery, SessionSummary,
+    Usage, UsageTotals,
 };
 
 /// 左栏项目行：按 `SessionSummary.project_name` 聚合。
@@ -31,6 +32,55 @@ pub trait DataSource: Send + Sync + 'static {
     fn activity(&self) -> anyhow::Result<Vec<ProviderActivity>>;
     /// 额度快照（Claude statusline 文件、Codex rollout 快照），没有的来源不出现。
     fn quota(&self) -> anyhow::Result<Vec<QuotaSnapshot>>;
+    /// 全文搜索会话标题与消息正文，按相关度至多 `limit` 条；片段里的命中词用
+    /// `SEARCH_MARK_START` / `SEARCH_MARK_END` 包住。`message_id` 为 None 表示命中标题。
+    fn search(&self, query: &str, limit: usize) -> anyhow::Result<Vec<SearchHit>>;
+}
+
+/// mock 搜索每个会话最多扫多少条消息（第一个会话有 1 万条，全扫没必要）。
+const MOCK_SEARCH_MESSAGES: usize = 300;
+/// mock 搜索每个会话最多给几条消息命中。
+const MOCK_HITS_PER_SESSION: usize = 4;
+/// mock 片段在命中词前后各保留的字数。
+const MOCK_SNIPPET_CONTEXT: usize = 24;
+
+/// 在 `text` 里找 `needle`（不分大小写），截出前后各一小段并用标记包住命中词；换行压成空格。
+/// 与 core 的片段格式一致，供 mock 数据源使用。
+fn mark_snippet(text: &str, needle: &str) -> Option<String> {
+    let chars: Vec<char> = text.chars().collect();
+    let lower: Vec<char> = chars.iter().flat_map(|c| c.to_lowercase()).collect();
+    let needle: Vec<char> = needle.chars().flat_map(|c| c.to_lowercase()).collect();
+    // 小写化可能改变字数（极少见）；对不齐时放弃，宁可不命中也不切错位置。
+    if needle.is_empty() || lower.len() != chars.len() {
+        return None;
+    }
+    let start = lower
+        .windows(needle.len())
+        .position(|w| w == needle.as_slice())?;
+    let end = start + needle.len();
+    let from = start.saturating_sub(MOCK_SNIPPET_CONTEXT);
+    let to = (end + MOCK_SNIPPET_CONTEXT).min(chars.len());
+    let mut out = String::new();
+    if from > 0 {
+        out.push('…');
+    }
+    let piece = |range: std::ops::Range<usize>| -> String {
+        chars
+            .get(range)
+            .unwrap_or_default()
+            .iter()
+            .map(|c| if c.is_whitespace() { ' ' } else { *c })
+            .collect()
+    };
+    out.push_str(&piece(from..start));
+    out.push(SEARCH_MARK_START);
+    out.push_str(&piece(start..end));
+    out.push(SEARCH_MARK_END);
+    out.push_str(&piece(end..to));
+    if to < chars.len() {
+        out.push('…');
+    }
+    Some(out)
 }
 
 /// 确定性伪随机（LCG），让每次启动的 mock 数据一致，便于复现界面问题。
@@ -52,9 +102,9 @@ impl Lcg {
 
 const PROJECTS: [&str; 8] = [
     "agenthome",
-    "写坊",
-    "tick-me",
-    "BeatLock",
+    "pixel-notes",
+    "todo-desk",
+    "metronome",
     "gpui-kit",
     "notes-sync",
     "infra-scripts",
@@ -479,6 +529,54 @@ impl DataSource for MockDataSource {
         Ok(self.projects.clone())
     }
 
+    fn search(&self, query: &str, limit: usize) -> anyhow::Result<Vec<SearchHit>> {
+        let needle = query.trim();
+        let mut hits = Vec::new();
+        if needle.is_empty() {
+            return Ok(hits);
+        }
+        let mut sessions: Vec<&SessionSummary> = self.sessions.iter().collect();
+        sessions.sort_by_key(|s| std::cmp::Reverse(s.updated_at_ms));
+        for session in sessions {
+            if hits.len() >= limit {
+                break;
+            }
+            let hit = |message_id: Option<String>, role, timestamp_ms, snippet| SearchHit {
+                session_id: session.id.clone(),
+                message_id,
+                session_title: session.title.clone(),
+                provider: session.provider.clone(),
+                project_name: session.project_name.to_string(),
+                role,
+                timestamp_ms,
+                snippet,
+            };
+            if let Some(snippet) = mark_snippet(&session.title, needle) {
+                hits.push(hit(None, None, session.updated_at_ms, snippet));
+            }
+            let mut found = 0;
+            for message in Self::build_messages(session)
+                .into_iter()
+                .take(MOCK_SEARCH_MESSAGES)
+            {
+                if found >= MOCK_HITS_PER_SESSION || hits.len() >= limit {
+                    break;
+                }
+                if let Some(snippet) = mark_snippet(&message.text(), needle) {
+                    found += 1;
+                    hits.push(hit(
+                        Some(message.id.clone()),
+                        Some(message.role),
+                        message.timestamp_ms,
+                        snippet,
+                    ));
+                }
+            }
+        }
+        hits.truncate(limit);
+        Ok(hits)
+    }
+
     fn sessions(&self, q: &SessionQuery) -> anyhow::Result<Vec<SessionSummary>> {
         let needle = q
             .text
@@ -705,7 +803,7 @@ impl DataSource for MockDataSource {
                 ],
                 credits: None,
                 fetched_at_ms: now - 3 * 60_000,
-                source: "statusline".to_string(),
+                source: "claude /usage".to_string(),
                 freshness: Freshness::Live,
             },
             QuotaSnapshot {
@@ -739,5 +837,32 @@ impl DataSource for MockDataSource {
                 freshness: Freshness::Cached,
             },
         ])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mock_snippet_marks_the_match_like_core() {
+        // mock 的片段格式要和 core 一致（命中词被私用区标记包住），面板的高亮才能在演示数据上验证。
+        let snippet = mark_snippet("修复登录页在 iOS 27 上的启动崩溃", "ios").unwrap();
+        assert_eq!(
+            snippet,
+            format!("修复登录页在 {SEARCH_MARK_START}iOS{SEARCH_MARK_END} 27 上的启动崩溃")
+        );
+        assert_eq!(mark_snippet("没有关键字", "panic"), None);
+    }
+
+    #[test]
+    fn mock_search_finds_titles_and_messages() {
+        let source = MockDataSource::new();
+        let hits = source.search("panic", 20).unwrap();
+        assert!(!hits.is_empty() && hits.len() <= 20);
+        assert!(hits.iter().all(|h| h.message_id.is_some()));
+        let titles = source.search("SQLite", 50).unwrap();
+        assert!(titles.iter().any(|h| h.message_id.is_none()));
+        assert!(source.search("  ", 20).unwrap().is_empty());
     }
 }

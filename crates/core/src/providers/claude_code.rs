@@ -2,13 +2,15 @@
 //!
 //! 字段结构见 docs/research/03-agent-session-formats.md §2.1。原件只读。
 
-use crate::model::{ContentBlock, Message, ProviderId, Role, Session, SessionKind, Usage};
-use crate::providers::SourceProvider;
+use crate::model::{
+    ContentBlock, Message, ProviderId, Role, Session, SessionKind, SourceInfo, Usage,
+};
+use crate::providers::{CostSum, LineParser, LoadMessage, Restart, SourceProvider};
 pub use crate::providers::{Discovery, Parsed};
 use anyhow::{Context, Result};
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::io::{BufRead, BufReader};
+use std::io::BufReader;
 use std::path::{Path, PathBuf};
 
 pub struct ClaudeCodeProvider {
@@ -78,6 +80,26 @@ impl ClaudeCodeProvider {
     /// 逐行解析一个转录文件。坏行进 warnings，不中断。
     pub fn parse_file(&self, path: &Path) -> Result<Parsed> {
         let source = crate::providers::source_info(path, false)?;
+        let mut parser = self.new_parser(path)?;
+        let file = std::fs::File::open(path).with_context(|| format!("打开 {}", path.display()))?;
+        let reader = BufReader::with_capacity(1 << 20, file);
+        let read_errors = crate::providers::feed_whole(&mut parser, reader, false)?;
+        let messages = parser.take_changes();
+        let mut session = parser.session(source);
+        // 整文件解析按消息逐条求和（与增量路径的累计值只在浮点末位上可能不同）。
+        session.estimated_cost_usd = crate::pricing::estimate_messages(&messages);
+        let mut warnings = parser.take_warnings();
+        warnings.extend(read_errors);
+        Ok(Parsed {
+            session,
+            messages,
+            warnings,
+            ignored_records: parser.take_ignored(),
+        })
+    }
+
+    /// 一个还没喂过任何行的按行解析器；整文件解析与增量续读共用。
+    pub fn new_parser(&self, path: &Path) -> Result<ClaudeLineParser> {
         let (native_id, kind, parent_session_id) = self.identify(path)?;
         let session_id = format!(
             "{}:{}:{}",
@@ -85,107 +107,62 @@ impl ClaudeCodeProvider {
             self.machine_id,
             native_id
         );
-
-        let file = std::fs::File::open(path).with_context(|| format!("打开 {}", path.display()))?;
-        let reader = BufReader::with_capacity(1 << 20, file);
-
-        let mut st = ParseState::new(session_id.clone());
-        for (idx, line) in reader.split(b'\n').enumerate() {
-            let line = match line {
-                Ok(l) => l,
-                Err(e) => {
-                    st.warnings.push(format!("第 {} 行读取失败: {e}", idx + 1));
-                    continue;
-                }
-            };
-            if line.iter().all(u8::is_ascii_whitespace) {
-                continue;
-            }
-            let value: Value = match serde_json::from_slice(&line) {
-                Ok(v) => v,
-                Err(e) => {
-                    st.warnings
-                        .push(format!("第 {} 行不是合法 JSON: {e}", idx + 1));
-                    continue;
-                }
-            };
-            st.record(idx + 1, value);
-        }
-        st.flush_assistant();
-
         // 目录里的 custom-title.json 优先级与 jsonl 内的 custom-title 行相同（主会话才有）。
-        if st.custom_title.is_none() && kind == SessionKind::Main {
-            let p = path.with_extension("").join("custom-title.json");
-            if let Ok(bytes) = std::fs::read(&p) {
-                match serde_json::from_slice::<Value>(&bytes) {
-                    Ok(v) => st.custom_title = str_field(&v, "customTitle"),
-                    Err(e) => st
-                        .warnings
-                        .push(format!("{} 不是合法 JSON: {e}", p.display())),
-                }
-            }
-        }
-
-        let mut messages = st.messages;
-        messages.sort_by_key(|m| m.timestamp_ms);
-
-        let mut usage = Usage::default();
-        let mut models: Vec<String> = Vec::new();
-        for m in &messages {
-            if let Some(u) = &m.usage {
-                usage.add(u);
-            }
-            if let Some(model) = &m.model
-                && !model.starts_with('<')
-                && !models.contains(model)
-            {
-                models.push(model.clone());
-            }
-        }
-        usage.input_includes_cache = false;
-
-        let title = st
-            .custom_title
-            .or(st.summary_title)
-            .or_else(|| messages.iter().find_map(first_user_title));
-
-        let started_at_ms = messages
-            .first()
-            .map(|m| m.timestamp_ms)
-            .unwrap_or(source.mtime_ms);
-        let updated_at_ms = messages
-            .last()
-            .map(|m| m.timestamp_ms)
-            .unwrap_or(source.mtime_ms);
-
-        let session = Session {
-            id: session_id,
-            provider: ProviderId::ClaudeCode,
+        let title_file =
+            (kind == SessionKind::Main).then(|| path.with_extension("").join("custom-title.json"));
+        Ok(ClaudeLineParser {
+            session_id,
             native_id,
-            parent_session_id,
             kind,
-            title,
-            cwd: st.cwd,
-            git_branch: st.git_branch,
+            parent_session_id,
             machine_id: self.machine_id.clone(),
-            agent_version: st.version,
-            entrypoint: st.entrypoint,
-            started_at_ms,
-            ended_at_ms: Some(updated_at_ms),
-            updated_at_ms,
-            models,
-            usage,
-            message_count: messages.len() as u32,
-            recorded_cost_usd: st.recorded_cost_usd,
-            estimated_cost_usd: crate::pricing::estimate_messages(&messages),
-            source,
-        };
-        Ok(Parsed {
-            session,
-            messages,
-            warnings: st.warnings,
-            ignored_records: st.ignored,
+            title_file,
+            plain: Vec::new(),
+            asst: Vec::new(),
+            asst_pos: HashMap::new(),
+            asst_refs: HashMap::new(),
+            seen_uuids: HashSet::new(),
+            warnings: Vec::new(),
+            ignored: BTreeMap::new(),
+            custom_title: None,
+            summary_title: None,
+            cwd: None,
+            git_branch: None,
+            version: None,
+            entrypoint: None,
+            recorded_cost_usd: None,
+            usage: Usage::default(),
+            cost: CostSum::default(),
+            message_count: 0,
+            min_ts: None,
+            max_ts: None,
+            models: Vec::new(),
+            first_user: None,
         })
+    }
+
+    /// 与 `discover` 同规则：主会话 `<项目>/<uuid>.jsonl`，子代理 `<项目>/<uuid>/subagents/agent-*.jsonl`，
+    /// 不含 `.superseded-*` / `.orphaned-*` 旧副本。
+    pub fn accepts_path(&self, path: &Path) -> bool {
+        let Ok(rel) = path.strip_prefix(&self.root) else {
+            return false;
+        };
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            return false;
+        };
+        if name.contains(".superseded-") || name.contains(".orphaned-") || !name.ends_with(".jsonl")
+        {
+            return false;
+        }
+        let depth = rel.components().count();
+        let shaped = depth == 2
+            || (depth == 4
+                && name.starts_with("agent-")
+                && path
+                    .parent()
+                    .and_then(|p| p.file_name())
+                    .is_some_and(|n| n == "subagents"));
+        shaped && path.is_file()
     }
 
     /// 从路径判断 (native_id, kind, parent_session_id)。
@@ -238,19 +215,35 @@ impl SourceProvider for ClaudeCodeProvider {
     fn parse_file(&self, path: &Path) -> Result<Parsed> {
         ClaudeCodeProvider::parse_file(self, path)
     }
+    fn line_parser(&self, path: &Path) -> Result<Option<Box<dyn LineParser>>> {
+        Ok(Some(Box::new(self.new_parser(path)?)))
+    }
+    fn accepts(&self, path: &Path) -> Option<bool> {
+        Some(self.accepts_path(path))
+    }
 }
 
-/// 逐行累积状态。assistant 同一 `message.id` 的多行合并成一条。
-struct ParseState {
+/// Claude 转录的按行解析器。assistant 同一 `message.id` 的多行合并成一条。
+///
+/// 消息正文只在本批内持有；后面的续行要改已交出的 assistant 时，按消息 id 从库里取回再改。
+pub struct ClaudeLineParser {
     session_id: String,
-    messages: Vec<Message>,
-    warnings: Vec<String>,
-    ignored: BTreeMap<String, usize>,
-    /// 正在合并的 assistant：message.id -> (消息, 带 stop_reason 的 usage 是否已定)
-    pending: HashMap<String, PendingAssistant>,
-    pending_order: Vec<String>,
+    native_id: String,
+    kind: SessionKind,
+    parent_session_id: Option<String>,
+    machine_id: String,
+    title_file: Option<PathBuf>,
+    /// 本批新建、之后不会再变的消息（user / system / 无 message.id 的 assistant），按出现顺序。
+    plain: Vec<Message>,
+    /// 本批新建或被续行改动的 assistant，按首次出现顺序；`asst_pos`：message.id → 下标。
+    asst: Vec<Message>,
+    asst_pos: HashMap<String, usize>,
+    /// 整个文件出现过的 assistant：message.id → 合并状态。
+    asst_refs: HashMap<String, AsstRef>,
     /// resume 会把一段历史（含原 uuid）整体重写进同一文件，按 uuid 去重，先到者为准。
     seen_uuids: HashSet<String>,
+    warnings: Vec<String>,
+    ignored: BTreeMap<String, usize>,
     custom_title: Option<String>,
     summary_title: Option<String>,
     cwd: Option<String>,
@@ -259,34 +252,116 @@ struct ParseState {
     entrypoint: Option<String>,
     /// `cost-state` 记录的 `totalCostUSD`，后写覆盖先写（它是累计值）。
     recorded_cost_usd: Option<f64>,
+    // 会话累计量：消息新增时加、被续行改动时先减旧值再加新值。
+    usage: Usage,
+    cost: CostSum,
+    message_count: u32,
+    min_ts: Option<i64>,
+    max_ts: Option<i64>,
+    /// (该模型最早一条消息的时间, 模型名)，按首次出现顺序。
+    models: Vec<(i64, String)>,
+    /// 时间最早的非 meta 用户手写消息：(时间, 标题)。
+    first_user: Option<(i64, String)>,
 }
 
-struct PendingAssistant {
-    message: Message,
-    has_final_usage: bool,
+struct AsstRef {
+    /// 合并后消息的 id（首行的 uuid）。
+    id: String,
+    /// 带 stop_reason 的 usage 是否已定。
+    has_final: bool,
 }
 
-impl ParseState {
-    fn new(session_id: String) -> Self {
-        Self {
-            session_id,
-            messages: Vec::new(),
-            warnings: Vec::new(),
-            ignored: BTreeMap::new(),
-            pending: HashMap::new(),
-            pending_order: Vec::new(),
-            seen_uuids: HashSet::new(),
-            custom_title: None,
-            summary_title: None,
-            cwd: None,
-            git_branch: None,
-            version: None,
-            entrypoint: None,
-            recorded_cost_usd: None,
+impl LineParser for ClaudeLineParser {
+    fn feed(
+        &mut self,
+        line_no: usize,
+        line: &[u8],
+        load: &mut LoadMessage<'_>,
+    ) -> Result<(), Restart> {
+        if line.iter().all(u8::is_ascii_whitespace) {
+            return Ok(());
+        }
+        let value: Value = match serde_json::from_slice(line) {
+            Ok(v) => v,
+            Err(e) => {
+                self.warnings
+                    .push(format!("第 {line_no} 行不是合法 JSON: {e}"));
+                return Ok(());
+            }
+        };
+        self.record(line_no, value, load)
+    }
+
+    fn take_changes(&mut self) -> Vec<Message> {
+        let mut out = std::mem::take(&mut self.plain);
+        out.append(&mut self.asst);
+        self.asst_pos.clear();
+        out.sort_by_key(|m| m.timestamp_ms);
+        out
+    }
+
+    fn session(&mut self, source: SourceInfo) -> Session {
+        let mut custom_title = self.custom_title.clone();
+        if custom_title.is_none()
+            && let Some(p) = &self.title_file
+            && let Ok(bytes) = std::fs::read(p)
+        {
+            match serde_json::from_slice::<Value>(&bytes) {
+                Ok(v) => custom_title = str_field(&v, "customTitle"),
+                Err(e) => self
+                    .warnings
+                    .push(format!("{} 不是合法 JSON: {e}", p.display())),
+            }
+        }
+        let title = custom_title
+            .or_else(|| self.summary_title.clone())
+            .or_else(|| self.first_user.as_ref().map(|(_, t)| t.clone()));
+        let mut models = self.models.clone();
+        models.sort_by_key(|(ts, _)| *ts);
+        let mut usage = self.usage;
+        usage.input_includes_cache = false;
+        let started_at_ms = self.min_ts.unwrap_or(source.mtime_ms);
+        let updated_at_ms = self.max_ts.unwrap_or(source.mtime_ms);
+        Session {
+            id: self.session_id.clone(),
+            provider: ProviderId::ClaudeCode,
+            native_id: self.native_id.clone(),
+            parent_session_id: self.parent_session_id.clone(),
+            kind: self.kind,
+            title,
+            cwd: self.cwd.clone(),
+            git_branch: self.git_branch.clone(),
+            machine_id: self.machine_id.clone(),
+            agent_version: self.version.clone(),
+            entrypoint: self.entrypoint.clone(),
+            started_at_ms,
+            ended_at_ms: Some(updated_at_ms),
+            updated_at_ms,
+            models: models.into_iter().map(|(_, m)| m).collect(),
+            usage,
+            message_count: self.message_count,
+            recorded_cost_usd: self.recorded_cost_usd,
+            estimated_cost_usd: self.cost.value(),
+            source,
         }
     }
 
-    fn record(&mut self, line_no: usize, v: Value) {
+    fn take_warnings(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.warnings)
+    }
+
+    fn take_ignored(&mut self) -> BTreeMap<String, usize> {
+        std::mem::take(&mut self.ignored)
+    }
+}
+
+impl ClaudeLineParser {
+    fn record(
+        &mut self,
+        line_no: usize,
+        v: Value,
+        load: &mut LoadMessage<'_>,
+    ) -> Result<(), Restart> {
         let ty = v
             .get("type")
             .and_then(Value::as_str)
@@ -300,11 +375,11 @@ impl ParseState {
                 .ignored
                 .entry("duplicate-uuid".to_string())
                 .or_default() += 1;
-            return;
+            return Ok(());
         }
         match ty.as_str() {
             "user" => self.record_user(line_no, &v),
-            "assistant" => self.record_assistant(line_no, &v),
+            "assistant" => return self.record_assistant(line_no, &v, load),
             "system" => self.record_system(&v),
             "summary" => {
                 if self.summary_title.is_none() {
@@ -326,6 +401,7 @@ impl ParseState {
             "" => self.warnings.push(format!("第 {line_no} 行缺少 type 字段")),
             other => *self.ignored.entry(other.to_string()).or_default() += 1,
         }
+        Ok(())
     }
 
     fn take_env(&mut self, v: &Value) {
@@ -367,6 +443,45 @@ impl ParseState {
         (uuid, str_field(v, "parentUuid"), ts)
     }
 
+    /// 新消息计入会话累计量。
+    fn count_new(&mut self, m: &Message) {
+        self.message_count += 1;
+        self.min_ts = Some(
+            self.min_ts
+                .map_or(m.timestamp_ms, |t| t.min(m.timestamp_ms)),
+        );
+        self.max_ts = Some(
+            self.max_ts
+                .map_or(m.timestamp_ms, |t| t.max(m.timestamp_ms)),
+        );
+        if let Some(u) = &m.usage {
+            self.usage.add(u);
+        }
+        self.cost
+            .replace((None, None), (m.model.as_deref(), m.usage.as_ref()));
+        if let Some(model) = &m.model {
+            self.note_model(m.timestamp_ms, model);
+        }
+        if let Some(title) = first_user_title(m)
+            && self
+                .first_user
+                .as_ref()
+                .is_none_or(|(ts, _)| m.timestamp_ms < *ts)
+        {
+            self.first_user = Some((m.timestamp_ms, title));
+        }
+    }
+
+    fn note_model(&mut self, ts: i64, model: &str) {
+        if model.starts_with('<') {
+            return;
+        }
+        match self.models.iter_mut().find(|(_, m)| m == model) {
+            Some((first, _)) => *first = (*first).min(ts),
+            None => self.models.push((ts, model.to_string())),
+        }
+    }
+
     fn record_user(&mut self, line_no: usize, v: &Value) {
         let (uuid, parent, ts) = self.common(line_no, v);
         let is_meta = bool_field(v, "isMeta") || bool_field(v, "isCompactSummary");
@@ -395,7 +510,7 @@ impl ParseState {
         } else {
             Role::User
         };
-        self.messages.push(Message {
+        let m = Message {
             id: uuid,
             session_id: self.session_id.clone(),
             native_id: None,
@@ -407,10 +522,17 @@ impl ParseState {
             stop_reason: None,
             blocks,
             usage: None,
-        });
+        };
+        self.count_new(&m);
+        self.plain.push(m);
     }
 
-    fn record_assistant(&mut self, line_no: usize, v: &Value) {
+    fn record_assistant(
+        &mut self,
+        line_no: usize,
+        v: &Value,
+        load: &mut LoadMessage<'_>,
+    ) -> Result<(), Restart> {
         let (uuid, parent, ts) = self.common(line_no, v);
         let msg = v.get("message").cloned().unwrap_or(Value::Null);
         let native_id = str_field(&msg, "id");
@@ -430,7 +552,7 @@ impl ParseState {
 
         // 没有 message.id 的行（极旧版本 / synthetic）单独成一条。
         let Some(key) = native_id.clone() else {
-            self.messages.push(Message {
+            let m = Message {
                 id: uuid,
                 session_id: self.session_id.clone(),
                 native_id: None,
@@ -442,46 +564,87 @@ impl ParseState {
                 stop_reason,
                 blocks,
                 usage,
-            });
-            return;
+            };
+            self.count_new(&m);
+            self.plain.push(m);
+            return Ok(());
         };
 
-        match self.pending.get_mut(&key) {
-            Some(p) => {
-                p.message.blocks.extend(blocks);
-                // usage：优先带 stop_reason 的那条；否则取最后一条（流式 output_tokens 单调递增）。
-                if !p.has_final_usage && usage.is_some() {
-                    p.message.usage = usage;
-                    p.message.stop_reason = stop_reason.clone();
-                    p.has_final_usage = stop_reason.is_some();
-                }
-                if p.message.model.is_none() {
-                    p.message.model = model;
-                }
-            }
+        let Some(r) = self.asst_refs.get(&key) else {
+            let m = Message {
+                id: uuid,
+                session_id: self.session_id.clone(),
+                native_id,
+                parent_id: parent,
+                role: Role::Assistant,
+                is_meta: false,
+                timestamp_ms: ts,
+                model,
+                stop_reason,
+                blocks,
+                usage,
+            };
+            self.asst_refs.insert(
+                key.clone(),
+                AsstRef {
+                    id: m.id.clone(),
+                    has_final: m.stop_reason.is_some() && m.usage.is_some(),
+                },
+            );
+            self.count_new(&m);
+            self.asst_pos.insert(key, self.asst.len());
+            self.asst.push(m);
+            return Ok(());
+        };
+
+        // 续行：并进已有的那条。它若已在前几批交出去了，从库里取回来改。
+        let idx = match self.asst_pos.get(&key) {
+            Some(&i) => i,
             None => {
-                self.pending_order.push(key.clone());
-                self.pending.insert(
-                    key,
-                    PendingAssistant {
-                        has_final_usage: stop_reason.is_some() && usage.is_some(),
-                        message: Message {
-                            id: uuid,
-                            session_id: self.session_id.clone(),
-                            native_id,
-                            parent_id: parent,
-                            role: Role::Assistant,
-                            is_meta: false,
-                            timestamp_ms: ts,
-                            model,
-                            stop_reason,
-                            blocks,
-                            usage,
-                        },
-                    },
-                );
+                let Some(existing) = load(&r.id) else {
+                    return Err(Restart(format!(
+                        "第 {line_no} 行要并入的 assistant 消息 {} 不在库里",
+                        r.id
+                    )));
+                };
+                self.asst.push(existing);
+                self.asst_pos.insert(key.clone(), self.asst.len() - 1);
+                self.asst.len() - 1
             }
+        };
+        let has_final = r.has_final;
+        let m = &mut self.asst[idx];
+        let before = (m.model.clone(), m.usage);
+        m.blocks.extend(blocks);
+        // usage：优先带 stop_reason 的那条；否则取最后一条（流式 output_tokens 单调递增）。
+        let mut now_final = has_final;
+        if !has_final && usage.is_some() {
+            m.usage = usage;
+            m.stop_reason = stop_reason;
+            now_final = m.stop_reason.is_some();
         }
+        if m.model.is_none() {
+            m.model = model;
+        }
+        let after = (m.model.clone(), m.usage);
+        let first_ts = m.timestamp_ms;
+        if let Some(r) = self.asst_refs.get_mut(&key) {
+            r.has_final = now_final;
+        }
+        if let Some(u) = &before.1 {
+            crate::providers::usage_sub(&mut self.usage, u);
+        }
+        if let Some(u) = &after.1 {
+            self.usage.add(u);
+        }
+        self.cost.replace(
+            (before.0.as_deref(), before.1.as_ref()),
+            (after.0.as_deref(), after.1.as_ref()),
+        );
+        if let Some(model) = &after.0 {
+            self.note_model(first_ts, model);
+        }
+        Ok(())
     }
 
     fn record_system(&mut self, v: &Value) {
@@ -507,7 +670,7 @@ impl ParseState {
             *self.ignored.entry(format!("system:{subtype}")).or_default() += 1;
             return;
         };
-        self.messages.push(Message {
+        let m = Message {
             id: uuid,
             session_id: self.session_id.clone(),
             native_id: None,
@@ -519,15 +682,9 @@ impl ParseState {
             stop_reason: Some(subtype),
             blocks,
             usage: None,
-        });
-    }
-
-    fn flush_assistant(&mut self) {
-        for key in self.pending_order.drain(..) {
-            if let Some(p) = self.pending.remove(&key) {
-                self.messages.push(p.message);
-            }
-        }
+        };
+        self.count_new(&m);
+        self.plain.push(m);
     }
 }
 

@@ -47,6 +47,21 @@ pub fn codex_sessions_dir() -> PathBuf {
         .join("sessions")
 }
 
+/// `~/.codex/archived_sessions`：Codex 把归档的会话从 `sessions/YYYY/MM/DD/` 挪到这里（平铺、多为 `.zst`）。
+pub fn codex_archived_sessions_dir() -> PathBuf {
+    dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".codex")
+        .join("archived_sessions")
+}
+
+/// `~/.gemini`：Gemini CLI（`tmp/<项目>/chats/`）与 Antigravity（`antigravity/conversations/`）的共同根目录。
+pub fn gemini_dir() -> PathBuf {
+    dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".gemini")
+}
+
 /// `~/AgentHome/signals`：statusline 包装脚本等外部信号落盘目录。
 pub fn signals_dir() -> PathBuf {
     default_data_dir().join("signals")

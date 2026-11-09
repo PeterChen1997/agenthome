@@ -1,0 +1,35 @@
+name: Feature request / 功能建议
+description: Suggest a new feature or a new session source. / 建议新功能或新的会话来源。
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / 想解决的问题
+      description: What are you trying to do, and what gets in the way today? / 你想做什么，现在卡在哪里？
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution / 建议的方案
+      description: How should it work from a user's point of view? / 从使用者角度描述它应该怎么工作。
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered / 考虑过的替代方案
+  - type: input
+    id: source
+    attributes:
+      label: New session source (if any) / 新会话来源（如有）
+      description: Agent name and where it stores sessions on disk. Use a synthetic sample, never a real transcript. / agent 名称与它在磁盘上的会话位置；样例请用合成数据，不要贴真实转录。
+      placeholder: "e.g. OpenCode, ~/.local/share/opencode/"
+  - type: checkboxes
+    id: compliance
+    attributes:
+      label: Data access / 数据访问
+      options:
+        - label: This does not require AgentHome to read credentials or call undocumented endpoints. / 该功能不需要 AgentHome 读取凭据或调用未公开端点。
+          required: false

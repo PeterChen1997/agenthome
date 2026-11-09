@@ -1,8 +1,8 @@
 //! 文件监听（落地清单 10.10）：用 notify（macOS 上是 FSEvents）盯住各来源的根目录，
-//! 会话文件有变化时告诉调用方「哪个来源变了」。
+//! 会话文件有变化时告诉调用方「哪个来源的哪些文件变了」。
 //!
-//! 只负责发现变化，不入库：调用方对变了的来源跑一次 `ingest_all`，
-//! 未变文件按 size + mtime 跳过，所以重复通知只是多做几次 stat，不会重复解析。
+//! 只负责发现变化，不入库：调用方对变了的路径跑 `ingest_paths`（按字节偏移增量续读），
+//! 不再为每次变化遍历整个来源目录；后端要求重扫时报 `Error`，调用方退回全量扫描。
 
 use std::path::{Path, PathBuf};
 
@@ -13,8 +13,11 @@ use crate::model::ProviderId;
 /// 回调收到的事件。错误不吞，交给调用方展示。
 #[derive(Clone, Debug, PartialEq)]
 pub enum WatchEvent {
-    /// 该来源根目录下有会话文件被创建、修改、改名或删除。
-    Changed(ProviderId),
+    /// 该来源根目录下这些会话文件被创建、修改、改名或删除。
+    Changed {
+        provider: ProviderId,
+        paths: Vec<PathBuf>,
+    },
     /// 监听后端报告的错误（例如 FSEvents 丢事件）。调用方应退回全量扫描。
     Error(String),
 }
@@ -38,19 +41,28 @@ pub fn watch_roots(
     let mut inner =
         notify::recommended_watcher(move |result: notify::Result<notify::Event>| match result {
             Ok(event) => {
+                if event.need_rescan() {
+                    // FSEvents 合并或丢了事件，具体哪些文件变了已不可知。
+                    on_event(WatchEvent::Error(
+                        "文件监听要求重新扫描（事件被合并或丢失）".into(),
+                    ));
+                    return;
+                }
                 if matches!(event.kind, EventKind::Access(_)) {
                     return;
                 }
-                let mut hit: Vec<ProviderId> = Vec::new();
+                let mut hit: Vec<(ProviderId, Vec<PathBuf>)> = Vec::new();
                 for path in &event.paths {
-                    if let Some(provider) = classify(&lookup, path)
-                        && !hit.contains(&provider)
-                    {
-                        hit.push(provider);
+                    let Some(provider) = classify(&lookup, path) else {
+                        continue;
+                    };
+                    match hit.iter_mut().find(|(p, _)| *p == provider) {
+                        Some((_, paths)) => paths.push(path.clone()),
+                        None => hit.push((provider, vec![path.clone()])),
                     }
                 }
-                for provider in hit {
-                    on_event(WatchEvent::Changed(provider));
+                for (provider, paths) in hit {
+                    on_event(WatchEvent::Changed { provider, paths });
                 }
             }
             Err(error) => on_event(WatchEvent::Error(error.to_string())),

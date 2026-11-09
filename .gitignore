@@ -8,3 +8,14 @@
 .playwright-mcp/
 /dist
 
+# 签名与公证凭据，绝不入库
+*.p8
+*.p12
+*.cer
+*.mobileprovision
+AuthKey_*
+.env
+.env.*
+
+script/release.env
+

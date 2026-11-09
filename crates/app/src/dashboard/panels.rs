@@ -90,8 +90,10 @@ impl DashboardView {
                     split(claude.output_tokens, codex.output_tokens),
                     Some(GREEN),
                 ))
+                // 缓存读是数字最大、最容易被误读的一项：每轮请求都把整段上下文从缓存重读一遍计数。
                 .child(
-                    Tile::new("缓存读", short_tokens(all.cache_read_tokens)).note(hit_rate, None),
+                    Tile::new("缓存读", short_tokens(all.cache_read_tokens))
+                        .note("每轮重读上下文 · 约 1/10 价", None),
                 )
                 .child(
                     Tile::new("缓存写", short_tokens(all.cache_write_tokens)).note(
@@ -103,6 +105,22 @@ impl DashboardView {
                         None,
                     ),
                 ),
+        );
+        panel = panel.child(
+            div()
+                .text_size(px(11.))
+                .line_height(px(16.))
+                .text_color(cx.theme().muted_foreground)
+                .child(format!(
+                    "缓存读为什么这么大：长会话里每一轮请求都会把整段对话上下文从缓存重读一遍并计入 token，\
+                     同一段上下文被反复计数（{hit_rate}）。它按约 1/10 的输入单价计费，\
+                     所以 token 数看着惊人、花费并不按比例增长——实际花费以下方「{}」为准。",
+                    match tokens.all.cost_source {
+                        CostSource::Recorded => "记录成本",
+                        CostSource::Unknown => "成本",
+                        CostSource::Estimated | CostSource::Mixed => "估算成本",
+                    }
+                )),
         );
         let cost_label = match tokens.all.cost_source {
             CostSource::Recorded => "记录成本",
@@ -123,9 +141,27 @@ impl DashboardView {
                 .pt(px(10.))
                 .border_t_1()
                 .border_color(cx.theme().muted)
+                .items_end()
                 .text_size(px(12.))
                 .text_color(rgb(MUTED))
-                .child(stat(cost_label, short_cost(tokens.all.cost_usd), AMBER))
+                // 估算成本是这张卡真正该看的数：放大放在最前，并按住户拆开。
+                .child(
+                    v_flex().gap(px(4.)).child(cost_label).child(
+                        h_flex()
+                            .items_baseline()
+                            .gap(px(8.))
+                            .child(
+                                super::cards::vt(30.)
+                                    .text_color(rgb(AMBER))
+                                    .child(short_cost(tokens.all.cost_usd)),
+                            )
+                            .child(format!(
+                                "Claude {} · Codex {}",
+                                short_cost(tokens.claude.cost_usd),
+                                short_cost(tokens.codex.cost_usd)
+                            )),
+                    ),
+                )
                 .child(stat(
                     "会话",
                     tokens.all.sessions.to_string(),

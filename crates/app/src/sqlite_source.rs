@@ -6,10 +6,10 @@ use std::sync::Mutex;
 
 use agenthome_core::model::{
     CostBreakdown, DailyUsage, Message, Period, ProviderActivity, ProviderHealth, ProviderId,
-    QuotaSnapshot, SessionQuery, SessionSummary, UsageTotals,
+    QuotaSnapshot, SearchHit, SessionQuery, SessionSummary, UsageTotals,
 };
 use agenthome_core::{
-    ClaudeCodeProvider, CodexProvider, SourceProvider, Store, claude_statusline,
+    ClaudeCodeProvider, CodexProvider, GeminiProvider, SourceProvider, Store, claude_statusline,
     codex_rollout_quota, paths,
 };
 use anyhow::{Context as _, anyhow};
@@ -20,6 +20,7 @@ pub struct SqliteDataSource {
     store: Mutex<Store>,
     claude: ClaudeCodeProvider,
     codex: CodexProvider,
+    gemini: GeminiProvider,
 }
 
 impl SqliteDataSource {
@@ -30,6 +31,7 @@ impl SqliteDataSource {
             store: Mutex::new(store),
             claude: ClaudeCodeProvider::new(paths::claude_projects_dir()),
             codex: CodexProvider::new(paths::codex_sessions_dir()),
+            gemini: GeminiProvider::new(paths::gemini_dir()),
         })
     }
 
@@ -58,6 +60,10 @@ impl DataSource for SqliteDataSource {
         self.with_store(|store| store.list_sessions(q))
     }
 
+    fn search(&self, query: &str, limit: usize) -> anyhow::Result<Vec<SearchHit>> {
+        self.with_store(|store| store.search_messages(query, limit))
+    }
+
     fn messages(&self, session_id: &str) -> anyhow::Result<Vec<Message>> {
         self.with_store(|store| store.messages(session_id))
     }
@@ -83,7 +89,7 @@ impl DataSource for SqliteDataSource {
     }
 
     fn activity(&self) -> anyhow::Result<Vec<ProviderActivity>> {
-        let providers: [&dyn SourceProvider; 2] = [&self.claude, &self.codex];
+        let providers: [&dyn SourceProvider; 3] = [&self.claude, &self.codex, &self.gemini];
         self.with_store(|store| store.activity(&providers))
     }
 

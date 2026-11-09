@@ -47,6 +47,8 @@ pub struct Transcript {
     pub turn_starts: Vec<usize>,
     /// tool_call_id → 配对的结果。
     results: HashMap<String, PairedResult>,
+    /// tool_call_id → 调用所在消息下标；搜索定位到「只含已配对结果」的消息时改停在调用行。
+    call_ix: HashMap<String, usize>,
     pub tool_calls: usize,
     pub tool_failures: usize,
     pub estimated_cost_usd: Option<f64>,
@@ -58,6 +60,7 @@ impl Transcript {
         let mut turn_starts = Vec::new();
         let mut call_at: HashMap<&str, i64> = HashMap::new();
         let mut results = HashMap::new();
+        let mut call_ix = HashMap::new();
         let mut tool_calls = 0;
         let mut tool_failures = 0;
         for (ix, message) in messages.iter().enumerate() {
@@ -70,6 +73,7 @@ impl Transcript {
                     ContentBlock::ToolCall { tool_call_id, .. } => {
                         tool_calls += 1;
                         call_at.insert(tool_call_id, message.timestamp_ms);
+                        call_ix.insert(tool_call_id.clone(), ix);
                     }
                     ContentBlock::ToolResult {
                         tool_call_id,
@@ -102,6 +106,7 @@ impl Transcript {
             turn_of,
             turn_starts,
             results,
+            call_ix,
             tool_calls,
             tool_failures,
             estimated_cost_usd,
@@ -111,6 +116,27 @@ impl Transcript {
     /// 某条消息所属轮次（从 1 起）。
     pub fn turn_of(&self, message_ix: usize) -> u32 {
         self.turn_of.get(message_ix).copied().unwrap_or(0)
+    }
+
+    /// 定位到第 `message_ix` 条消息时实际停靠的行。已配对的工具结果并在调用行里显示、自身零高，
+    /// 只含这类结果的消息改停在（最早的）调用行，否则高亮会落在看不见的行上。
+    pub fn anchor_of(&self, message_ix: usize) -> usize {
+        let Some(message) = self.messages.get(message_ix) else {
+            return message_ix;
+        };
+        let mut anchor: Option<usize> = None;
+        for block in &message.blocks {
+            let ContentBlock::ToolResult { tool_call_id, .. } = block else {
+                return message_ix;
+            };
+            match self.call_ix.get(tool_call_id) {
+                Some(&call) if call < message_ix => {
+                    anchor = Some(anchor.map_or(call, |a| a.min(call)));
+                }
+                _ => return message_ix,
+            }
+        }
+        anchor.unwrap_or(message_ix)
     }
 
     fn is_turn_start(&self, message_ix: usize) -> bool {
@@ -192,11 +218,13 @@ pub fn provider_display_name(provider: &ProviderId) -> &str {
 }
 
 /// 渲染消息流的第 `ix` 行。配对过的工具结果已并入调用行，自身渲染为零高。
+/// `highlighted` 为真时整行铺一层强调色底（从搜索跳过来时短暂标出命中的消息）。
 pub fn render_row(
     ix: usize,
     transcript: &Transcript,
     provider: &ProviderId,
     expanded: &HashSet<BlockKey>,
+    highlighted: bool,
     owner: &WeakEntity<ArchiveView>,
     cx: &mut App,
 ) -> AnyElement {
@@ -408,6 +436,7 @@ pub fn render_row(
         .when(turn_start, |row| {
             row.pt_4().border_t_1().border_color(cx.theme().secondary)
         })
+        .when(highlighted, |row| row.bg(cx.theme().primary.opacity(0.16)))
         .pb_3()
         .child(
             div()
@@ -635,6 +664,19 @@ mod tests {
         assert_eq!(paired.block_ix, 0);
         assert!(paired.duration_ms.is_some(), "结果应配对到之前的调用");
         assert!(transcript.estimated_cost_usd.is_some());
+    }
+
+    #[test]
+    fn search_jump_lands_on_visible_row() {
+        // 搜索命中可能落在「只含已配对工具结果」的消息上，它自身零高；必须改停在调用行，
+        // 否则跳转后高亮落在看不见的行上，用户还是不知道命中在哪。
+        let transcript = sample();
+        // mock 第 3 条（下标 2）是工具调用，第 4 条（下标 3）是它的结果。
+        assert_eq!(transcript.anchor_of(3), 2);
+        // 普通消息停在自己身上；越界下标原样返回，不 panic。
+        assert_eq!(transcript.anchor_of(0), 0);
+        assert_eq!(transcript.anchor_of(1), 1);
+        assert_eq!(transcript.anchor_of(usize::MAX), usize::MAX);
     }
 
     #[test]

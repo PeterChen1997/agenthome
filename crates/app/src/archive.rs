@@ -49,6 +49,10 @@ const RAIL_ROW_HEIGHT: f32 = 26.;
 const ACTIVE_WITHIN_MS: i64 = 10 * 60_000;
 /// 子代理归属启发：父会话最后更新之后这段时间内开始的子代理仍算它的。
 const SUBAGENT_SLACK_MS: i64 = 10 * 60_000;
+/// 记住最近打开过的会话数（⌘K 空查询时列出）。
+const RECENT_KEPT: usize = 8;
+/// 从搜索跳过来后，命中消息保持高亮的时长。
+const FLASH_FOR: std::time::Duration = std::time::Duration::from_millis(2_400);
 
 /// 左栏「视图」。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -268,8 +272,11 @@ pub struct ArchiveView {
     health: Vec<ProviderHealth>,
     view: ViewFilter,
     selected_project: Option<ProjectRow>,
-    search_text: String,
     starred: HashSet<String>,
+    /// 最近打开的会话，最新的在前（只在内存里）。
+    recent: Vec<SessionSummary>,
+    /// 短暂高亮的消息 id（从搜索跳转过来时）。
+    flash_message: Option<String>,
     sessions: Arc<Vec<SessionSummary>>,
     subagents: Arc<HashMap<String, u32>>,
     rows: Arc<Vec<ListRow>>,
@@ -287,6 +294,7 @@ pub struct ArchiveView {
     rail_scroll: UniformListScrollHandle,
     _sessions_task: Task<()>,
     _messages_task: Task<()>,
+    _flash_task: Task<()>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -302,8 +310,9 @@ impl ArchiveView {
             health: Vec::new(),
             view: ViewFilter::All,
             selected_project: None,
-            search_text: String::new(),
             starred: HashSet::new(),
+            recent: Vec::new(),
+            flash_message: None,
             sessions: Arc::default(),
             subagents: Arc::default(),
             rows: Arc::default(),
@@ -321,6 +330,7 @@ impl ArchiveView {
             rail_scroll: UniformListScrollHandle::new(),
             _sessions_task: Task::ready(()),
             _messages_task: Task::ready(()),
+            _flash_task: Task::ready(()),
             _subscriptions: subscriptions,
         };
         this.load_sidebar(cx);
@@ -328,13 +338,53 @@ impl ArchiveView {
         this
     }
 
-    /// 标题栏搜索框的文字变化入口。
-    pub fn set_search(&mut self, text: String, cx: &mut Context<Self>) {
-        if self.search_text == text {
+    /// ⌘K 面板空查询时列出的会话：最近打开的；还没打开过就退回最近更新的。
+    pub fn recent_for_palette(&self) -> (Vec<SessionSummary>, &'static str) {
+        if self.recent.is_empty() {
+            let latest = self.sessions.iter().take(RECENT_KEPT).cloned().collect();
+            (latest, "最近更新")
+        } else {
+            (self.recent.clone(), "最近打开")
+        }
+    }
+
+    /// 从 ⌘K 面板打开会话：选中它，`message_id` 有值时滚到那条消息并短暂高亮。
+    /// 会话不在当前列表里（被项目筛掉、或是折叠进父会话的子代理）时，到全量列表里找摘要。
+    pub fn open_session_at(
+        &mut self,
+        session_id: String,
+        message_id: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(summary) = self.sessions.iter().find(|s| s.id == session_id).cloned() {
+            self.open_summary(summary, message_id, cx);
             return;
         }
-        self.search_text = text;
-        self.reload_sessions(cx);
+        let source = self.source.clone();
+        cx.spawn_in(window, async move |this, cx| {
+            let wanted = session_id.clone();
+            let found = cx
+                .background_spawn(async move {
+                    source
+                        .sessions(&SessionQuery {
+                            limit: SESSION_PAGE_LIMIT,
+                            ..SessionQuery::default()
+                        })
+                        .map(|rows| rows.into_iter().find(|s| s.id == wanted))
+                })
+                .await;
+            let _ = this.update_in(cx, |this, window, cx| match found {
+                Ok(Some(summary)) => this.open_summary(summary, message_id, cx),
+                Ok(None) => window.push_notification(
+                    Notification::warning(format!("找不到会话 {session_id}，可能已被移出索引")),
+                    cx,
+                ),
+                Err(error) => window
+                    .push_notification(Notification::error(format!("读取会话失败：{error:#}")), cx),
+            });
+        })
+        .detach();
     }
 
     /// 项目列表与归档健康一起拉，都只在启动时读一次。
@@ -382,9 +432,7 @@ impl ArchiveView {
         self.sessions_error = None;
         self.now_ms = now_ms();
         let now = self.now_ms;
-        let text = self.search_text.trim().to_string();
         let query = SessionQuery {
-            text: (!text.is_empty()).then_some(text),
             cwd: self.selected_project.as_ref().and_then(|p| p.cwd.clone()),
             limit: SESSION_PAGE_LIMIT,
             ..SessionQuery::default()
@@ -466,12 +514,38 @@ impl ArchiveView {
         let Some(summary) = self.sessions.iter().find(|s| s.id == session_id).cloned() else {
             return;
         };
+        self.open_summary(summary, None, cx);
+    }
+
+    /// 选中并载入一个会话。`target` 为某条消息 id 时载入后滚到它并短暂高亮，否则停在最新一条。
+    fn open_summary(
+        &mut self,
+        summary: SessionSummary,
+        target: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
+        self.recent.retain(|s| s.id != summary.id);
+        self.recent.insert(0, summary.clone());
+        self.recent.truncate(RECENT_KEPT);
+        let same = self
+            .selected_session
+            .as_ref()
+            .is_some_and(|s| s.id == summary.id);
+        if same && self.transcript.is_some() && !self.loading_messages {
+            // 已经打开着：不重读，只定位。
+            if let Some(target) = target {
+                self.scroll_to_message(&target, cx);
+            }
+            cx.notify();
+            return;
+        }
         self.messages_revision += 1;
         let revision = self.messages_revision;
         self.loading_messages = true;
         self.messages_error = None;
         self.transcript = None;
         self.expanded_blocks = Rc::default();
+        self.flash_message = None;
         self.scroller.update(cx, |state, cx| state.reset(0, cx));
         let id = summary.id.clone();
         self.selected_session = Some(summary);
@@ -494,6 +568,9 @@ impl ArchiveView {
                             // 打开会话直接停在最新一条：多数时候是回来看刚发生的事。
                             state.scroll_to_end(cx);
                         });
+                        if let Some(target) = &target {
+                            this.scroll_to_message(target, cx);
+                        }
                     }
                     Err(error) => this.messages_error = Some(format!("读取消息失败：{error:#}")),
                 }
@@ -501,6 +578,30 @@ impl ArchiveView {
             });
         });
         cx.notify();
+    }
+
+    /// 滚到某条消息并高亮约 2 秒；消息不在当前会话里时什么也不做（返回 false）。
+    fn scroll_to_message(&mut self, message_id: &str, cx: &mut Context<Self>) -> bool {
+        let Some(transcript) = &self.transcript else {
+            return false;
+        };
+        let Some(ix) = transcript.messages.iter().position(|m| m.id == message_id) else {
+            return false;
+        };
+        let anchor = transcript.anchor_of(ix);
+        self.flash_message = transcript.messages.get(anchor).map(|m| m.id.clone());
+        self.scroller.update(cx, |state, cx| {
+            _ = state.scroll_to_item(anchor, cx);
+        });
+        self._flash_task = cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(FLASH_FOR).await;
+            let _ = this.update(cx, |this, cx| {
+                this.flash_message = None;
+                cx.notify();
+            });
+        });
+        cx.notify();
+        true
     }
 
     /// 静默重拉当前会话的消息：前缀不变时只把新增的行追加到虚拟列表，保住阅读位置。
@@ -1072,9 +1173,12 @@ impl ArchiveView {
             let owner = cx.entity().downgrade();
             let provider = session.provider.clone();
             let rows = transcript.clone();
+            let flash = self.flash_message.clone();
             let scroller =
                 MessageScroller::new("messages", self.scroller.clone(), move |ix, _, cx| {
-                    render_row(ix, &rows, &provider, &expanded, &owner, cx)
+                    let highlighted =
+                        flash.is_some() && rows.messages.get(ix).map(|m| &m.id) == flash.as_ref();
+                    render_row(ix, &rows, &provider, &expanded, highlighted, &owner, cx)
                 })
                 .with_jump_button_label("跳到最新");
             h_flex()

@@ -221,21 +221,27 @@ fn 汇总_成本口径() {
     let mut store = Store::in_memory().unwrap();
     seed(&mut store);
 
-    // All：A 用真值 9，B 估算 4，C 估算 1.25，D 无 → 14.25，混合
+    // All 与各周期同口径，全按估算：A 4 + B 4 + C 1.25，D 不可计价 → 9.25。
+    // 为什么不用 A 的 cost-state 真值 $9：它只记最后一个进程的累计，resume 过的会话会低估到 1/3~1/10，
+    // 而且切不到天，All 用真值、7 天用估算会让「全部」与「各周期之和」对不上（docs/12 §4.5）。
     let all = store.stats_totals(Period::All, None).unwrap();
     assert_eq!(all.sessions, 4);
     assert_eq!(all.messages, 6);
     assert_eq!(all.usage.requests, 4);
     assert!(all.usage.input_includes_cache, "混了 Codex 要标出来");
-    assert!((all.cost_usd - 14.25).abs() < 1e-9, "{}", all.cost_usd);
-    assert_eq!(all.cost_source, CostSource::Mixed);
+    assert!((all.cost_usd - 9.25).abs() < 1e-9, "{}", all.cost_usd);
+    assert_eq!(all.cost_source, CostSource::Estimated);
 
-    // 只看 Claude：9 + 4 = 13，混合；只看 Codex：1.25，估算
+    // 只看 Claude：4 + 4 = 8；真值 $9 另外并列提供，不混进估算。只看 Codex：1.25
     let cl = store
         .stats_totals(Period::All, Some(&ProviderId::ClaudeCode))
         .unwrap();
-    assert!((cl.cost_usd - 13.0).abs() < 1e-9);
-    assert_eq!(cl.cost_source, CostSource::Mixed);
+    assert!((cl.cost_usd - 8.0).abs() < 1e-9);
+    assert_eq!(cl.cost_source, CostSource::Estimated);
+    let (recorded, n) = store
+        .recorded_cost_total(Some(&ProviderId::ClaudeCode))
+        .unwrap();
+    assert_eq!((recorded, n), (9.0, 1));
     assert!(!cl.usage.input_includes_cache);
     let cx = store
         .stats_totals(Period::All, Some(&ProviderId::Codex))
@@ -399,8 +405,8 @@ fn 到期判断看原件_mtime() {
 }
 
 /// 10.15 / 10.21 / 10.35：列表摘要要带父会话、原件路径与会话级成本。
-/// 成本口径与仪表盘 `All` 一致：真值优先（即使估算不同也不混用），无真值用估算，都没有就是 None
-/// ——列表不能因为"没价"而显示 $0，也不能把 Claude 真值与估算混成一个数。
+/// 成本口径与仪表盘一致：默认估算（cost-state 对 resume 过的会话会严重低估，docs/12 §3.4），
+/// 估算不出时才用真值兜底，都没有就是 None——列表不能因为"没价"而显示 $0，也不能把真值与估算混成一个数。
 #[test]
 fn 列表摘要_父会话_原件路径_会话级成本() {
     let mut store = Store::in_memory().unwrap();
@@ -425,10 +431,18 @@ fn 列表摘要_父会话_原件路径_会话级成本() {
     let a = get("claude-code:m:a");
     assert_eq!(
         a.cost_usd,
-        Some(9.0),
-        "有 cost-state 真值时用真值，不用估算 $4"
+        Some(4.0),
+        "有估算时用估算，不用 cost-state 的 $9（真值在 get_session 的 recorded_cost_usd 里）"
     );
-    assert_eq!(a.cost_source, CostSource::Recorded);
+    assert_eq!(a.cost_source, CostSource::Estimated);
+    assert_eq!(
+        store
+            .get_session("claude-code:m:a")
+            .unwrap()
+            .unwrap()
+            .recorded_cost_usd,
+        Some(9.0)
+    );
     assert_eq!(a.parent_session_id, None);
     assert_eq!(
         a.source_path.as_deref(),
@@ -446,4 +460,229 @@ fn 列表摘要_父会话_原件路径_会话级成本() {
     let s = get("claude-code:m:a/agent-1");
     assert_eq!(s.kind, SessionKind::Subagent);
     assert_eq!(s.parent_session_id.as_deref(), Some("claude-code:m:a"));
+}
+
+/// fork / resume 会把历史 assistant 行（同一 message.id）复制进新会话。跨会话汇总若不去重，
+/// 同一次 API 请求按会话数重复计费（真实库 1,569 个 message.id、多算约 $446，docs/12 §4.1）。
+/// 汇总只计最早的一条；但每个会话自己的详情与会话级成本必须完整（fork 出来的会话看得到自己的历史）。
+#[test]
+fn claude_跨会话复制的消息只在汇总里计一次() {
+    let mut store = Store::in_memory().unwrap();
+    let now = now_ms();
+    let mut copy = |sid: &str, ts_shift: i64| {
+        let mut s = session(sid, ProviderId::ClaudeCode, "/w/fork", now, None);
+        let mut m = msg(
+            sid,
+            &format!("{sid}-u1"),
+            Role::Assistant,
+            now - 1_000 + ts_shift,
+            Some("claude-opus-5-5"),
+            Some(one_m_input(false)),
+            text("同一次回复"),
+        );
+        m.native_id = Some("msg_shared".to_string());
+        s.estimated_cost_usd = Some(4.0);
+        store.store_parsed(&s, &[m]).unwrap();
+    };
+    copy("claude-code:m:orig", 0);
+    copy("claude-code:m:fork", 0);
+    // Codex 的 native_id 不参与去重（Codex 没有这种复制）。
+    let mut c = session("codex:m:c", ProviderId::Codex, "/w/fork", now, None);
+    c.estimated_cost_usd = Some(1.25);
+    let mut cm = msg(
+        &c.id,
+        "c1",
+        Role::Assistant,
+        now - 1_000,
+        Some("gpt-5"),
+        Some(one_m_input(false)),
+        text("codex"),
+    );
+    cm.native_id = Some("msg_shared".to_string());
+    store.store_parsed(&c, &[cm]).unwrap();
+
+    let all = store.stats_totals(Period::All, None).unwrap();
+    assert!((all.cost_usd - 5.25).abs() < 1e-9, "{}", all.cost_usd);
+    assert_eq!(all.usage.requests, 2);
+    let today = store.stats_totals(Period::Today, None).unwrap();
+    assert!((today.cost_usd - 5.25).abs() < 1e-9);
+    let by_model = store.stats_by_model(Period::All).unwrap();
+    let opus = by_model
+        .iter()
+        .find(|b| b.key == "claude-opus-5-5")
+        .unwrap();
+    assert!((opus.cost_usd - 4.0).abs() < 1e-9);
+    let by_project = store.stats_by_project(Period::All, 0).unwrap();
+    let claude_proj = by_project
+        .iter()
+        .find(|b| b.provider == ProviderId::ClaudeCode)
+        .unwrap();
+    assert!((claude_proj.cost_usd - 4.0).abs() < 1e-9);
+    let daily: f64 = store
+        .stats_daily(2)
+        .unwrap()
+        .iter()
+        .map(|d| d.cost_usd)
+        .sum();
+    assert!((daily - 5.25).abs() < 1e-9);
+
+    // 会话自己看是完整的。
+    let list = store
+        .list_sessions(&agenthome_core::model::SessionQuery::default())
+        .unwrap();
+    for id in ["claude-code:m:orig", "claude-code:m:fork"] {
+        let s = list.iter().find(|s| s.id == id).unwrap();
+        assert_eq!(s.cost_usd, Some(4.0), "{id}");
+        assert_eq!(store.messages(id).unwrap().len(), 1);
+    }
+}
+
+/// 成本是入库时按当时的定价表算好存下的。换了定价表（新模型、长上下文分档、改价）而不重算，
+/// 只有原件变了的会话用新价，老会话停在旧价，两种口径混在一个总数里（docs/12 §6.1）。
+/// 定价表身份变了要在打开库时全量重算；没变则不重算（每次打开库都扫一遍几十万条消息太慢）。
+#[test]
+fn 定价表变了打开库时重算成本() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("t.db");
+    let now = now_ms();
+    {
+        let mut store = Store::open(&db).unwrap();
+        let mut s = session("claude-code:m:p", ProviderId::ClaudeCode, "/w", now, None);
+        s.estimated_cost_usd = Some(4.0);
+        let m = msg(
+            &s.id,
+            "p1",
+            Role::Assistant,
+            now,
+            Some("claude-opus-5-5"),
+            Some(one_m_input(false)),
+            text("x"),
+        );
+        store.store_parsed(&s, &[m]).unwrap();
+    }
+    let expect =
+        agenthome_core::pricing::estimate_usd("claude-opus-5-5", &one_m_input(false)).unwrap();
+    let stale = |stamp: Option<&str>| {
+        let conn = rusqlite::Connection::open(&db).unwrap();
+        conn.execute_batch(
+            "UPDATE messages SET cost_usd = 999; UPDATE sessions SET estimated_cost_usd = 999;",
+        )
+        .unwrap();
+        if let Some(stamp) = stamp {
+            conn.execute("UPDATE meta SET value = ?1", [stamp]).unwrap();
+        }
+    };
+    let cost = |store: &Store| {
+        (
+            store.messages("claude-code:m:p").unwrap()[0].clone(),
+            store
+                .get_session("claude-code:m:p")
+                .unwrap()
+                .unwrap()
+                .estimated_cost_usd,
+        )
+    };
+
+    // 定价表没变：不重算（库里的 999 原样保留，证明没有每次打开都全量扫描）。
+    stale(None);
+    let store = Store::open(&db).unwrap();
+    assert_eq!(cost(&store).1, Some(999.0));
+    drop(store);
+
+    // 定价表身份变了：消息成本与会话估算都按当前定价表重算。
+    stale(Some("litellm-2000-01-01#0000000000000000"));
+    let store = Store::open(&db).unwrap();
+    let (_, est) = cost(&store);
+    assert!((est.unwrap() - expect).abs() < 1e-9, "{est:?} vs {expect}");
+    let stats = store.stats_totals(Period::All, None).unwrap();
+    assert!((stats.cost_usd - expect).abs() < 1e-9);
+}
+
+/// 真实库对比（默认忽略）：`REAL_DB` 指向真实库的**副本**。先用旧口径直接查 SQL，再用新的 `Store::open`
+/// （定价表重算）+ 汇总去重 + 估算口径，最后补入 Codex 归档会话，逐步打印总额。
+#[test]
+#[ignore]
+fn real_db_cost_totals() {
+    let Ok(db) = std::env::var("REAL_DB") else {
+        eprintln!("未设置 REAL_DB，跳过");
+        return;
+    };
+    let old_all = |conn: &rusqlite::Connection, provider: &str| -> (f64, f64) {
+        let all: f64 = conn
+            .query_row(
+                "SELECT COALESCE(SUM(CASE WHEN s.recorded_cost_usd IS NOT NULL THEN s.recorded_cost_usd
+                                          WHEN p.recorded_cost_usd IS NOT NULL THEN 0
+                                          ELSE COALESCE(s.estimated_cost_usd, 0) END), 0)
+                 FROM sessions s LEFT JOIN sessions p ON p.id = s.parent_session_id
+                 WHERE s.provider = ?1",
+                [provider],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let est: f64 = conn
+            .query_row(
+                "SELECT COALESCE(SUM(m.cost_usd), 0) FROM messages m JOIN sessions s ON s.id = m.session_id
+                 WHERE s.provider = ?1",
+                [provider],
+                |r| r.get(0),
+            )
+            .unwrap();
+        (all, est)
+    };
+    {
+        let conn = rusqlite::Connection::open(&db).unwrap();
+        for p in ["claude-code", "codex"] {
+            let (all, est) = old_all(&conn, p);
+            println!("旧口径 {p}: 仪表盘 All（真值优先）${all:.2}；按消息求和 ${est:.2}");
+        }
+    }
+    let t = std::time::Instant::now();
+    let mut store = Store::open(std::path::Path::new(&db)).unwrap();
+    println!("打开库（含迁移与定价重算）{:?}", t.elapsed());
+    {
+        let conn = rusqlite::Connection::open(&db).unwrap();
+        for p in ["claude-code", "codex"] {
+            let (_, est) = old_all(&conn, p);
+            println!("定价重算后 {p}: 按消息求和（未去重）${est:.2}");
+        }
+    }
+    let report = |store: &Store, label: &str| {
+        for p in [ProviderId::ClaudeCode, ProviderId::Codex] {
+            let t = store.stats_totals(Period::All, Some(&p)).unwrap();
+            let (rec, n) = store.recorded_cost_total(Some(&p)).unwrap();
+            println!(
+                "{label} {}: All ${:.2}（{:?}，{} 条消息）；cost-state 真值并列 ${rec:.2}（{n} 个会话）",
+                p.as_str(),
+                t.cost_usd,
+                t.cost_source,
+                t.messages
+            );
+        }
+    };
+    let t = std::time::Instant::now();
+    report(&store, "新口径（去重 + 估算）");
+    println!("两次 stats_totals(All) 耗时 {:?}", t.elapsed());
+
+    let codex = agenthome_core::CodexProvider::new(agenthome_core::paths::codex_sessions_dir());
+    let archived: Vec<std::path::PathBuf> = codex
+        .archive_root()
+        .and_then(|a| std::fs::read_dir(a).ok())
+        .map(|it| it.filter_map(|e| e.ok()).map(|e| e.path()).collect())
+        .unwrap_or_default();
+    let list: [&dyn SourceProvider; 1] = [&codex];
+    let r = agenthome_core::ingest_paths(
+        &mut store,
+        &list,
+        &archived,
+        None,
+        &mut agenthome_core::IngestCache::new(),
+        &mut |_| {},
+    );
+    println!(
+        "补入 Codex 归档：{} 个文件，入库 {}，失败 {}",
+        archived.len(),
+        r.parsed,
+        r.failed.len()
+    );
+    report(&store, "补入归档后");
 }

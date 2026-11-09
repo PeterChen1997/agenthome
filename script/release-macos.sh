@@ -4,23 +4,28 @@
 #
 # 用法：script/release-macos.sh [版本号]
 #   环境变量：
-#     CODESIGN_IDENTITY   默认 "Developer ID Application: YANG CHEN (R85345VS2J)"
+#     CODESIGN_IDENTITY   Developer ID Application 证书名（必填）
 #     ASC_KEY_ID / ASC_ISSUER / ASC_KEY_PATH
-#                         App Store Connect API 密钥（与 Twnkle 桌面端共用同一把）；密钥文件存在即公证
+#                         App Store Connect API 密钥；密钥文件存在即公证
+#   以上可写进 script/release.env（已被 .gitignore 忽略，不进仓库），脚本启动时自动读取。
 #     NOTARY_PROFILE      备选：notarytool 钥匙串 profile 名（API 密钥不可用时）
 #     SKIP_NOTARIZE=1     跳过公证（包能跑，但别的 Mac 首次打开需右键“打开”）
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 VERSION="${1:-$(grep -m1 '^version' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')}"
-IDENTITY="${CODESIGN_IDENTITY:-Developer ID Application: YANG CHEN (R85345VS2J)}"
-# 密钥 ID 与 Issuer ID 不是机密（机密的是 .p8 文件本身，只按路径引用）；取值同 tick-me/desktop/scripts/release.sh
-ASC_KEY_ID="${ASC_KEY_ID:-68W68734N8}"
-ASC_ISSUER="${ASC_ISSUER:-20201e41-a5f0-43d7-a531-827f80cc98ee}"
+# 个人签名身份不进仓库：放在本地 script/release.env
+if [ -f script/release.env ]; then
+  # shellcheck disable=SC1091
+  . script/release.env
+fi
+IDENTITY="${CODESIGN_IDENTITY:?请设置 CODESIGN_IDENTITY（或写进 script/release.env）}"
+ASC_KEY_ID="${ASC_KEY_ID:-}"
+ASC_ISSUER="${ASC_ISSUER:-}"
 ASC_KEY_PATH="${ASC_KEY_PATH:-$HOME/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8}"
 if [ -n "${SKIP_NOTARIZE:-}" ]; then
   NOTARY=()
-elif [ -f "$ASC_KEY_PATH" ]; then
+elif [ -n "$ASC_KEY_ID" ] && [ -n "$ASC_ISSUER" ] && [ -f "$ASC_KEY_PATH" ]; then
   NOTARY=(--key "$ASC_KEY_PATH" --key-id "$ASC_KEY_ID" --issuer "$ASC_ISSUER")
 elif [ -n "${NOTARY_PROFILE:-}" ]; then
   NOTARY=(--keychain-profile "$NOTARY_PROFILE")
@@ -38,6 +43,8 @@ echo "== 2/5 组装 .app"
 rm -rf dist && mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp target/release/agenthome-app "$APP/Contents/MacOS/agenthome-app"
 cp target/release/agenthome "$APP/Contents/MacOS/agenthome"   # CLI 随包附带
+# 许可与第三方声明随包分发（Apache-2.0 第 4 条、字体 OFL、依赖署名）
+cp LICENSE NOTICE THIRD_PARTY_LICENSES.md "$APP/Contents/Resources/"
 # 图标：png → icns
 ICONSET=dist/AppIcon.iconset && mkdir -p "$ICONSET"
 for s in 16 32 64 128 256 512; do

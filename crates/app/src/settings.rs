@@ -1,7 +1,9 @@
-//! 设置页（落地清单 §9）：来源与同步状态、额度来源（含 Claude statusline 一键安装 / 卸载）、
-//! 归档位置与索引、外观、合规说明、定价表版本。
+//! 设置页（落地清单 §9）：来源与同步状态、额度来源、归档位置与索引、外观、合规说明、定价表版本。
 //!
-//! 所有文件 IO（读 settings.json、算库体积、装 / 卸 statusline）都在后台线程；
+//! Claude 额度只走官方 /usage（后台每 15 分钟读一次），不再提供 statusline 安装；
+//! 检测到旧版装过的 statusline 包装脚本时只给一个卸载入口，不自动卸载。
+//!
+//! 所有文件 IO（读 settings.json、算库体积、卸 statusline）都在后台线程；
 //! 结果回前台写字段再 notify。
 
 use std::path::PathBuf;
@@ -10,7 +12,7 @@ use std::time::Duration;
 use agenthome_core::model::{Freshness, ProviderId};
 use agenthome_core::statusline_setup::{self, StatuslinePaths, StatuslineStatus};
 use agenthome_core::{paths, pricing};
-use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::button::Button;
 use gpui_kit::component::tab::{Tab, TabBar};
 use gpui_kit::component::{ActiveTheme as _, Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -139,8 +141,9 @@ impl SettingsView {
         cx.notify();
     }
 
-    /// 装 / 卸 statusline。点按钮本身就是用户的确认；动作前后都在页面上写明改了什么。
-    fn run_statusline(&mut self, install: bool, cx: &mut Context<Self>) {
+    /// 卸载旧版 AgentHome 装过的 statusline 包装脚本。点按钮本身就是用户的确认；
+    /// 动作前后都在页面上写明改了什么（还原成什么、备份在哪）。
+    fn uninstall_statusline(&mut self, cx: &mut Context<Self>) {
         if self.busy {
             return;
         }
@@ -150,12 +153,8 @@ impl SettingsView {
         self._action_task = cx.spawn(async move |this, cx| {
             let result = cx
                 .background_spawn(async move {
-                    let paths = StatuslinePaths::defaults();
-                    if install {
-                        statusline_setup::install(&paths).map(|r| install_summary(&r))
-                    } else {
-                        statusline_setup::uninstall(&paths).map(|r| uninstall_summary(&r))
-                    }
+                    statusline_setup::uninstall(&StatuslinePaths::defaults())
+                        .map(|r| uninstall_summary(&r))
                 })
                 .await;
             let _ = this.update(cx, |this, cx| {
@@ -167,11 +166,7 @@ impl SettingsView {
                     },
                     Err(error) => Notice {
                         ok: false,
-                        text: format!(
-                            "{}失败，未改动任何文件：{error:#}",
-                            if install { "安装" } else { "卸载" }
-                        )
-                        .into(),
+                        text: format!("卸载失败，未改动任何文件：{error:#}").into(),
                     },
                 });
                 this.reload_disk(cx);
@@ -298,30 +293,14 @@ impl SettingsView {
             }
         };
         let claude_snapshot = snapshot_text(ProviderId::ClaudeCode);
-        let claude_has_snapshot = live
-            .quota
-            .iter()
-            .any(|q| q.provider == ProviderId::ClaudeCode);
         let codex_snapshot = snapshot_text(ProviderId::Codex);
-
-        let view = statusline_view(self.disk.statusline.as_ref());
+        let legacy = legacy_statusline(self.disk.statusline.as_ref());
         let theme = cx.theme();
-        let chip_color = match view.tone {
-            Tone::Ok => theme.success,
-            Tone::Warn => theme.warning,
-            Tone::Bad => theme.danger,
-            Tone::Muted => theme.muted_foreground,
-        };
-        let state_chip = chip(view.chip, chip_color, cx);
-        let state_text = view.text;
-        let (can_install, can_uninstall, install_label) =
-            (view.can_install, view.can_uninstall, view.install_label);
 
         let probe = self.sync.read(cx).claude_probe.clone();
         let probe_view = probe_view(&probe, self.sync_handle.is_some(), now);
         let probe_color = match probe_view.tone {
             Tone::Ok => theme.success,
-            Tone::Warn => theme.warning,
             Tone::Bad => theme.danger,
             Tone::Muted => theme.muted_foreground,
         };
@@ -344,9 +323,9 @@ impl SettingsView {
                     )
                     .child(div().pl(px(34.)).child(muted(probe_view.text, cx)))
                     .child(div().pl(px(34.)).child(muted(
-                        "每 15 分钟在后台启动一次官方 claude 命令读取 /usage（约 10 秒）：不发对话、\
-                         不耗 token、不读凭据，桌面版用户也能看到订阅额度。终端里的 statusline \
-                         10 分钟内更新过时跳过这一轮。",
+                        "Claude 额度来自官方 /usage，每 15 分钟后台读取：启动一次官方 claude 命令\
+                         （约 10 秒），不发对话、不耗 token、不读凭据，桌面版用户也能看到订阅额度。\
+                         不需要再装 statusline。",
                         cx,
                     )))
                     .child(
@@ -364,67 +343,37 @@ impl SettingsView {
                                     cx.notify();
                                 })),
                         ),
-                    ),
-            )
-            .child(
-                v_flex()
-                    .gap(px(6.))
-                    .child(
-                        h_flex()
-                            .gap(px(10.))
-                            .items_center()
-                            .child(provider_avatar(&ProviderId::ClaudeCode, 24.))
-                            .child(strong("Claude Code · statusline 包装脚本（终端可选）"))
-                            .child(state_chip),
                     )
-                    .child(div().pl(px(34.)).child(muted(state_text, cx)))
-                .when(installed_waiting(self.disk.statusline.as_ref(), claude_has_snapshot), |col| {
-                    col.child(div().pl(px(34.)).child(
-                        div()
-                            .text_size(px(12.))
-                            .text_color(cx.theme().warning)
-                            .child(
-                                "还没收到快照：statusline 只由终端里的 Claude Code（claude 命令）在每次回复后调用，\
-                                 Claude 桌面版与 SDK 会话不会触发。在终端里用 claude 聊一句，这里就会出现额度；\
-                                 快照 10 分钟后标为已过期，但仍显示最后一次的数值与重置时间。",
-                            ),
-                    ))
-                })
-                    .child(div().pl(px(34.)).child(muted(
-                        "安装会改写 ~/.claude/settings.json 里的 statusLine 一项：先备份原文件，\
-                     包装脚本把 Claude Code 每次刷新状态栏时给出的额度 JSON 存到 \
-                     ~/AgentHome/signals，再原样转交给你原来的 statusline 命令，显示不变。\
-                     卸载会还原原来的 statusLine。",
-                        cx,
-                    )))
-                    .child(
-                        h_flex()
-                            .pl(px(34.))
-                            .gap(px(8.))
-                            .child(
-                                Button::new("statusline-install")
-                                    .primary()
-                                    .small()
-                                    .label(install_label)
-                                    .loading(self.busy)
-                                    .disabled(self.busy || !can_install)
-                                    .on_click(
-                                        cx.listener(|this, _, _, cx| this.run_statusline(true, cx)),
-                                    ),
-                            )
-                            .child(
-                                Button::new("statusline-uninstall")
-                                    .outline()
-                                    .small()
-                                    .label("卸载")
-                                    .disabled(self.busy || !can_uninstall)
-                                    .on_click(
-                                        cx.listener(|this, _, _, cx| {
-                                            this.run_statusline(false, cx)
-                                        }),
-                                    ),
-                            ),
-                    ),
+                    .when_some(legacy, |col, detail| {
+                        col.child(
+                            h_flex()
+                                .pl(px(34.))
+                                .gap(px(8.))
+                                .items_center()
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .text_size(px(12.))
+                                        .text_color(cx.theme().warning)
+                                        .child(format!(
+                                            "检测到旧的 statusline 包装脚本，可卸载（{detail}）。\
+                                             卸载会把 ~/.claude/settings.json 的 statusLine 还原，改前先备份。"
+                                        )),
+                                )
+                                .child(
+                                    Button::new("statusline-uninstall")
+                                        .outline()
+                                        .small()
+                                        .label("卸载")
+                                        .loading(self.busy)
+                                        .disabled(self.busy)
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.uninstall_statusline(cx)
+                                        })),
+                                ),
+                        )
+                    }),
             )
             .child(
                 v_flex()
@@ -501,7 +450,7 @@ impl SettingsView {
     fn render_about(&self, cx: &mut Context<Self>) -> AnyElement {
         section("合规与定价", "", cx)
             .child(muted(
-                "· 额度只走官方程序与本机文件：Claude 由官方 claude 命令的 /usage 与 statusline 提供，\
+                "· 额度只走官方程序与本机文件：Claude 由官方 claude 命令的 /usage 提供，\
                  Codex 走会话 rollout。AgentHome 不读取凭据，不提供 Claude OAuth usage 端点、Codex wham 端点等需要账号凭据的高风险来源。",
                 cx,
             ))
@@ -586,129 +535,27 @@ fn read_disk_info(db: Option<&std::path::Path>) -> DiskInfo {
 
 enum Tone {
     Ok,
-    Warn,
     Bad,
     Muted,
 }
 
-/// statusline 状态 → 设置页上的标签、说明与按钮可用性。
-struct StatuslineView {
-    chip: &'static str,
-    tone: Tone,
-    text: String,
-    can_install: bool,
-    can_uninstall: bool,
-    install_label: &'static str,
-}
-
-fn statusline_view(status: Option<&StatuslineStatus>) -> StatuslineView {
-    let view = |chip, tone, text: String, can_install, can_uninstall| StatuslineView {
-        chip,
-        tone,
-        text,
-        can_install,
-        can_uninstall,
-        install_label: "安装",
+/// 旧版 AgentHome 装过的 statusline 包装脚本：装着时返回一句描述（包装了什么），否则 None。
+/// 其他状态（没装、别人的命令、配置读不懂）都不出现卸载入口。
+fn legacy_statusline(status: Option<&StatuslineStatus>) -> Option<String> {
+    let wrapped = |command: &Option<String>| match command {
+        Some(command) => format!("它包装着原命令 {command}"),
+        None => "安装前没有 statusline".to_string(),
     };
-    match status {
-        None => view(
-            "检查中",
-            Tone::Muted,
-            "正在读取 ~/.claude/settings.json".into(),
-            false,
-            false,
-        ),
-        Some(StatuslineStatus::SettingsMissing) => view(
-            "未安装",
-            Tone::Warn,
-            "~/.claude/settings.json 还不存在；安装会新建它，只写 statusLine 一项。".into(),
-            true,
-            false,
-        ),
-        Some(StatuslineStatus::SettingsUnreadable { error }) => view(
-            "读取失败",
-            Tone::Bad,
-            format!("settings.json 无法解析，安装 / 卸载都不会动它：{error}"),
-            false,
-            false,
-        ),
-        Some(StatuslineStatus::NotConfigured) => view(
-            "未安装",
-            Tone::Warn,
-            "当前没有自定义 statusline；安装后 Claude Code 底部显示 AgentHome 的极简状态行。"
-                .into(),
-            true,
-            false,
-        ),
-        Some(StatuslineStatus::OtherCommand { command }) => view(
-            "未安装",
-            Tone::Warn,
-            format!("当前 statusline：{command}。安装后保留它的显示。"),
-            true,
-            false,
-        ),
-        Some(StatuslineStatus::Installed {
-            wrapped_command,
-            script_up_to_date,
-        }) => {
-            let wrapped = match wrapped_command {
-                Some(command) => format!("包装的原命令：{command}"),
-                None => "原来没有 statusline".to_string(),
-            };
-            if *script_up_to_date {
-                view(
-                    "已安装",
-                    Tone::Ok,
-                    format!("已接入。{wrapped}。"),
-                    false,
-                    true,
-                )
-            } else {
-                StatuslineView {
-                    install_label: "更新脚本",
-                    ..view(
-                        "需更新",
-                        Tone::Warn,
-                        format!("已接入，但脚本不是当前版本。{wrapped}。"),
-                        true,
-                        true,
-                    )
-                }
-            }
-        }
-        Some(StatuslineStatus::InstalledElsewhere {
+    match status? {
+        StatuslineStatus::Installed {
+            wrapped_command, ..
+        } => Some(wrapped(wrapped_command)),
+        StatuslineStatus::InstalledElsewhere {
             script_path,
             wrapped_command,
-        }) => StatuslineView {
-            install_label: "改用托管脚本",
-            ..view(
-                "已安装",
-                Tone::Ok,
-                format!(
-                    "已手工接入 {script_path}（{}）。",
-                    wrapped_command
-                        .as_deref()
-                        .map_or("原来没有 statusline".to_string(), |c| format!(
-                            "包装 {c}"
-                        ))
-                ),
-                true,
-                true,
-            )
-        },
-        Some(StatuslineStatus::Unrecognized { reason }) => view(
-            "需手工处理",
-            Tone::Bad,
-            format!("statusLine 配置看不懂，为避免弄坏配置不自动处理：{reason}"),
-            false,
-            false,
-        ),
+        } => Some(format!("{script_path}，{}", wrapped(wrapped_command))),
+        _ => None,
     }
-}
-
-/// 已接入但一次快照都没有：最常见原因是只用了桌面版，statusline 从未被调用。
-fn installed_waiting(status: Option<&StatuslineStatus>, has_snapshot: bool) -> bool {
-    status.is_some_and(StatuslineStatus::is_installed) && !has_snapshot
 }
 
 /// 后台 /usage 状态 → 标签与说明。
@@ -743,27 +590,6 @@ fn probe_view(probe: &crate::sync::ClaudeProbe, syncing: bool, now: i64) -> Prob
             "终端 statusline 刚更新过，本轮未运行".into(),
         ),
         _ => view("等待中", Tone::Muted, "启动后马上运行第一次".into()),
-    }
-}
-
-fn install_summary(report: &statusline_setup::InstallReport) -> String {
-    let backup = report
-        .backup_path
-        .as_ref()
-        .map(|p| format!("原文件已备份到 {}。", p.display()))
-        .unwrap_or_default();
-    if report.settings_changed {
-        format!(
-            "已安装：statusLine 改为 {}。{backup}下次 Claude Code 刷新状态栏后，这里就能看到 5 小时 / 7 天额度。",
-            report.command
-        )
-    } else if report.script_written {
-        format!(
-            "包装脚本已更新为当前版本（{}）。",
-            report.script_path.display()
-        )
-    } else {
-        "已是最新，无需改动。".to_string()
     }
 }
 
@@ -979,9 +805,25 @@ mod tests {
     }
 
     #[test]
-    fn unreadable_or_unknown_config_disables_both_buttons() {
-        // 用户的 ~/.claude/settings.json 看不懂时，界面上不能留下能改它的按钮。
+    fn only_agenthome_wrapper_offers_uninstall() {
+        // Claude 额度改走 /usage 后不再提供安装；只有装着 AgentHome 自己的包装脚本时才给卸载入口，
+        // 用户自己的 statusline、读不懂的配置都不能出现能改 settings.json 的按钮。
+        let installed = StatuslineStatus::Installed {
+            wrapped_command: Some("ccline".into()),
+            script_up_to_date: false,
+        };
+        assert!(legacy_statusline(Some(&installed)).is_some_and(|t| t.contains("ccline")));
+        let elsewhere = StatuslineStatus::InstalledElsewhere {
+            script_path: "/repo/script/agenthome-statusline.sh".into(),
+            wrapped_command: None,
+        };
+        assert!(legacy_statusline(Some(&elsewhere)).is_some());
         for status in [
+            StatuslineStatus::SettingsMissing,
+            StatuslineStatus::NotConfigured,
+            StatuslineStatus::OtherCommand {
+                command: "ccline".into(),
+            },
             StatuslineStatus::SettingsUnreadable {
                 error: "bad json".into(),
             },
@@ -989,37 +831,8 @@ mod tests {
                 reason: "type 不是 command".into(),
             },
         ] {
-            let view = statusline_view(Some(&status));
-            assert!(!view.can_install && !view.can_uninstall);
+            assert_eq!(legacy_statusline(Some(&status)), None);
         }
-    }
-
-    #[test]
-    fn installed_without_snapshot_explains_terminal_only() {
-        // 只用桌面版时脚本永远不会被调用；装好后没快照必须给出原因，而不是让用户干等。
-        let installed = StatuslineStatus::Installed {
-            wrapped_command: None,
-            script_up_to_date: true,
-        };
-        assert!(installed_waiting(Some(&installed), false));
-        assert!(!installed_waiting(Some(&installed), true));
-        assert!(!installed_waiting(
-            Some(&StatuslineStatus::NotConfigured),
-            false
-        ));
-    }
-
-    #[test]
-    fn installed_offers_uninstall_and_outdated_offers_update() {
-        let current = statusline_view(Some(&StatuslineStatus::Installed {
-            wrapped_command: Some("ccline".into()),
-            script_up_to_date: true,
-        }));
-        assert!(!current.can_install && current.can_uninstall);
-        let outdated = statusline_view(Some(&StatuslineStatus::Installed {
-            wrapped_command: None,
-            script_up_to_date: false,
-        }));
-        assert!(outdated.can_install && outdated.install_label == "更新脚本");
+        assert_eq!(legacy_statusline(None), None);
     }
 }

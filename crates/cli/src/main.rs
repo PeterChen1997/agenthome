@@ -5,8 +5,8 @@ use agenthome_core::model::{
 };
 use agenthome_core::statusline_setup::{self, StatuslinePaths, StatuslineStatus};
 use agenthome_core::{
-    ClaudeCodeProvider, CodexProvider, RawArchive, SourceProvider, Store, claude_statusline,
-    codex_rollout_quota, ingest_all, paths, pricing,
+    ClaudeCodeProvider, CodexProvider, GeminiProvider, RawArchive, SourceProvider, Store,
+    claude_statusline, codex_rollout_quota, ingest_all, paths, pricing,
 };
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand, ValueEnum};
@@ -31,7 +31,7 @@ enum PeriodArg {
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// 扫描全部来源（Claude Code、Codex）并入库（增量）
+    /// 扫描全部来源（Claude Code、Codex、Gemini）并入库（增量）
     Scan {
         /// Claude Code projects 根目录，默认 ~/.claude/projects
         #[arg(long)]
@@ -39,6 +39,9 @@ enum Cmd {
         /// Codex sessions 根目录，默认 ~/.codex/sessions
         #[arg(long)]
         codex_root: Option<PathBuf>,
+        /// Gemini 根目录（Gemini CLI 的 tmp/ 与 Antigravity 的 antigravity/），默认 ~/.gemini
+        #[arg(long)]
+        gemini_root: Option<PathBuf>,
         /// 索引数据库路径，默认 ~/AgentHome/index/agenthome.db
         #[arg(long)]
         db: Option<PathBuf>,
@@ -97,6 +100,8 @@ enum Cmd {
         root: Option<PathBuf>,
         #[arg(long)]
         codex_root: Option<PathBuf>,
+        #[arg(long)]
+        gemini_root: Option<PathBuf>,
     },
     /// Claude statusline 包装脚本：查看 / 安装 / 卸载（改 ~/.claude/settings.json，改前自动备份）
     Statusline {
@@ -126,9 +131,10 @@ fn main() -> Result<()> {
         Cmd::Scan {
             root,
             codex_root,
+            gemini_root,
             db,
             no_raw,
-        } => scan(root, codex_root, db, no_raw),
+        } => scan(root, codex_root, gemini_root, db, no_raw),
         Cmd::Sessions {
             db,
             limit,
@@ -146,7 +152,8 @@ fn main() -> Result<()> {
             db,
             root,
             codex_root,
-        } => activity(db, root, codex_root),
+            gemini_root,
+        } => activity(db, root, codex_root, gemini_root),
         Cmd::Statusline {
             action,
             settings,
@@ -163,27 +170,31 @@ fn open_store(db: Option<PathBuf>) -> Result<Store> {
 fn providers(
     root: Option<PathBuf>,
     codex_root: Option<PathBuf>,
-) -> (ClaudeCodeProvider, CodexProvider) {
+    gemini_root: Option<PathBuf>,
+) -> (ClaudeCodeProvider, CodexProvider, GeminiProvider) {
     (
         ClaudeCodeProvider::new(root.unwrap_or_else(paths::claude_projects_dir)),
         CodexProvider::new(codex_root.unwrap_or_else(paths::codex_sessions_dir)),
+        GeminiProvider::new(gemini_root.unwrap_or_else(paths::gemini_dir)),
     )
 }
 
 fn scan(
     root: Option<PathBuf>,
     codex_root: Option<PathBuf>,
+    gemini_root: Option<PathBuf>,
     db: Option<PathBuf>,
     no_raw: bool,
 ) -> Result<()> {
-    let (claude, codex) = providers(root, codex_root);
-    let list: [&dyn SourceProvider; 2] = [&claude, &codex];
+    let (claude, codex, gemini) = providers(root, codex_root, gemini_root);
+    let list: [&dyn SourceProvider; 3] = [&claude, &codex, &gemini];
     let detected: Vec<&dyn SourceProvider> = list.iter().copied().filter(|p| p.detect()).collect();
     if detected.is_empty() {
         bail!(
-            "未找到任何来源目录：{} / {}",
+            "未找到任何来源目录：{} / {} / {}",
             claude.root().display(),
-            codex.root().display()
+            codex.root().display(),
+            gemini.root().display()
         );
     }
     let db = db.unwrap_or_else(paths::default_index_db);
@@ -216,6 +227,7 @@ fn scan(
         let root = match provider {
             ProviderId::ClaudeCode => claude.root().display().to_string(),
             ProviderId::Codex => codex.root().display().to_string(),
+            ProviderId::GeminiCli => gemini.root().display().to_string(),
             _ => String::new(),
         };
         println!("== {} ({root})", provider.as_str());
@@ -510,7 +522,12 @@ fn stats(db: Option<PathBuf>, period: Option<PeriodArg>, days: Option<u32>) -> R
         "成本来源",
     ];
     let mut body = Vec::new();
-    for p in [None, Some(ProviderId::ClaudeCode), Some(ProviderId::Codex)] {
+    for p in [
+        None,
+        Some(ProviderId::ClaudeCode),
+        Some(ProviderId::Codex),
+        Some(ProviderId::GeminiCli),
+    ] {
         let t = store.stats_totals(period, p.as_ref())?;
         if p.is_some() && t.messages == 0 {
             continue;
@@ -704,10 +721,15 @@ fn print_snapshot(s: &agenthome_core::model::QuotaSnapshot) {
     }
 }
 
-fn activity(db: Option<PathBuf>, root: Option<PathBuf>, codex_root: Option<PathBuf>) -> Result<()> {
+fn activity(
+    db: Option<PathBuf>,
+    root: Option<PathBuf>,
+    codex_root: Option<PathBuf>,
+    gemini_root: Option<PathBuf>,
+) -> Result<()> {
     let store = open_store(db)?;
-    let (claude, codex) = providers(root, codex_root);
-    let list: [&dyn SourceProvider; 2] = [&claude, &codex];
+    let (claude, codex, gemini) = providers(root, codex_root, gemini_root);
+    let list: [&dyn SourceProvider; 3] = [&claude, &codex, &gemini];
     let rows = store.activity(&list)?;
     let header = ["来源", "检测到", "最近活动", "类型", "10分钟内活跃会话"];
     let body: Vec<Vec<String>> = rows

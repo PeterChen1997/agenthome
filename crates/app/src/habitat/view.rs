@@ -175,6 +175,11 @@ impl HabitatView {
         &self.state.residents
     }
 
+    /// 是否正在显示事件气泡（左栏小屋据此让出顶部的在线人数标签）。
+    pub fn showing_toast(&self) -> bool {
+        self.state.toast.is_some()
+    }
+
     fn spawn_ticker(&self, cx: &mut Context<Self>) -> Task<()> {
         let interval = if self.demo_step.is_some() {
             DEMO_BEAT

@@ -1,8 +1,10 @@
-//! 实时信号：每 5 秒在后台拉 `activity()` 与 `quota()`，翻译成栖息地事件
-//! 同时喂给所有 `HabitatView`，并把最新快照缓存在 `LiveState` 供住户行与状态条读取。
+//! 实时信号：每 5 秒在后台拉 `activity()`（一条 SQL），额度 `quota()` 每 60 秒拉一次，
+//! 外壳在额度来源有新数据时（同步引擎入库、后台 /usage 读完）可以要求下一轮提前拉。
+//! 结果翻译成栖息地事件喂给所有 `HabitatView`，并把最新快照缓存在 `LiveState` 供住户行与状态条读取。
 
 use std::sync::Arc;
-use std::time::Duration;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
 
 use agenthome_core::model::{
     ActivityKind as CoreActivityKind, ProviderActivity, ProviderId, QuotaSnapshot, QuotaWindow,
@@ -13,8 +15,10 @@ use crate::data::DataSource;
 use crate::format::now_ms;
 use crate::habitat::{ActivityKind, HabitatEvent, HabitatView, ResidentId};
 
-/// 轮询间隔。
+/// 活动信号轮询间隔。
 const POLL: Duration = Duration::from_secs(5);
+/// 额度轮询间隔：额度文件只在后台 /usage（15 分钟）或 rollout 写入时变化，不必每 5 秒读。
+const QUOTA_POLL: Duration = Duration::from_secs(60);
 /// 最近活动在此窗口内才算「正在干活」，与 `habitat::state::WORKING_WINDOW` 一致。
 const RECENT_ACTIVITY_MS: i64 = 30_000;
 /// 某窗口 used_percent 比上次下降至少这么多点，视为窗口已重置。
@@ -153,6 +157,8 @@ fn diff_events(
 
 /// 后台轮询任务的句柄；drop 即停止。
 pub struct LiveFeed {
+    /// 置位后下一轮（至多 5 秒后）连同额度一起拉。
+    quota_requested: Arc<AtomicBool>,
     _task: Task<()>,
 }
 
@@ -168,23 +174,54 @@ impl LiveFeed {
         let habitats: Vec<WeakEntity<HabitatView>> =
             habitats.iter().map(Entity::downgrade).collect();
         let state = state.downgrade();
+        let quota_requested = Arc::new(AtomicBool::new(false));
+        let requested = quota_requested.clone();
         let task = cx.spawn(async move |cx: &mut AsyncApp| {
             let mut previous: Option<(Vec<ProviderActivity>, Vec<QuotaSnapshot>)> = None;
+            let mut quota_at: Option<Instant> = None;
+            // 额度读取的错误跨轮保留，直到下一次额度读取成功。
+            let mut quota_error: Option<String> = None;
             loop {
+                let fetch_quota = requested.swap(false, Ordering::Relaxed)
+                    || quota_at.is_none_or(|at| at.elapsed() >= QUOTA_POLL);
                 let io_source = source.clone();
-                let (activity, quota) = cx
-                    .background_spawn(async move { (io_source.activity(), io_source.quota()) })
+                let (activity, fresh_quota) = cx
+                    .background_spawn(async move {
+                        (io_source.activity(), fetch_quota.then(|| io_source.quota()))
+                    })
                     .await;
-                let mut error = None;
-                let activity = activity.unwrap_or_else(|e| {
-                    error = Some(format!("读取活动信号失败：{e:#}"));
-                    Vec::new()
-                });
-                // 额度文件缺失是常态（没装 statusline），只记错误不中断。
-                let quota = quota.unwrap_or_else(|e| {
-                    error = Some(format!("读取额度失败：{e:#}"));
-                    Vec::new()
-                });
+                let activity_error;
+                let activity = match activity {
+                    Ok(activity) => {
+                        activity_error = None;
+                        activity
+                    }
+                    Err(e) => {
+                        activity_error = Some(format!("读取活动信号失败：{e:#}"));
+                        Vec::new()
+                    }
+                };
+                let quota = match fresh_quota {
+                    Some(result) => {
+                        quota_at = Some(Instant::now());
+                        match result {
+                            Ok(quota) => {
+                                quota_error = None;
+                                quota
+                            }
+                            // 只记错误不中断，住户行退回「未接入额度」。
+                            Err(e) => {
+                                quota_error = Some(format!("读取额度失败：{e:#}"));
+                                Vec::new()
+                            }
+                        }
+                    }
+                    None => previous
+                        .as_ref()
+                        .map(|(_, q)| q.clone())
+                        .unwrap_or_default(),
+                };
+                let error = activity_error.or_else(|| quota_error.clone());
                 let now = now_ms();
                 let events = diff_events(previous.as_ref(), &activity, &quota, now);
                 for habitat in &habitats {
@@ -208,7 +245,15 @@ impl LiveFeed {
                 cx.background_executor().timer(POLL).await;
             }
         });
-        Self { _task: task }
+        Self {
+            quota_requested,
+            _task: task,
+        }
+    }
+
+    /// 额度来源刚有新数据：下一轮（至多 5 秒后）就重读额度，不等 60 秒。
+    pub fn request_quota(&self) {
+        self.quota_requested.store(true, Ordering::Relaxed);
     }
 }
 

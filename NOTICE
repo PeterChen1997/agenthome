@@ -1,0 +1,19 @@
+AgentHome
+Copyright 2026 Peter Chen
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+This product includes third-party software and assets distributed under
+their own licenses, including:
+
+- GPUI / gpui-pre (Apache-2.0, Zed Industries, Inc.) and GPUI Kit
+  (Apache-2.0, Longbridge), linked as Rust crates.
+- Lucide icons (ISC; some icons derived from Feather, MIT), embedded via
+  the gpui-kit-assets crate.
+- VT323 and Pixelify Sans fonts (SIL Open Font License 1.1), embedded in
+  the application binary.
+- "macOS Classic" theme by Jason Lee (MIT), included in the source tree
+  at crates/app/assets/themes/macos-classic.json.
+
+See THIRD_PARTY_LICENSES.md for details and the full license texts that
+must accompany binary distributions.
