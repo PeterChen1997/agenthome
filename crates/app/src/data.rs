@@ -111,7 +111,7 @@ const PROJECTS: [&str; 8] = [
     "blog",
 ];
 
-const TITLES: [&str; 12] = [
+const TITLES: [&str; 24] = [
     "修复登录页在 iOS 27 上的启动崩溃",
     "把会话列表改成虚拟化渲染",
     "重构 SQLite 存储层并补测试",
@@ -124,13 +124,26 @@ const TITLES: [&str; 12] = [
     "迁移 CI 到 GitHub Actions",
     "给 Watch App 换浅色图标",
     "清理未使用的依赖",
+    "给设置页加外观切换",
+    "排查 WebSocket 断线重连",
+    "把图片上传改成分片续传",
+    "写一个 CSV 导入的命令行工具",
+    "定位首页白屏的竞态",
+    "补齐暗色主题的对比度",
+    "把定时任务迁到队列",
+    "梳理 API 错误码文档",
+    "实现离线草稿自动保存",
+    "调研本地向量检索方案",
+    "压测同步接口并出报告",
+    "重写打包脚本并接公证",
 ];
 
+// 都要在内置价表里，否则演示数据的成本显示「未知」。
 const MODELS: [&str; 4] = [
-    "claude-opus-4-1",
-    "claude-sonnet-4-5",
-    "gpt-5-codex",
-    "gemini-2.5-pro",
+    "claude-opus-5-5",
+    "claude-sonnet-5-5",
+    "gpt-5.5",
+    "gemini-3-pro-preview",
 ];
 
 const USER_TEXTS: [&str; 5] = [
@@ -244,16 +257,23 @@ impl MockDataSource {
             } else {
                 u32::try_from(rng.below(112)).unwrap_or(0) + 8
             };
-            let model_count = usize::try_from(rng.below(2)).unwrap_or(0) + 1;
-            let first_model = usize::try_from(rng.below(MODELS.len() as u64)).unwrap_or(0);
-            let models = (0..model_count)
-                .filter_map(|k| MODELS.get((first_model + k) % MODELS.len()))
-                .map(|m| (*m).to_string())
-                .collect::<Vec<_>>();
             let provider = match rng.below(10) {
                 0 => ProviderId::Codex,
                 1 => ProviderId::GeminiCli,
                 _ => ProviderId::ClaudeCode,
+            };
+            // 模型跟着来源走：Claude 会话里不该出现 gpt 模型。
+            let models = match provider {
+                ProviderId::Codex => vec![MODELS[2].to_string()],
+                ProviderId::GeminiCli => vec![MODELS[3].to_string()],
+                _ => {
+                    let first = usize::try_from(rng.below(2)).unwrap_or(0);
+                    let count = usize::try_from(rng.below(2)).unwrap_or(0) + 1;
+                    (0..count)
+                        .filter_map(|k| MODELS.get((first + k) % 2))
+                        .map(|m| (*m).to_string())
+                        .collect()
+                }
             };
             let per_message = rng.below(4_000) + 500;
             let usage = Usage {
@@ -276,7 +296,7 @@ impl MockDataSource {
                 title: if i == 0 {
                     "超长会话：一万条消息压力测试".to_string()
                 } else {
-                    format!("{title}（{}）", i + 1)
+                    title.to_string()
                 },
                 cwd: cwd.clone(),
                 project_name,
@@ -317,7 +337,7 @@ impl MockDataSource {
                             requests: u64::from(sub_messages) / 2,
                             ..Usage::default()
                         },
-                        models: vec!["claude-sonnet-4-5".to_string()],
+                        models: vec!["claude-sonnet-5-5".to_string()],
                         parent_session_id: Some(id.clone()),
                         recorded_factor: None,
                     }));
@@ -344,7 +364,7 @@ impl MockDataSource {
             updated_at_ms: now_ms - 2 * 3_600_000 + 240_000,
             message_count: 18,
             usage: orphan_usage,
-            models: vec!["claude-sonnet-4-5".to_string()],
+            models: vec!["claude-sonnet-5-5".to_string()],
             parent_session_id: Some("claude-code:mock-machine:0999".to_string()),
             recorded_factor: None,
         }));
@@ -359,7 +379,7 @@ impl MockDataSource {
             updated_at_ms: now_ms - 12 * 86_400_000 + 600_000,
             message_count: 11,
             usage: orphan_usage,
-            models: vec!["claude-opus-4-1".to_string()],
+            models: vec!["claude-opus-5-5".to_string()],
             parent_session_id: None,
             recorded_factor: None,
         }));
@@ -392,7 +412,7 @@ impl MockDataSource {
             .models
             .first()
             .cloned()
-            .unwrap_or_else(|| "claude-sonnet-4-5".to_string());
+            .unwrap_or_else(|| "claude-sonnet-5-5".to_string());
         let mut messages = Vec::with_capacity(count);
         for k in 0..count {
             let id = format!("{}:m{k:05}", summary.id);
@@ -624,7 +644,7 @@ impl DataSource for MockDataSource {
                     DailyUsage {
                         day: day.clone(),
                         provider: ProviderId::ClaudeCode,
-                        model: "claude-sonnet-4-5".to_string(),
+                        model: "claude-sonnet-5-5".to_string(),
                         usage: Usage {
                             input_tokens,
                             output_tokens,
@@ -637,7 +657,7 @@ impl DataSource for MockDataSource {
                     DailyUsage {
                         day,
                         provider: ProviderId::Codex,
-                        model: "gpt-5-codex".to_string(),
+                        model: "gpt-5.5".to_string(),
                         usage: Usage {
                             input_tokens: input_tokens / 3,
                             output_tokens: output_tokens / 3,
@@ -695,7 +715,7 @@ impl DataSource for MockDataSource {
             ("claude-opus-5-5", ProviderId::ClaudeCode, 0.58),
             ("claude-fable-5-1", ProviderId::ClaudeCode, 0.24),
             ("claude-sonnet-5-5", ProviderId::ClaudeCode, 0.07),
-            ("gpt-5-codex", ProviderId::Codex, 0.09),
+            ("gpt-5.5", ProviderId::Codex, 0.09),
             ("gpt-5-mini", ProviderId::Codex, 0.02),
         ];
         Ok(rows
@@ -737,17 +757,17 @@ impl DataSource for MockDataSource {
         Ok(vec![
             ProviderHealth {
                 provider: ProviderId::ClaudeCode,
-                sessions: 2_363,
-                archive_only: 269,
-                expiring_within_7d: 41,
+                sessions: 71,
+                archive_only: 6,
+                expiring_within_7d: 3,
                 compressed: 0,
             },
             ProviderHealth {
                 provider: ProviderId::Codex,
-                sessions: 418,
+                sessions: 12,
                 archive_only: 0,
                 expiring_within_7d: 0,
-                compressed: 311,
+                compressed: 4,
             },
         ])
     }
@@ -861,7 +881,8 @@ mod tests {
         let hits = source.search("panic", 20).unwrap();
         assert!(!hits.is_empty() && hits.len() <= 20);
         assert!(hits.iter().all(|h| h.message_id.is_some()));
-        let titles = source.search("SQLite", 50).unwrap();
+        // 消息命中多，标题命中的会话可能排在 50 条之后；放宽上限只为确认标题命中会被返回。
+        let titles = source.search("SQLite", 500).unwrap();
         assert!(titles.iter().any(|h| h.message_id.is_none()));
         assert!(source.search("  ", 20).unwrap().is_empty());
     }

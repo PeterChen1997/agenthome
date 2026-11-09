@@ -1,19 +1,20 @@
 # AgentHome · 给接手 agent 的总索引
 
-> 最后更新 2026-11-09。新会话先读本文件，再按「从哪里开始」挑文档，不必通读全部。
+> 最后更新 2026-11-09（v0.1.5 开源准备）。新会话先读本文件，再按「从哪里开始」挑文档，不必通读全部。
 
 ## 一句话
 
-本机所有 AI agent 的"家"：把 Claude Code、Codex 等的会话收进一个长期保存、可搜索的仓库，并把 token 消耗、成本和剩余额度放在同一块仪表盘上；左栏有一间像素小屋，三位住户（Claude 狐狸、Codex 企鹅、Gemini 猫）随真实活动和额度变换状态。Rust + GPUI Kit 桌面应用，macOS 优先。
+本机所有 AI agent 的"家"：把 Claude Code、Codex、Gemini 的会话收进一个长期保存、可搜索的仓库，并把 token 消耗、成本和剩余额度放在同一块仪表盘上；左栏有一间像素小屋，三位住户（Claude 狐狸、Codex 企鹅、Gemini 猫）随真实活动和额度变换状态。Rust + GPUI Kit 桌面应用，macOS 优先。
 
 ## 现状
 
-- **v0.1.3 已发布并公证**（2026-11-08）：https://github.com/PeterChen1997/agenthome/releases （私有仓库 `PeterChen1997/agenthome`，分支 `main`）。含实时同步、原件拷贝、Claude 订阅额度、设置页。
+- **v0.1.5 准备发布**（2026-11-09）：https://github.com/PeterChen1997/agenthome/releases （私有仓库 `PeterChen1997/agenthome`，分支 `main`）。v0.1.4 已公证并装在 `/Applications`。本轮：按字节偏移增量入库（大会话追加一行 0.5 ms、改 11 行）、⌘K 全局搜索（高亮 + 跳到消息）、Gemini 接入（Gemini CLI 全量、Antigravity 只取摘要）、成本口径修正（LiteLLM 2026-11-09 价表 + 长上下文分档 + Claude 跨会话按消息 id 去重 + Codex 归档目录，与 ccusage 偏差约 1%，见 `docs/12-成本口径核对.md`）、Claude 额度只走官方 /usage、浅色主题可读性、开源基础文件（LICENSE、贡献指南、CI、中英 README、`site/` 落地页）。
+- **开源前待用户拍板**：git 历史 18 个提交的作者邮箱是私人邮箱（改写历史或用孤立根提交另开公开仓库）；仓库可见性；是否启用 GitHub Pages；设计稿 `docs/design/` 里有真实项目名需替换。其余审计项（发版脚本里的签名身份、许可文件随包、内部文档）已处理。
 - 已实现：Claude Code 与 Codex 会话全量入库（本机约 2,800 会话 / 35 万条消息）；**实时同步**（app 启动即扫描、库不存在自动建库，notify / FSEvents 监听来源目录、防抖 2 秒只扫变化的来源，每小时兜底全量，标题栏显示「正在入库 x/y」/「监听中 · N 个来源 · X 同步」；新数据入库后仪表盘与归档静默刷新，打开的会话追加新消息）；仪表盘（住户额度、累计 token、到期与重置、30/90 天趋势、今天、按模型 / 项目、归档健康）；归档（按日分组列表、按父会话 id 折叠子代理、会话级成本、轮次 + Trace 折叠行的会话详情、打开即停在最新一条、中文全文搜索）；**设置页基础版**（来源与同步状态 + 立即扫描、Claude statusline 一键安装 / 卸载、归档位置与索引体积、外观跟随系统 / 浅色 / 深色并持久化、合规说明、定价表版本）；**Claude 订阅额度**（后台每 15 分钟在伪终端跑官方 `claude` 的 `/usage` 读屏，桌面版用户也有数据；套餐名读自 `~/.claude.json` 的 organizationType；与终端 statusline 两路合并）；**raw 层原件归档**（每个会话 jsonl 入库前先逐字节归档到 `~/AgentHome/raw/<provider>/<machineId>/<相对路径>/`，zstd 压缩、变长按字节段追加、被改写另存新版本、`manifest.json` 记 sha256 与来源；本机 2,603 个原件 9.8 GB → 占用 3.6 GB，首次 55 秒，之后每次扫描 0.5 秒）；会动的像素栖息地；左侧固定导航；CLI（含 `agenthome statusline status|install|uninstall`）。
-- 质量基线：`cargo fmt --check` 干净、`cargo clippy --workspace --all-targets` 零警告、`cargo test --workspace` 91 个全绿。索引库 `SCHEMA_VERSION` = 4（旧库自动重建）。
+- 质量基线：`cargo fmt --check` 干净、`cargo clippy --workspace --all-targets -- -D warnings` 零警告、`cargo test --workspace` 约 130 个全绿（另 3 个 `#[ignore]` 真实数据基准）。索引库 `SCHEMA_VERSION` = 4，**不要升**；老数据修正用 `store.rs` 里带 `meta` 标记的一次性迁移。离屏截图：`--features capture`（锁屏可用，见 `docs/09` §5）。
 - **设计稿落地约 55%**：`docs/10-设计落地清单.md` 第二轮（2026-11-08）共 273 项，完成 156、部分 43、未开始 72、有意偏离 6。
 - 第一轮审计发现的两个口径缺陷（Codex 会话级 `input_includes_cache`、孤儿子代理被静默丢弃）**已于 2026-11-08 修复**。
-- **Claude 额度已有数据**（官方 `/usage`）。用户已在设置页装了 statusline 包装脚本（只在终端 `claude` 里触发）。
+- **Claude 额度只走官方 `/usage`**（2026-11-09 用户决定，每 15 分钟必跑）。设置页不再提供 statusline 安装，检测到旧包装脚本时给卸载按钮；用户机器上仍装着，旧快照只在 /usage 无数据时兜底。
 - **⚠️ 284 个 Claude 会话的原件已被 Claude Code 的 30 天自动清理删掉（2026-11-08，会话日期 08-19 ~ 09-14），完整内容现在只存在于索引库里。raw 层是在它们被删之后才做好的，**救不回这 284 个原件**：用户已决定不做重建副本，所以升 `SCHEMA_VERSION` 或删库重建会让它们从 app 里永久消失——动之前先跟用户说。** 其余会话的原件自 2026-11-08 起都在 raw 层里。 后台 `/usage` 启动 CLI 时已用 `--settings {"cleanupPeriodDays":36500}` 避免触发清理，但用户自己在终端开 `claude` 仍会清理。
 - **还没做的核心能力**：raw 附属文件（tool-results 等，10.47）、user 层持久化（星标重启即丢）、菜单栏弹窗。
 
@@ -60,7 +61,7 @@
 ```
 crates/core   agenthome-core，零 UI 依赖
   model.rs            规范化模型：Session / Message / ContentBlock / Usage / Period / QuotaSnapshot / ProviderActivity …
-  providers/          SourceProvider trait；claude_code.rs、codex.rs
+  providers/          SourceProvider trait；claude_code.rs、codex.rs、gemini.rs
   ingest.rs           ingest_all：按 size+mtime 增量，一个事务写会话 + 消息 + sources
   store.rs            SQLite（WAL、busy_timeout、FTS5 trigram），SCHEMA_VERSION=4；列表 / 详情 / 仪表盘查询 / 归档健康 / 活动
   watch.rs            notify（FSEvents）监听来源根目录，只认 .jsonl / .jsonl.zst
@@ -71,9 +72,10 @@ crates/core   agenthome-core，零 UI 依赖
   tests/              claude_code.rs、codex_fixture.rs、stats.rs + 合成 fixture
 crates/cli    agenthome：scan / sessions / show / stats / quota / activity / statusline
 crates/app    agenthome-app（gpui-kit =0.9.0）
-  main.rs             参数（--db --mock --habitat-demo --appearance）、主题 / 字体注册、开窗；库不存在时自动建库
+  main.rs             参数（--db --mock --habitat-demo --appearance --page --search --session --capture）、主题 / 字体注册、开窗；库不存在时自动建库
   workspace.rs        外壳（Notion 式两栏，无标题栏）：左栏顶行红绿灯 + 立即同步（空白处拖窗口）→ 搜索 → 栖息地与住户 → 导航 → 页面专属区，底部品牌 + 同步状态；页面切换；新数据入库后通知各页刷新
-  sync.rs             同步引擎：独立线程 + 自有 Store 连接，启动扫描、监听防抖 2 秒、每小时兜底
+  sync.rs             同步引擎：独立线程 + 自有 Store 连接，启动扫描、监听合并 2–10 秒只处理变化路径、每小时兜底；三个来源
+  search_palette.rs   ⌘K 全局搜索面板
   settings.rs         设置页：来源、额度来源（statusline 安装）、归档位置、外观、合规与定价
   config.rs           app 偏好 ~/AgentHome/config/app.json（外观）
   archive.rs          会话列表 + 详情；render_sidebar_sections 提供视图 / 项目
