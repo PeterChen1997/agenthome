@@ -1,6 +1,6 @@
 # AgentHome · 给接手 agent 的总索引
 
-> 最后更新 2026-11-08。新会话先读本文件，再按「从哪里开始」挑文档，不必通读全部。
+> 最后更新 2026-11-09。新会话先读本文件，再按「从哪里开始」挑文档，不必通读全部。
 
 ## 一句话
 
@@ -72,7 +72,7 @@ crates/core   agenthome-core，零 UI 依赖
 crates/cli    agenthome：scan / sessions / show / stats / quota / activity / statusline
 crates/app    agenthome-app（gpui-kit =0.9.0）
   main.rs             参数（--db --mock --habitat-demo --appearance）、主题 / 字体注册、开窗；库不存在时自动建库
-  workspace.rs        外壳：标题栏（同步状态）、左侧固定栏（导航 + 栖息地 + 住户行 + 页面专属区）、页面切换；新数据入库后通知各页刷新
+  workspace.rs        外壳（Notion 式两栏，无标题栏）：左栏顶行红绿灯 + 立即同步（空白处拖窗口）→ 搜索 → 栖息地与住户 → 导航 → 页面专属区，底部品牌 + 同步状态；页面切换；新数据入库后通知各页刷新
   sync.rs             同步引擎：独立线程 + 自有 Store 连接，启动扫描、监听防抖 2 秒、每小时兜底
   settings.rs         设置页：来源、额度来源（statusline 安装）、归档位置、外观、合规与定价
   config.rs           app 偏好 ~/AgentHome/config/app.json（外观）
@@ -114,7 +114,7 @@ cargo fmt --all --check && cargo clippy --workspace --all-targets && cargo test 
 4. core 自带 CLI；TUI 以后再说。
 5. 首次启动默认归档模式。
 6. 外部 Provider 协议：自定义最小协议，只借 ACP / MCP 的 JSON-RPC over stdio 传输层。
-7. 视觉：「像素栖息地」暗色为主；吉祥物配色对齐各家图标；导航在左侧固定栏。
+7. 视觉：「像素栖息地」暗色为主；吉祥物配色对齐各家图标；Notion 式两栏、无标题栏，搜索与导航在左栏栖息地下方；栖息地全应用只画一份（左栏）。
 8. 发版：不移动已发布的 tag，有问题升补丁号重发；包必须公证。
 
 ## 下一步

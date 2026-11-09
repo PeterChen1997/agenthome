@@ -62,7 +62,8 @@ fn provider_of(who: ResidentId) -> ProviderId {
     }
 }
 
-/// 「住户」卡：三行，状态文案来自栖息地状态机，体力条来自额度窗口。
+/// 「额度详情」卡：三位住户各一列，状态文案来自栖息地状态机，体力条来自额度窗口。
+/// 左栏只显示主窗口一条，这里列出全部窗口、重置时间、重置信用与合规来源。
 pub struct ResidentsCard {
     quota: Entity<QuotaState>,
     habitat: Entity<HabitatView>,
@@ -135,14 +136,19 @@ impl ResidentsCard {
             }
         }
 
+        // 三列等宽；列间用左边线分隔。
         h_flex()
+            .flex_1()
+            .flex_basis(px(0.))
+            .min_w_0()
             .items_start()
             .gap(px(10.))
-            .py(px(10.))
-            .when(who != ResidentId::Claude, |row| {
-                row.border_t_1().border_color(cx.theme().muted)
+            .py(px(4.))
+            .when(who != ResidentId::Claude, |col| {
+                col.pl(px(16.)).border_l_1().border_color(cx.theme().muted)
             })
-            .when(snapshot.is_none(), |row| row.opacity(0.6))
+            .when(who != ResidentId::Gemini, |col| col.pr(px(16.)))
+            .when(snapshot.is_none(), |col| col.opacity(0.6))
             .child(avatar(&provider, 40.))
             .child(body)
             .into_any_element()
@@ -169,8 +175,10 @@ impl Render for ResidentsCard {
             .collect();
         card(cx)
             .gap_0()
-            .child(card_title("住户", "状态由数据层事件驱动 · 体力条 = 窗口剩余").pb(px(6.)))
-            .children(rows)
+            .child(
+                card_title("额度详情", "体力条 = 窗口剩余 · 各窗口重置时间与数据来源").pb(px(10.)),
+            )
+            .child(h_flex().items_stretch().children(rows))
             .when_some(error, |card, error| {
                 card.child(
                     div()

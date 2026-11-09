@@ -65,15 +65,15 @@ pub struct DueItem {
     pub quota_left: Option<f32>,
 }
 
-/// 趋势图天数：90 天周期看 90 天，其余看 30 天。
-pub fn trend_days(period: Period) -> u32 {
-    match period {
-        Period::Days(n) if n >= 90 => 90,
-        _ => 30,
-    }
-}
+/// 趋势卡可选的天数。
+pub const TREND_DAYS: [u32; 2] = [30, 90];
 
-pub fn load_overview(source: &dyn DataSource, period: Period) -> anyhow::Result<Overview> {
+/// `trend_days` 只管趋势图；`breakdown` 是「按模型 / 按项目」的周期，跟随累计 token 卡。
+pub fn load_overview(
+    source: &dyn DataSource,
+    trend_days: u32,
+    breakdown: Period,
+) -> anyhow::Result<Overview> {
     let today = source.totals(Period::Today, None)?;
     let recent = source.daily(2)?;
     let yesterday = absolute_date(now_ms() - 86_400_000);
@@ -84,9 +84,9 @@ pub fn load_overview(source: &dyn DataSource, period: Period) -> anyhow::Result<
             (cost + row.cost_usd, output + row.usage.output_tokens)
         });
     Ok(Overview {
-        daily: aggregate_daily(source.daily(trend_days(period))?),
-        by_model: source.by_model(period)?,
-        projects: group_projects(source.by_project(period, 5)?, 5),
+        daily: aggregate_daily(source.daily(trend_days)?),
+        by_model: source.by_model(breakdown)?,
+        projects: group_projects(source.by_project(breakdown, 5)?, 5),
         health: source.archive_health()?,
         activity: source.activity()?,
         today: TodayStats {
@@ -196,7 +196,7 @@ mod tests {
     #[test]
     fn overview_shapes_mock_data_for_every_card() {
         let source = MockDataSource::new();
-        let overview = load_overview(&source, Period::Days(30)).expect("mock 不该失败");
+        let overview = load_overview(&source, 30, Period::Month).expect("mock 不该失败");
         assert_eq!(overview.daily.len(), 30, "30 天周期应有 30 根柱");
         assert!(
             overview.daily.windows(2).all(|w| w[0].day < w[1].day),
@@ -215,8 +215,6 @@ mod tests {
         assert_eq!(overview.by_model.len(), 5);
         assert!(!overview.health.is_empty());
         assert!(overview.today.totals.cost_usd > 0.0);
-        assert_eq!(trend_days(Period::Days(90)), 90);
-        assert_eq!(trend_days(Period::All), 30);
     }
 
     #[test]

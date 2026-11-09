@@ -24,7 +24,6 @@ use gpui_kit::{
 
 use crate::data::DataSource;
 use crate::habitat::HabitatView;
-use cards::card;
 use model::{Overview, TokenTotals};
 use quota::{DueCard, QuotaState, ResidentsCard};
 
@@ -46,12 +45,11 @@ impl TrendMetric {
 
 pub struct DashboardView {
     source: Arc<dyn DataSource>,
-    habitat: Entity<HabitatView>,
     quota: Entity<QuotaState>,
     residents: Entity<ResidentsCard>,
     due: Entity<DueCard>,
-    /// 页头周期：今天 / 30 天 / 90 天 / 全部。
-    period: Period,
+    /// 趋势卡天数：30 / 90。
+    trend_days: u32,
     /// 累计 token 卡的周期：今天 / 本周 / 本月 / 全部。
     token_period: Period,
     trend_metric: TrendMetric,
@@ -66,15 +64,9 @@ pub struct DashboardView {
 }
 
 impl DashboardView {
-    const HEADER_PERIODS: [Period; 4] = [
-        Period::Today,
-        Period::Days(30),
-        Period::Days(90),
-        Period::All,
-    ];
     const TOKEN_PERIODS: [Period; 4] = [Period::Today, Period::Week, Period::Month, Period::All];
 
-    /// `habitat` 是外壳创建并持续喂事件的 Hero 尺寸栖息地，仪表盘只负责摆放。
+    /// `habitat` 是外壳持有、常驻左栏的栖息地；仪表盘不再重复渲染它，只读住户状态文案。
     pub fn new(
         source: Arc<dyn DataSource>,
         habitat: Entity<HabitatView>,
@@ -86,11 +78,10 @@ impl DashboardView {
         let due = cx.new(|cx| DueCard::new(quota.clone(), cx));
         let mut this = Self {
             source,
-            habitat,
             quota,
             residents,
             due,
-            period: Period::Days(30),
+            trend_days: 30,
             token_period: Period::Month,
             trend_metric: TrendMetric::Tokens,
             overview: None,
@@ -128,11 +119,11 @@ impl DashboardView {
         });
     }
 
-    fn set_period(&mut self, period: Period, cx: &mut Context<Self>) {
-        if self.period == period {
+    fn set_trend_days(&mut self, days: u32, cx: &mut Context<Self>) {
+        if self.trend_days == days {
             return;
         }
-        self.period = period;
+        self.trend_days = days;
         self.load_overview(cx);
     }
 
@@ -141,19 +132,24 @@ impl DashboardView {
             return;
         }
         self.token_period = period;
+        // 「按模型 / 按项目」跟随这个周期，一起重拉。
         self.load_tokens(cx);
+        self.load_overview(cx);
     }
 
-    /// 页头周期驱动的所有查询一次拉齐；刷新期间保留旧数据。
+    /// 趋势、分项、今天、归档健康一次拉齐；刷新期间保留旧数据。
     fn load_overview(&mut self, cx: &mut Context<Self>) {
         self.overview_revision += 1;
         let revision = self.overview_revision;
         self.overview_error = None;
         let source = self.source.clone();
-        let period = self.period;
+        let trend_days = self.trend_days;
+        let breakdown = self.token_period;
         self._overview_task = cx.spawn(async move |this, cx| {
             let result = cx
-                .background_spawn(async move { model::load_overview(source.as_ref(), period) })
+                .background_spawn(async move {
+                    model::load_overview(source.as_ref(), trend_days, breakdown)
+                })
                 .await;
             let _ = this.update(cx, |this, cx| {
                 if this.overview_revision != revision {
@@ -223,11 +219,8 @@ impl DashboardView {
         cx.notify();
     }
 
+    /// 工具行只留「刷新额度」。周期控件都放在各自卡片上，只管所在的卡片。
     fn render_toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let selected = Self::HEADER_PERIODS
-            .iter()
-            .position(|p| *p == self.period)
-            .unwrap_or(1);
         let loading = self.quota.read(cx).loading;
         h_flex()
             .h(px(48.))
@@ -238,16 +231,6 @@ impl DashboardView {
             .px(px(14.))
             .border_b_1()
             .border_color(cx.theme().muted)
-            .child(segmented(
-                "dashboard-period",
-                &["今天", "30 天", "90 天", "全部"],
-                selected,
-                cx.listener(|this, ix: &usize, _, cx| {
-                    if let Some(period) = Self::HEADER_PERIODS.get(*ix) {
-                        this.set_period(*period, cx);
-                    }
-                }),
-            ))
             .child(
                 Button::new("refresh-quota")
                     .outline()
@@ -277,12 +260,6 @@ fn segmented(
 
 impl Render for DashboardView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let habitat_card = card(cx)
-            .flex_shrink_0()
-            .w(px(640.))
-            .p(px(6.))
-            .gap_0()
-            .child(div().w(px(628.)).h(px(314.)).child(self.habitat.clone()));
         // 2:1 的两列：flex_grow 配 0 基准，gap 不破坏比例。
         let wide = |panel: gpui_kit::Div| panel.flex_grow(2.).flex_basis(px(0.)).min_w_0();
         let narrow = |panel: gpui_kit::Div| panel.flex_grow(1.).flex_basis(px(0.)).min_w_0();
@@ -317,11 +294,8 @@ impl Render for DashboardView {
                                         .child(error),
                                 )
                             })
-                            .child(
-                                row()
-                                    .child(habitat_card)
-                                    .child(div().flex_1().min_w_0().child(self.residents.clone())),
-                            )
+                            // 栖息地常驻左栏，这里不再重复；第一行是额度详情（三位住户各一列）。
+                            .child(self.residents.clone())
                             .child(
                                 row()
                                     .child(wide(self.render_token_card(cx)))

@@ -18,7 +18,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use gpui_kit::component::{Theme, ThemeMode, ThemeRegistry, TitleBar};
-use gpui_kit::{App, AppContext as _, SharedString, WindowBounds, WindowOptions, px, size};
+use gpui_kit::{
+    App, AppContext as _, Pixels, Point, SharedString, TitlebarOptions, WindowBounds,
+    WindowOptions, point, px, size,
+};
 
 use assets::AppAssets;
 use data::{DataSource, MockDataSource};
@@ -28,6 +31,9 @@ use workspace::Workspace;
 
 /// 像素栖息地主题（`docs/design/canvas.json` 的设计令牌）。
 const PIXEL_HABITAT_THEME: &str = include_str!("../assets/themes/pixel-habitat.json");
+
+/// 红绿灯位置：垂直居中在左栏顶行（`workspace::TOP_ROW_HEIGHT` = 44，灯高约 12）。
+const TRAFFIC_LIGHT_POSITION: Point<Pixels> = point(px(16.), px(16.));
 
 const USAGE: &str = "用法：agenthome-app [--db PATH] [--mock] [--habitat-demo] [--appearance light|dark]\n  --db PATH            索引库路径，默认 ~/AgentHome/index/agenthome.db（不存在时启动后自动建库）\n  --mock               使用内存 mock 数据源\n  --habitat-demo       只开一个栖息地演示窗口\n  --appearance MODE    固定明 / 暗主题，不跟随系统（调试与截图用）";
 
@@ -107,6 +113,10 @@ fn main() {
             let options = WindowOptions {
                 window_bounds: Some(WindowBounds::centered(size(px(1400.), px(860.)), cx)),
                 app_id: Some("agenthome".into()),
+                titlebar: Some(TitlebarOptions {
+                    traffic_light_position: Some(TRAFFIC_LIGHT_POSITION),
+                    ..TitleBar::title_bar_options()
+                }),
                 ..TitleBar::window_options()
             };
             gpui_kit::open_window(options, cx, |window, cx| {

@@ -14,7 +14,7 @@ use super::fmt::{
     AMBER, BLUE, CLAUDE, CODEX, GREEN, LINE, MUTED, day_label, hour_minute, month_day,
     percent_change, provider_color, provider_name,
 };
-use super::model::{DayPoint, trend_days};
+use super::model::{DayPoint, TREND_DAYS};
 use super::{DashboardView, TrendMetric, segmented};
 use crate::format::{now_ms, relative_time, short_cost, short_tokens};
 
@@ -168,8 +168,9 @@ impl DashboardView {
 
     /// 「token 量趋势」卡：按天堆叠柱，自绘 div。
     pub(super) fn render_trend_card(&self, cx: &mut Context<Self>) -> Div {
-        let days = trend_days(self.period);
+        let days = self.trend_days;
         let metric = self.trend_metric;
+        let days_ix = TREND_DAYS.iter().position(|d| *d == days).unwrap_or(0);
         let selected = TrendMetric::ALL
             .iter()
             .position(|m| *m == metric)
@@ -182,17 +183,32 @@ impl DashboardView {
                 "token 量趋势",
                 format!("最近 {days} 天 · {}", metric.subtitle()),
             ))
-            .child(div().ml_auto().child(segmented(
-                "trend-metric",
-                &["token", "成本", "消息"],
-                selected,
-                cx.listener(|this, ix: &usize, _, cx| {
-                    if let Some(metric) = TrendMetric::ALL.get(*ix) {
-                        this.trend_metric = *metric;
-                        cx.notify();
-                    }
-                }),
-            )));
+            .child(
+                h_flex()
+                    .ml_auto()
+                    .gap(px(8.))
+                    .child(segmented(
+                        "trend-days",
+                        &["30 天", "90 天"],
+                        days_ix,
+                        cx.listener(|this, ix: &usize, _, cx| {
+                            if let Some(days) = TREND_DAYS.get(*ix) {
+                                this.set_trend_days(*days, cx);
+                            }
+                        }),
+                    ))
+                    .child(segmented(
+                        "trend-metric",
+                        &["token", "成本", "消息"],
+                        selected,
+                        cx.listener(|this, ix: &usize, _, cx| {
+                            if let Some(metric) = TrendMetric::ALL.get(*ix) {
+                                this.trend_metric = *metric;
+                                cx.notify();
+                            }
+                        }),
+                    )),
+            );
         let panel = card(cx).child(header);
         let Some(overview) = self.overview.as_deref() else {
             return panel.child(skeleton_rows(5));
@@ -405,7 +421,10 @@ impl DashboardView {
     pub(super) fn render_model_card(&self, cx: &mut Context<Self>) -> Div {
         let panel = card(cx).child(card_title(
             "按模型",
-            format!("{}成本", period_label(self.period)),
+            format!(
+                "{}成本 · 跟随累计 token 周期",
+                period_label(self.token_period)
+            ),
         ));
         let Some(overview) = self.overview.as_deref() else {
             return panel.child(skeleton_rows(5));
@@ -429,7 +448,10 @@ impl DashboardView {
 
     /// 「按项目」卡：Top 5，同一项目按来源分段。
     pub(super) fn render_project_card(&self, cx: &mut Context<Self>) -> Div {
-        let panel = card(cx).child(card_title("按项目", "Top 5 · 按住户分段"));
+        let panel = card(cx).child(card_title(
+            "按项目",
+            format!("{} · Top 5 · 按住户分段", period_label(self.token_period)),
+        ));
         let Some(overview) = self.overview.as_deref() else {
             return panel.child(skeleton_rows(5));
         };
