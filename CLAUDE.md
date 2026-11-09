@@ -1,6 +1,6 @@
 # AgentHome · 给接手 agent 的总索引
 
-> 最后更新 2026-11-09（v0.1.5 开源准备）。新会话先读本文件，再按「从哪里开始」挑文档，不必通读全部。
+> 最后更新 2026-11-10（v0.1.6 开源准备）。新会话先读本文件，再按「从哪里开始」挑文档，不必通读全部。
 
 ## 一句话
 
@@ -8,7 +8,7 @@
 
 ## 现状
 
-- **v0.1.5 准备发布**（2026-11-09）：https://github.com/PeterChen1997/agenthome/releases （私有仓库 `PeterChen1997/agenthome`，分支 `main`）。v0.1.4 已公证并装在 `/Applications`。本轮：按字节偏移增量入库（大会话追加一行 0.5 ms、改 11 行）、⌘K 全局搜索（高亮 + 跳到消息）、Gemini 接入（Gemini CLI 全量、Antigravity 只取摘要）、成本口径修正（LiteLLM 2026-11-09 价表 + 长上下文分档 + Claude 跨会话按消息 id 去重 + Codex 归档目录，与 ccusage 偏差约 1%，见 `docs/12-成本口径核对.md`）、Claude 额度只走官方 /usage、浅色主题可读性、开源基础文件（LICENSE、贡献指南、CI、中英 README、`site/` 落地页）。
+- **v0.1.6 已发布并公证**（2026-11-10；v0.1.5 同日发布，0.1.6 只多了 worktree 会话归属修正）：https://github.com/PeterChen1997/agenthome/releases （私有仓库 `PeterChen1997/agenthome`，分支 `main`）。`/Applications` 里装的仍是 v0.1.4（用户未要求升级）。落地页源码 `site/`，私有预览 https://claude.ai/artifact/N54TGv6kPy71Kkdo4LjhgG ；GitHub Pages 工作流 `.github/workflows/pages.yml` 只手动触发，未启用。本轮：按字节偏移增量入库（大会话追加一行 0.5 ms、改 11 行）、⌘K 全局搜索（高亮 + 跳到消息）、Gemini 接入（Gemini CLI 全量、Antigravity 只取摘要）、成本口径修正（LiteLLM 2026-11-09 价表 + 长上下文分档 + Claude 跨会话按消息 id 去重 + Codex 归档目录，与 ccusage 偏差约 1%，见 `docs/12-成本口径核对.md`）、Claude 额度只走官方 /usage、浅色主题可读性、开源基础文件（LICENSE、贡献指南、CI、中英 README、`site/` 落地页）。
 - **开源前待用户拍板**：git 历史 18 个提交的作者邮箱是私人邮箱（改写历史或用孤立根提交另开公开仓库）；仓库可见性；是否启用 GitHub Pages；设计稿 `docs/design/` 里有真实项目名需替换。其余审计项（发版脚本里的签名身份、许可文件随包、内部文档）已处理。
 - 已实现：Claude Code 与 Codex 会话全量入库（本机约 2,800 会话 / 35 万条消息）；**实时同步**（app 启动即扫描、库不存在自动建库，notify / FSEvents 监听来源目录、防抖 2 秒只扫变化的来源，每小时兜底全量，标题栏显示「正在入库 x/y」/「监听中 · N 个来源 · X 同步」；新数据入库后仪表盘与归档静默刷新，打开的会话追加新消息）；仪表盘（住户额度、累计 token、到期与重置、30/90 天趋势、今天、按模型 / 项目、归档健康）；归档（按日分组列表、按父会话 id 折叠子代理、会话级成本、轮次 + Trace 折叠行的会话详情、打开即停在最新一条、中文全文搜索）；**设置页基础版**（来源与同步状态 + 立即扫描、Claude statusline 一键安装 / 卸载、归档位置与索引体积、外观跟随系统 / 浅色 / 深色并持久化、合规说明、定价表版本）；**Claude 订阅额度**（后台每 15 分钟在伪终端跑官方 `claude` 的 `/usage` 读屏，桌面版用户也有数据；套餐名读自 `~/.claude.json` 的 organizationType；与终端 statusline 两路合并）；**raw 层原件归档**（每个会话 jsonl 入库前先逐字节归档到 `~/AgentHome/raw/<provider>/<machineId>/<相对路径>/`，zstd 压缩、变长按字节段追加、被改写另存新版本、`manifest.json` 记 sha256 与来源；本机 2,603 个原件 9.8 GB → 占用 3.6 GB，首次 55 秒，之后每次扫描 0.5 秒）；会动的像素栖息地；左侧固定导航；CLI（含 `agenthome statusline status|install|uninstall`）。
 - 质量基线：`cargo fmt --check` 干净、`cargo clippy --workspace --all-targets -- -D warnings` 零警告、`cargo test --workspace` 约 130 个全绿（另 3 个 `#[ignore]` 真实数据基准）。索引库 `SCHEMA_VERSION` = 4，**不要升**；老数据修正用 `store.rs` 里带 `meta` 标记的一次性迁移。离屏截图：`--features capture`（锁屏可用，见 `docs/09` §5）。

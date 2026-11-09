@@ -2,7 +2,7 @@
 
 English | [简体中文](features.zh-CN.md)
 
-A page-by-page tour of AgentHome 0.1.5. The app has one window with a fixed left sidebar and three pages: **Dashboard**, **Archive** and **Settings**. ⌘K search is available everywhere.
+A page-by-page tour of AgentHome 0.1.6. The app has one window with a fixed left sidebar and three pages: **Dashboard**, **Archive** and **Settings**. ⌘K search is available everywhere.
 
 The interface is currently Simplified Chinese only; this document gives the English meaning of each label. All screenshots use built-in demo data (`--mock`).
 
