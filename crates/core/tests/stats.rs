@@ -7,8 +7,14 @@ use agenthome_core::model::{
 };
 use agenthome_core::providers::{Discovery, Parsed, SourceProvider};
 
+/// 测试数据的「现在」。夹具把消息放在「现在」之前一两分钟；刚过零点时那就是昨天，
+/// 「今天」的断言会随机失败。所以至少取本地今天 00:05，跨零点也稳定。
 fn now_ms() -> i64 {
-    chrono::Utc::now().timestamp_millis()
+    let real = chrono::Utc::now().timestamp_millis();
+    let today_start = agenthome_core::model::Period::Today
+        .since_ms()
+        .unwrap_or(real);
+    real.max(today_start + 5 * 60_000)
 }
 
 fn session(id: &str, provider: ProviderId, cwd: &str, ts: i64, recorded: Option<f64>) -> Session {
