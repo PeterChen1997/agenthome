@@ -696,7 +696,10 @@ fn worktree_sessions_belong_to_their_repository() {
         project_root("/u/code/beatlock/.claude/worktrees/agent-a27"),
         "/u/code/beatlock"
     );
-    assert_eq!(project_name(Some("/u/code/beatlock/.claude/worktrees/agent-a27")), "beatlock");
+    assert_eq!(
+        project_name(Some("/u/code/beatlock/.claude/worktrees/agent-a27")),
+        "beatlock"
+    );
     assert_eq!(project_name(Some("/u/code/beatlock/")), "beatlock");
     assert_eq!(project_name(None), "");
 }
