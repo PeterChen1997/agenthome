@@ -29,7 +29,7 @@ else
 fi
 APP=dist/AgentHome.app
 ZIP="dist/AgentHome-${VERSION}-macos-arm64.zip"
-ICON_SRC=docs/design/assets/processed/app-icon.png
+ICON_SRC=docs/design/logo/app-icon.png   # 1024，已按 macOS 图标网格留边、圆角外透明（logo 选定 D，2026-11-09）
 
 echo "== 1/5 release 构建"
 cargo build --release -p agenthome-app -p agenthome-cli

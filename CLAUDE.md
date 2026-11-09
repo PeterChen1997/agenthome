@@ -114,7 +114,7 @@ cargo fmt --all --check && cargo clippy --workspace --all-targets && cargo test 
 4. core 自带 CLI；TUI 以后再说。
 5. 首次启动默认归档模式。
 6. 外部 Provider 协议：自定义最小协议，只借 ACP / MCP 的 JSON-RPC over stdio 传输层。
-7. 视觉：「像素栖息地」暗色为主；吉祥物配色对齐各家图标；Notion 式两栏、无标题栏，搜索与导航在左栏栖息地下方；栖息地全应用只画一份（左栏）。
+7. 视觉：「像素栖息地」暗色为主；logo 为「三住户同屋檐」（`docs/design/logo/`，2026-11-09 选定）；吉祥物配色对齐各家图标；Notion 式两栏、无标题栏，搜索与导航在左栏栖息地下方；栖息地全应用只画一份（左栏）。
 8. 发版：不移动已发布的 tag，有问题升补丁号重发；包必须公证。
 
 ## 下一步
