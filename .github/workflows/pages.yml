@@ -1,0 +1,35 @@
+# 把 site/ 落地页部署到 GitHub Pages，只能手动触发。
+#
+# 启用方法：仓库公开（或账户套餐支持私有仓库 Pages）之后，
+# 到 Settings → Pages → Build and deployment → Source 选「GitHub Actions」，
+# 再到 Actions → Deploy site → Run workflow 手动运行。
+# 未启用 Pages 时运行会在 deploy 步骤失败，这是预期行为。
+
+name: Deploy site
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/configure-pages@v6
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: site
+      - id: deployment
+        uses: actions/deploy-pages@v5

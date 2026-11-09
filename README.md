@@ -12,7 +12,7 @@ Native macOS app written in Rust with [GPUI Kit](https://github.com/longbridge/g
 
 ## Why
 
-- **Agents delete your history.** Claude Code removes session transcripts after 30 days by default, and Gemini CLI has a similar retention policy. The conversation where you solved a hard problem three months ago is simply gone.
+- **Agents delete your history.** Claude Code removes session transcripts after 30 days by default. The conversation where you solved a hard problem three months ago is simply gone.
 - **The token bill is hard to read.** Long sessions re-read the whole context from cache on every request, so raw token counts look enormous and do not map to cost in an obvious way. Prices differ by model, by cache tier and by context length.
 - **Quota is scattered.** Claude's 5-hour and 7-day windows, Codex's 5-hour and weekly windows, Codex credits and their expiry all live in different places.
 

@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AgentHome</title>
+<meta name="description" content="AgentHome is a home for your AI coding agents on macOS: a local, searchable archive of every Claude Code, Codex and Gemini CLI session, plus tokens, cost and remaining quota on one dashboard.">
+<meta name="color-scheme" content="dark light">
+<meta name="theme-color" content="#0F1423" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#F6F7FB" media="(prefers-color-scheme: light)">
+<meta property="og:type" content="website">
+<meta property="og:title" content="AgentHome">
+<meta property="og:description" content="A home for your AI coding agents: a local, searchable archive of every Claude Code, Codex and Gemini CLI session, plus tokens, cost and remaining quota on one dashboard. Free and open source for macOS.">
+<meta property="og:image" content="assets/img/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" type="image/png" href="assets/img/favicon-64.png">
+<link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png">
+<link rel="preload" href="assets/fonts/PixelifySans-SemiBold.ttf" as="font" type="font/ttf" crossorigin>
+<link rel="preload" href="assets/fonts/VT323-Regular.ttf" as="font" type="font/ttf" crossorigin>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<a class="skip" href="#main" data-i18n="skip">Skip to content</a>
+
+<header class="top">
+  <div class="wrap top-row">
+    <a class="brand" href="#top" aria-label="AgentHome">
+      <img src="assets/img/app-icon-256.png" width="32" height="32" alt="">
+      <span>AgentHome</span>
+    </a>
+    <nav class="top-nav" aria-label="Sections">
+      <a href="#tour" data-i18n="nav.tour">Tour</a>
+      <a href="#features" data-i18n="nav.features">Features</a>
+      <a href="#privacy" data-i18n="nav.privacy">Privacy</a>
+      <a href="#install" data-i18n="nav.install">Install</a>
+    </nav>
+    <div class="top-actions">
+      <a class="gh-link" href="https://github.com/PeterChen1997/agenthome">GitHub</a>
+      <div class="seg lang" role="group" aria-label="Language">
+        <button type="button" data-lang="en" aria-pressed="true">EN</button>
+        <button type="button" data-lang="zh" aria-pressed="false">中文</button>
+      </div>
+    </div>
+  </div>
+</header>
+
+<main id="main">
+  <section class="hero" id="top">
+    <div class="wrap hero-grid">
+      <div class="hero-copy">
+        <p class="eyebrow"><span class="pip" aria-hidden="true"></span><span data-i18n="hero.eyebrow">v0.1.5 · open source · macOS</span></p>
+        <h1 data-i18n="hero.title">A home for your AI coding agents.</h1>
+        <p class="lede" data-i18n="hero.lede">AgentHome copies every Claude Code, Codex and Gemini CLI session into a local archive you can keep and search for good, and puts tokens, cost and remaining quota on one dashboard. Up in the cabin, three residents change with what your agents are really doing.</p>
+        <div class="cta">
+          <a class="btn btn-primary" href="https://github.com/PeterChen1997/agenthome/releases/latest">
+            <svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M7 1h2v8h2v-2h2v2h-2v2H9v2H7v-2H5V9H3V7h2v2h2z M2 13h12v2H2z"/></svg>
+            <span data-i18n="hero.download">Download for macOS</span>
+          </a>
+          <a class="btn btn-ghost" href="https://github.com/PeterChen1997/agenthome">
+            <svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0a8 8 0 0 0-2.53 15.59c.4.07.55-.17.55-.38v-1.34c-2.23.48-2.7-1.07-2.7-1.07-.36-.92-.89-1.17-.89-1.17-.73-.5.06-.49.06-.49.8.06 1.23.83 1.23.83.72 1.22 1.88.87 2.34.67.07-.52.28-.87.5-1.07-1.78-.2-3.65-.89-3.65-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 0 1 4 0c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.28.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48v2.2c0 .21.15.46.55.38A8 8 0 0 0 8 0z"/></svg>
+            <span data-i18n="hero.source">View source on GitHub</span>
+          </a>
+        </div>
+        <ul class="facts">
+          <li data-i18n="hero.f1">macOS 15+ · Apple Silicon</li>
+          <li data-i18n="hero.f2">Signed &amp; notarized by Apple</li>
+          <li>Apache-2.0</li>
+          <li data-i18n="hero.f3">App UI in Simplified Chinese for now</li>
+        </ul>
+      </div>
+
+      <figure class="habitat" aria-labelledby="habitat-cap">
+        <div class="scene" data-tod="night">
+          <img class="scene-bg" data-bg="night" src="assets/habitat/bg-night.webp" width="1400" height="700" alt="">
+          <img class="scene-bg" data-bg="evening" src="assets/habitat/bg-evening.webp" width="1400" height="700" alt="" loading="lazy">
+          <img class="scene-bg" data-bg="day" src="assets/habitat/bg-day.webp" width="1400" height="700" alt="" loading="lazy">
+          <div class="slot" data-who="claude" data-state="working" style="--x:32.5%">
+            <img src="assets/habitat/claude-working.webp" width="240" height="320" alt="Claude, the fox">
+          </div>
+          <div class="slot" data-who="codex" data-state="thinking" style="--x:52%">
+            <img src="assets/habitat/codex-thinking.webp" width="284" height="320" alt="Codex, the penguin">
+          </div>
+          <div class="slot" data-who="gemini" data-state="sleeping" style="--x:72%">
+            <img src="assets/habitat/gemini-sleeping.webp" width="249" height="320" alt="Gemini, the cat">
+          </div>
+        </div>
+        <figcaption class="residents" id="habitat-cap">
+          <ul>
+            <li data-who="claude"><span class="dot"></span><b>Claude</b> <span class="state" data-state-label>working</span></li>
+            <li data-who="codex"><span class="dot"></span><b>Codex</b> <span class="state" data-state-label>thinking</span></li>
+            <li data-who="gemini"><span class="dot"></span><b>Gemini</b> <span class="state" data-state-label>sleeping</span></li>
+          </ul>
+          <div class="seg tod" role="group" aria-label="Time of day">
+            <button type="button" data-tod="day" aria-pressed="false" data-i18n="tod.day">Day</button>
+            <button type="button" data-tod="evening" aria-pressed="false" data-i18n="tod.evening">Dusk</button>
+            <button type="button" data-tod="night" aria-pressed="true" data-i18n="tod.night">Night</button>
+          </div>
+        </figcaption>
+        <p class="habitat-note" data-i18n="hero.note">Demo loop. In the app, states follow live data: working when a session is writing, tired when a quota window drops below 20%, asleep when idle or out of quota.</p>
+      </figure>
+    </div>
+  </section>
+
+  <section class="tour" id="tour" aria-labelledby="tour-title">
+    <div class="wrap">
+      <div class="sec-head">
+        <p class="label" data-i18n="tour.label">A look inside</p>
+        <h2 id="tour-title" data-i18n="tour.title">Everything your agents did, in one window.</h2>
+      </div>
+      <div class="tour-bar">
+        <div class="seg tabs" role="group" aria-label="Screenshot">
+          <button type="button" data-shot="dashboard" aria-pressed="true" data-i18n="tour.t1">Dashboard</button>
+          <button type="button" data-shot="session" aria-pressed="false" data-i18n="tour.t2">Session</button>
+          <button type="button" data-shot="search" aria-pressed="false" data-i18n="tour.t3">⌘K Search</button>
+        </div>
+        <div class="seg shot-theme" role="group" aria-label="Screenshot theme">
+          <button type="button" data-mode="dark" aria-pressed="true" data-i18n="tour.dark">Dark</button>
+          <button type="button" data-mode="light" aria-pressed="false" data-i18n="tour.light">Light</button>
+        </div>
+      </div>
+      <figure class="shot">
+        <div class="shot-frame">
+          <img id="shot-img" src="assets/shots/dashboard-dark.webp" width="1400" height="860" alt="AgentHome dashboard: quota per resident, cumulative tokens, estimated cost and reset countdowns" loading="lazy">
+        </div>
+        <figcaption>
+          <p class="cap" data-cap="dashboard" data-i18n="tour.c1">Quota for each resident, cumulative tokens split into input, output, cache read and cache write, estimated cost, reset countdowns and 30 / 90-day trends.</p>
+          <p class="cap" data-cap="session" hidden data-i18n="tour.c2">Sessions grouped by day and folded by sub-agent. Inside, every turn is laid out with tool calls collapsed into trace rows, token counts and per-session cost.</p>
+          <p class="cap" data-cap="search" hidden data-i18n="tour.c3">Press ⌘K anywhere: full-text search across every session, matches highlighted, Enter jumps to the original message.</p>
+          <p class="demo-note" data-i18n="tour.demo">Screenshots use demo data.</p>
+        </figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section class="features" id="features" aria-labelledby="features-title">
+    <div class="wrap">
+      <div class="sec-head">
+        <p class="label" data-i18n="feat.label">What it does</p>
+        <h2 id="features-title" data-i18n="feat.title">Four things, done carefully.</h2>
+      </div>
+      <div class="feat-grid">
+        <article class="feat">
+          <span class="num" aria-hidden="true">01</span>
+          <h3 data-i18n="feat.1.t">A local-first archive</h3>
+          <p data-i18n="feat.1.p">Sessions from Claude Code, Codex and Gemini CLI are copied, never moved or symlinked, into <code>~/AgentHome</code>. When an agent clears its own logs after 30 days, your history is still here. Sync is live and incremental: new messages show up seconds after they are written.</p>
+          <p class="fact">~/.claude · ~/.codex · ~/.gemini → ~/AgentHome</p>
+        </article>
+        <article class="feat">
+          <span class="num" aria-hidden="true">02</span>
+          <h3 data-i18n="feat.2.t">Costs that add up</h3>
+          <p data-i18n="feat.2.p">Token usage is priced with the LiteLLM price table, with cache reads and cache writes billed at their own rates. Checked against ccusage, totals land within about 1%. Break it down by day, model, project or session.</p>
+          <p class="fact" data-i18n="feat.2.f">≈1% vs ccusage</p>
+        </article>
+        <article class="feat">
+          <span class="num" aria-hidden="true">03</span>
+          <h3 data-i18n="feat.3.t">Quota at a glance</h3>
+          <p data-i18n="feat.3.p">Remaining subscription quota and reset countdowns sit on one dashboard. Claude quota comes from the official <code>claude /usage</code>; Codex from its own rollout snapshots. Run low and the resident in the cabin gets tired.</p>
+          <p class="fact">claude /usage · codex rollout</p>
+        </article>
+        <article class="feat">
+          <span class="num" aria-hidden="true">04</span>
+          <h3 data-i18n="feat.4.t">Find any line with ⌘K</h3>
+          <p data-i18n="feat.4.p">Global full-text search across every session, Chinese included. Matches are highlighted in context, and picking one jumps straight to the original message in its session.</p>
+          <p class="fact"><kbd>⌘</kbd><kbd>K</kbd></p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <section class="privacy" id="privacy" aria-labelledby="privacy-title">
+    <div class="wrap privacy-grid">
+      <div class="sec-head">
+        <p class="label" data-i18n="priv.label">Privacy &amp; compliance</p>
+        <h2 id="privacy-title" data-i18n="priv.title">Your sessions stay on your Mac.</h2>
+        <p class="sec-lede" data-i18n="priv.lede">AgentHome is a local app with no account and no server. It only reads what your agents already wrote to disk.</p>
+      </div>
+      <dl class="rules">
+        <div><dt data-i18n="priv.1.t">Local-first</dt><dd data-i18n="priv.1.p">The archive, index and settings live under <code>~/AgentHome</code> on your machine.</dd></div>
+        <div><dt data-i18n="priv.2.t">Read-only sources</dt><dd data-i18n="priv.2.p">Agent directories are read and copied. AgentHome never edits, moves or symlinks them.</dd></div>
+        <div><dt data-i18n="priv.3.t">No credentials</dt><dd data-i18n="priv.3.p">It does not read tokens, API keys or login files. Claude quota is read by running the official <code>claude /usage</code>.</dd></div>
+        <div><dt data-i18n="priv.4.t">No telemetry</dt><dd data-i18n="priv.4.p">No analytics, no usage reporting. The source is open for you to check.</dd></div>
+      </dl>
+    </div>
+  </section>
+
+  <section class="install" id="install" aria-labelledby="install-title">
+    <div class="wrap">
+      <div class="sec-head">
+        <p class="label" data-i18n="inst.label">Install</p>
+        <h2 id="install-title" data-i18n="inst.title">Three steps, about a minute.</h2>
+      </div>
+      <ol class="steps">
+        <li>
+          <span class="num" aria-hidden="true">1</span>
+          <h3 data-i18n="inst.1.t">Download</h3>
+          <p data-i18n="inst.1.p">Get <code>AgentHome-0.1.5-macos-arm64.zip</code> from the latest GitHub release.</p>
+        </li>
+        <li>
+          <span class="num" aria-hidden="true">2</span>
+          <h3 data-i18n="inst.2.t">Move to Applications</h3>
+          <p data-i18n="inst.2.p">Unzip and drag <code>AgentHome.app</code> into Applications. It is signed with a Developer ID and notarized by Apple.</p>
+        </li>
+        <li>
+          <span class="num" aria-hidden="true">3</span>
+          <h3 data-i18n="inst.3.t">Open it</h3>
+          <p data-i18n="inst.3.p">On first launch it builds your archive from the sessions already on disk, then keeps watching for new ones.</p>
+        </li>
+      </ol>
+      <div class="install-cta">
+        <a class="btn btn-primary" href="https://github.com/PeterChen1997/agenthome/releases/latest"><span data-i18n="inst.cta">Download v0.1.5</span></a>
+        <p class="req" data-i18n="inst.req">Requires macOS 15 or later on Apple Silicon. The app interface is currently in Simplified Chinese.</p>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer class="foot">
+  <div class="wrap foot-row">
+    <div class="foot-brand">
+      <img src="assets/img/app-icon-256.png" width="40" height="40" alt="" loading="lazy">
+      <div>
+        <p class="foot-name">AgentHome</p>
+        <p data-i18n="foot.by">Made by Peter Chen</p>
+      </div>
+    </div>
+    <ul class="foot-links">
+      <li><a href="https://github.com/PeterChen1997/agenthome" data-i18n="foot.src">Source code</a></li>
+      <li><a href="https://github.com/PeterChen1997/agenthome/releases" data-i18n="foot.rel">Releases</a></li>
+      <li><a href="https://github.com/PeterChen1997/agenthome/blob/main/LICENSE" data-i18n="foot.lic">Apache-2.0 license</a></li>
+    </ul>
+    <p class="foot-fine" data-i18n="foot.fine">Fonts: <a href="assets/fonts/OFL-VT323.txt">VT323</a> and <a href="assets/fonts/OFL-PixelifySans.txt">Pixelify Sans</a>, SIL Open Font License 1.1. Not affiliated with Anthropic, OpenAI or Google.</p>
+  </div>
+</footer>
+
+<script src="assets/main.js"></script>
+</body>
+</html>
