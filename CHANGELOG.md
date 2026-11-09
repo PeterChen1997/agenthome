@@ -4,6 +4,12 @@ All notable changes to AgentHome are listed here. Versions follow [Semantic Vers
 
 Downloads are on the [releases page](https://github.com/PeterChen1997/agenthome/releases). Release builds are for macOS 15+ on Apple Silicon.
 
+## 0.1.6 - 2026-11-09
+
+### Fixed
+
+- Sessions that ran in a git worktree inside a repository (`<repo>/.claude/worktrees/agent-…`, also `.codex/worktrees/` and `.worktrees/`) now belong to that repository. Before, each worktree showed up as its own `agent-…` project, which added about 180 entries to the project list. Filtering by a project includes its worktrees. Existing indexes are corrected once on upgrade, without a rebuild.
+
 ## 0.1.5 - 2026-11-09
 
 ### Added

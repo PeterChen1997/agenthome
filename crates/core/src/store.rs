@@ -141,6 +141,7 @@ impl Store {
         migrate_incremental(&conn)?;
         reprice_if_needed(&conn)?;
         fix_injected_codex_titles(&conn)?;
+        fix_worktree_project_names(&conn)?;
         Ok(Store { conn })
     }
 
@@ -293,8 +294,14 @@ impl Store {
             args.push(Box::new(p.as_str().to_string()));
         }
         if let Some(cwd) = &q.cwd {
-            sql.push_str(" AND cwd = ?");
+            // 按项目筛选时把它的 worktree 里的会话一起算上（与 `projects()` 的合并口径一致）。
+            sql.push_str(" AND (cwd = ?");
             args.push(Box::new(cwd.clone()));
+            for marker in WORKTREE_MARKERS {
+                sql.push_str(" OR instr(cwd, ?) = 1");
+                args.push(Box::new(format!("{cwd}{}", marker.trim_end_matches('/'))));
+            }
+            sql.push(')');
         }
         sql.push_str(" ORDER BY updated_at_ms DESC");
         if q.limit > 0 {
@@ -408,12 +415,22 @@ impl Store {
 
     /// (project_name, cwd, 会话数)，按会话数倒序。cwd 为空的归为 "" 一组。
     pub fn projects(&self) -> Result<Vec<(String, String, u64)>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT project_name, COALESCE(cwd, ''), COUNT(*) AS n FROM sessions
-             GROUP BY cwd ORDER BY n DESC, project_name",
-        )?;
-        let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, get_u64(r, 2))))?;
-        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+        let mut stmt = self
+            .conn
+            .prepare("SELECT COALESCE(cwd, ''), COUNT(*) FROM sessions GROUP BY cwd")?;
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, get_u64(r, 1))))?;
+        // worktree 里的会话并进外层仓库，一个仓库只出现一次。
+        let mut merged: std::collections::BTreeMap<String, u64> = std::collections::BTreeMap::new();
+        for row in rows {
+            let (cwd, n) = row?;
+            *merged.entry(project_root(&cwd).to_string()).or_default() += n;
+        }
+        let mut out: Vec<(String, String, u64)> = merged
+            .into_iter()
+            .map(|(root, n)| (project_name(Some(&root)), root, n))
+            .collect();
+        out.sort_by(|a, b| b.2.cmp(&a.2).then_with(|| a.0.cmp(&b.0)));
+        Ok(out)
     }
 
     /// 最近 `days` 天（本地时区）按 天 × provider × 模型 聚合 assistant 用量。
@@ -1253,6 +1270,49 @@ fn pricing_stamp() -> String {
 const PRICING_KEY: &str = "pricing_stamp";
 
 /// 成本是入库时按当时的定价表算好存下的（`messages.cost_usd`、`sessions.estimated_cost_usd`）。
+const WORKTREE_PROJECTS_KEY: &str = "worktree_project_names_v1";
+
+/// 老库里 worktree 会话的 `project_name` 是 `agent-xxx`；按 [`project_name`] 的新口径一次性重写。
+fn fix_worktree_project_names(conn: &Connection) -> Result<()> {
+    let done: Option<String> = conn
+        .query_row(
+            "SELECT value FROM meta WHERE key = ?1",
+            [WORKTREE_PROJECTS_KEY],
+            |r| r.get(0),
+        )
+        .optional()?;
+    if done.is_some() {
+        return Ok(());
+    }
+    conn.execute_batch("PRAGMA busy_timeout = 120000; BEGIN IMMEDIATE")?;
+    let result = (|| -> Result<()> {
+        let rows: Vec<(String, String)> = {
+            let mut stmt = conn.prepare(
+                "SELECT id, cwd FROM sessions WHERE cwd LIKE '%/.claude/worktrees/%'
+                 OR cwd LIKE '%/.codex/worktrees/%' OR cwd LIKE '%/.worktrees/%'",
+            )?;
+            stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+                .collect::<rusqlite::Result<_>>()?
+        };
+        let mut update = conn.prepare("UPDATE sessions SET project_name = ?2 WHERE id = ?1")?;
+        for (id, cwd) in rows {
+            update.execute(rusqlite::params![id, project_name(Some(&cwd))])?;
+        }
+        conn.execute(
+            "INSERT OR REPLACE INTO meta (key, value) VALUES (?1, '1')",
+            [WORKTREE_PROJECTS_KEY],
+        )?;
+        Ok(())
+    })();
+    match result {
+        Ok(()) => conn.execute_batch("COMMIT").map_err(Into::into),
+        Err(e) => {
+            let _ = conn.execute_batch("ROLLBACK");
+            Err(e)
+        }
+    }
+}
+
 const CODEX_TITLES_KEY: &str = "codex_injected_titles_v1";
 
 /// 早期解析把 Codex 注入的 AGENTS.md 当成用户输入，标题成了「# AGENTS.md instructions…」。
@@ -1432,9 +1492,24 @@ pub(crate) fn reprice_tx(conn: &Connection) -> Result<usize> {
     Ok(updates.len())
 }
 
-/// cwd 最后一段；无 cwd 时为空串。
+/// agent 为子任务开的 git worktree 放在仓库里的这些目录下；会话归属到外层仓库。
+const WORKTREE_MARKERS: [&str; 3] = ["/.claude/worktrees/", "/.codex/worktrees/", "/.worktrees/"];
+
+/// 会话所属的项目根目录：worktree 里的会话（`<仓库>/.claude/worktrees/agent-xxx`）归到 `<仓库>`，
+/// 否则就是 cwd 本身。不这样做，左栏项目列表会多出上百个 `agent-…` 项目。
+pub fn project_root(cwd: &str) -> &str {
+    let cwd = cwd.trim_end_matches('/');
+    WORKTREE_MARKERS
+        .iter()
+        .filter_map(|marker| cwd.find(marker))
+        .min()
+        .map_or(cwd, |i| &cwd[..i])
+}
+
+/// 项目根目录的最后一段；无 cwd 时为空串。
 pub fn project_name(cwd: Option<&str>) -> String {
-    cwd.and_then(|c| c.trim_end_matches('/').rsplit('/').next())
+    cwd.map(project_root)
+        .and_then(|root| root.rsplit('/').next())
         .unwrap_or("")
         .to_string()
 }

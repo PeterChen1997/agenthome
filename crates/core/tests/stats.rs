@@ -686,3 +686,17 @@ fn real_db_cost_totals() {
     );
     report(&store, "补入归档后");
 }
+
+/// worktree 里跑的子代理（`<仓库>/.claude/worktrees/agent-xxx`）必须归到外层仓库，
+/// 否则左栏项目列表会多出上百个 `agent-…` 项目，按项目筛选也漏掉它们。
+#[test]
+fn worktree_sessions_belong_to_their_repository() {
+    use agenthome_core::store::{project_name, project_root};
+    assert_eq!(
+        project_root("/u/code/beatlock/.claude/worktrees/agent-a27"),
+        "/u/code/beatlock"
+    );
+    assert_eq!(project_name(Some("/u/code/beatlock/.claude/worktrees/agent-a27")), "beatlock");
+    assert_eq!(project_name(Some("/u/code/beatlock/")), "beatlock");
+    assert_eq!(project_name(None), "");
+}
