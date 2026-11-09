@@ -212,6 +212,25 @@ fn store_roundtrip_and_chinese_fts() {
     );
     store.replace_messages(&sub.session.id, &[]).unwrap();
 
+    // 全文搜索命中带高亮片段：三字以上走 FTS，两字走 LIKE，都要把命中词包在标记里，
+    // 否则界面无法告诉用户「搜到的是哪一句」。
+    use agenthome_core::model::{SEARCH_MARK_END, SEARCH_MARK_START};
+    for q in ["全部通过", "通过"] {
+        let hits = store.search_messages(q, 20).unwrap();
+        assert!(!hits.is_empty(), "{q} 应该命中");
+        let marked = format!("{SEARCH_MARK_START}{q}{SEARCH_MARK_END}");
+        assert!(
+            hits.iter().any(|h| h.snippet.contains(&marked)),
+            "{q} 的片段应高亮命中词：{:?}",
+            hits.iter().map(|h| &h.snippet).collect::<Vec<_>>()
+        );
+        assert!(
+            hits.iter().all(|h| !h.snippet.contains('\n')),
+            "片段要压成一行"
+        );
+    }
+    assert!(store.search_messages("   ", 20).unwrap().is_empty());
+
     // 中文子串搜索（命中正文）
     let hit = store
         .list_sessions(&SessionQuery {

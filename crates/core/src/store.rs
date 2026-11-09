@@ -5,8 +5,8 @@
 
 use crate::model::{
     ActivityKind, ContentBlock, CostBreakdown, CostSource, DailyUsage, Message, Period,
-    ProviderActivity, ProviderHealth, ProviderId, Role, Session, SessionKind, SessionQuery,
-    SessionSummary, SourceInfo, Usage, UsageTotals,
+    ProviderActivity, ProviderHealth, ProviderId, Role, SEARCH_MARK_END, SEARCH_MARK_START,
+    SearchHit, Session, SessionKind, SessionQuery, SessionSummary, SourceInfo, Usage, UsageTotals,
 };
 use crate::providers::SourceProvider;
 use anyhow::{Context, Result, bail};
@@ -218,6 +218,62 @@ impl Store {
         }
         let mut stmt = self.conn.prepare(&sql)?;
         let rows = stmt.query_map(rusqlite::params_from_iter(args.iter()), row_to_summary)?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// 全文搜索消息正文与会话标题，按相关度返回至多 `limit` 条命中，每条带高亮片段。
+    /// 三个字以上走 FTS5（trigram）；更短的退回 LIKE，片段在 Rust 里截取。
+    pub fn search_messages(&self, query: &str, limit: usize) -> Result<Vec<SearchHit>> {
+        let text = query.trim();
+        if text.is_empty() || limit == 0 {
+            return Ok(Vec::new());
+        }
+        let select = "SELECT f.session_id, f.message_id, {SNIPPET}, s.title, s.provider,
+                    s.project_name, s.updated_at_ms, m.role, m.timestamp_ms, f.content
+             FROM message_fts f
+             JOIN sessions s ON s.id = f.session_id
+             LEFT JOIN messages m ON m.session_id = f.session_id AND m.id = f.message_id";
+        let fts = text.chars().count() >= 3;
+        let sql = if fts {
+            // snippet(表, 列, 开始标记, 结束标记, 省略号, 最多 token 数)；trigram 下一个 token 约一个字。
+            select.replace(
+                "{SNIPPET}",
+                "snippet(message_fts, 2, char(57344), char(57345), '…', 48)",
+            ) + " WHERE message_fts MATCH ?1 ORDER BY rank LIMIT ?2"
+        } else {
+            select.replace("{SNIPPET}", "NULL")
+                + " WHERE f.content LIKE ?1 ESCAPE '\\' ORDER BY s.updated_at_ms DESC LIMIT ?2"
+        };
+        let pattern = if fts {
+            format!("\"{}\"", text.replace('"', "\"\""))
+        } else {
+            let escaped = text
+                .replace('\\', "\\\\")
+                .replace('%', "\\%")
+                .replace('_', "\\_");
+            format!("%{escaped}%")
+        };
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt.query_map(params![pattern, limit as i64], |r| {
+            let snippet: Option<String> = r.get(2)?;
+            let content: String = r.get(9)?;
+            let title: Option<String> = r.get(3)?;
+            let updated_at_ms: i64 = r.get(6)?;
+            let role: Option<String> = r.get(7)?;
+            let timestamp_ms: Option<i64> = r.get(8)?;
+            Ok(SearchHit {
+                session_id: r.get(0)?,
+                message_id: r.get(1)?,
+                session_title: title.unwrap_or_default(),
+                provider: ProviderId::parse(&r.get::<_, String>(4)?),
+                project_name: r.get(5)?,
+                role: role.as_deref().map(Role::parse),
+                timestamp_ms: timestamp_ms.unwrap_or(updated_at_ms),
+                snippet: snippet
+                    .map(|s| collapse_whitespace(&s))
+                    .unwrap_or_else(|| like_snippet(&content, text)),
+            })
+        })?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
@@ -896,4 +952,44 @@ fn row_to_session(r: &Row) -> rusqlite::Result<Session> {
             compressed: r.get::<_, i64>(30)? != 0,
         },
     })
+}
+
+/// 把换行与连续空白压成单个空格，片段在一行里显示。
+fn collapse_whitespace(s: &str) -> String {
+    s.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// LIKE 路径的片段：找到第一次出现（不区分大小写），前后各取一段并加高亮标记。
+fn like_snippet(content: &str, needle: &str) -> String {
+    const CONTEXT: usize = 24;
+    let chars: Vec<char> = content.chars().collect();
+    let lower: Vec<char> = content.to_lowercase().chars().collect();
+    let target: Vec<char> = needle.to_lowercase().chars().collect();
+    // to_lowercase 可能改变长度（极少数字符）；长度不一致时退化为不区分大小写的近似
+    let pos = if lower.len() == chars.len() {
+        lower
+            .windows(target.len())
+            .position(|w| w == target.as_slice())
+    } else {
+        None
+    };
+    let Some(start) = pos else {
+        return collapse_whitespace(&chars.iter().take(CONTEXT * 2).collect::<String>());
+    };
+    let end = start + target.len();
+    let from = start.saturating_sub(CONTEXT);
+    let to = (end + CONTEXT).min(chars.len());
+    let mut out = String::new();
+    if from > 0 {
+        out.push('…');
+    }
+    out.extend(&chars[from..start]);
+    out.push(SEARCH_MARK_START);
+    out.extend(&chars[start..end]);
+    out.push(SEARCH_MARK_END);
+    out.extend(&chars[end..to]);
+    if to < chars.len() {
+        out.push('…');
+    }
+    collapse_whitespace(&out)
 }

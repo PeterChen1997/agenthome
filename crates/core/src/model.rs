@@ -233,6 +233,25 @@ impl Message {
     }
 }
 
+/// 搜索片段里包住命中文字的标记（Unicode 私用区字符，正文里不会出现）。界面按它们切段高亮。
+pub const SEARCH_MARK_START: char = '\u{E000}';
+pub const SEARCH_MARK_END: char = '\u{E001}';
+
+/// 全文搜索的一条命中。`message_id` 为 None 表示命中的是会话标题。
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SearchHit {
+    pub session_id: String,
+    pub message_id: Option<String>,
+    pub session_title: String,
+    pub provider: ProviderId,
+    pub project_name: String,
+    pub role: Option<Role>,
+    /// 消息时间；标题命中时为会话最后更新时间。
+    pub timestamp_ms: i64,
+    /// 命中处前后各一小段，命中文字用 [`SEARCH_MARK_START`] / [`SEARCH_MARK_END`] 包住，换行压成空格。
+    pub snippet: String,
+}
+
 /// 列表页用的轻量摘要，不带消息体。
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SessionSummary {
