@@ -253,7 +253,7 @@ impl SettingsView {
             detail.push_str(&format!(" · 监听未启用：{note}"));
         }
         let name = provider_name(&p.provider);
-        let root = p.root.display().to_string();
+        let root = crate::format::tilde(&p.root);
         let failure = p.last_failure.clone();
         source_row(&p.provider, name, state, root.into(), detail.into(), cx)
             .when_some(failure, |row, failure| {
@@ -387,10 +387,12 @@ impl SettingsView {
     }
 
     fn render_storage(&self, cx: &mut Context<Self>) -> AnyElement {
-        let data_dir = paths::default_data_dir().display().to_string();
+        let data_dir = crate::format::tilde(&paths::default_data_dir());
         let index = match (&self.index_db, self.disk.index_bytes) {
-            (Some(db), Some(bytes)) => format!("{} · {}", db.display(), human_bytes(bytes)),
-            (Some(db), None) => format!("{} · 计算中", db.display()),
+            (Some(db), Some(bytes)) => {
+                format!("{} · {}", crate::format::tilde(db), human_bytes(bytes))
+            }
+            (Some(db), None) => format!("{} · 计算中", crate::format::tilde(db)),
             (None, _) => "演示数据，无索引库".to_string(),
         };
         let raw = self.sync.read(cx).raw.clone();
@@ -515,7 +517,8 @@ fn read_disk_info(db: Option<&std::path::Path>) -> DiskInfo {
             })
             .sum()
     });
-    let statusline = Some(statusline_setup::status(&StatuslinePaths::defaults()));
+    // 演示数据（没有索引库）不读本机的 Claude 配置，界面只反映演示状态。
+    let statusline = db.map(|_| statusline_setup::status(&StatuslinePaths::defaults()));
     DiskInfo {
         index_bytes,
         statusline,
@@ -571,7 +574,11 @@ fn probe_view(probe: &crate::sync::ClaudeProbe, syncing: bool, now: i64) -> Prob
         (None, Some(at), Some(bin)) => view(
             "正常",
             Tone::Ok,
-            format!("{} 成功读取（{}）", relative_time(at, now), bin.display()),
+            format!(
+                "{} 成功读取（{}）",
+                relative_time(at, now),
+                crate::format::tilde(bin)
+            ),
         ),
         _ => view("等待中", Tone::Muted, "启动后马上运行第一次".into()),
     }
@@ -588,7 +595,7 @@ fn uninstall_summary(report: &statusline_setup::UninstallReport) -> String {
     let backup = report
         .backup_path
         .as_ref()
-        .map(|p| format!("改动前的文件备份在 {}。", p.display()))
+        .map(|p| format!("改动前的文件备份在 {}。", crate::format::tilde(p)))
         .unwrap_or_default();
     format!("已卸载：{restored}{backup}已收集的额度数据保留在 ~/AgentHome/signals。")
 }

@@ -1,47 +1,174 @@
 # AgentHome
 
-本机所有 AI agent 的"家"：把 Claude Code、Codex、Gemini CLI 等散落在各处的对话收进一个长期保存、可搜索、可分析的仓库，并把 OpenAI 与 Claude 的消耗和剩余额度放在同一块仪表盘上。
+English | [简体中文](README.zh-CN.md)
 
-实验性项目，技术栈 Rust + GPUI Kit，目标 macOS / Windows / Linux。
+A local home for your AI coding agents. AgentHome keeps a permanent, searchable archive of your Claude Code, Codex and Gemini sessions, and puts token usage, estimated cost and remaining subscription quota on one dashboard.
 
-## 当前状态
+Native macOS app written in Rust with [GPUI Kit](https://github.com/longbridge/gpui-kit). Everything stays on your machine.
 
-v0.1.2 已发布并公证（[Releases](https://github.com/PeterChen1997/agenthome/releases)）：Claude Code 与 Codex 会话全量入库，仪表盘（额度 / 成本 / 趋势）、归档、会动的像素栖息地、左侧固定导航均已实现。接手开发先读 [CLAUDE.md](CLAUDE.md)，集成详情见 [docs/07-P1-集成记录.md](docs/07-P1-集成记录.md)。
+![Dashboard (dark)](docs/screenshots/dashboard-dark.png)
+
+> The user interface is currently **Simplified Chinese only**. An English UI is on the roadmap. All screenshots use built-in demo data.
+
+## Why
+
+- **Agents delete your history.** Claude Code removes session transcripts after 30 days by default, and Gemini CLI has a similar retention policy. The conversation where you solved a hard problem three months ago is simply gone.
+- **The token bill is hard to read.** Long sessions re-read the whole context from cache on every request, so raw token counts look enormous and do not map to cost in an obvious way. Prices differ by model, by cache tier and by context length.
+- **Quota is scattered.** Claude's 5-hour and 7-day windows, Codex's 5-hour and weekly windows, Codex credits and their expiry all live in different places.
+
+AgentHome copies every transcript into an archive you own, indexes it for full-text search, and computes usage and cost from the transcripts themselves.
+
+## Features
+
+- **Archive that outlives agent cleanup.** Each transcript is copied byte-for-byte (zstd-compressed) into `~/AgentHome/raw/` before it is indexed. When the agent deletes its own file, your copy remains.
+- **Three sources.** Claude Code, Codex (including archived sessions), and Gemini CLI. For Antigravity, only titles, times and workspaces are indexed; message bodies are encrypted and cannot be read.
+- **Real-time sync.** File-system events trigger incremental ingestion by byte offset, so appending a line to a large session costs about half a millisecond. A full scan runs hourly as a safety net.
+- **Dashboard.** Quota for each agent, cumulative tokens (input / output / cache read / cache write), estimated cost, 30/90-day trends, today's numbers, breakdown by model and by project, upcoming resets and expirations, archive health.
+- **Archive browser.** Sessions grouped by day, sub-agents folded under their parent, per-session cost, a session view with turns, collapsible trace rows for tool calls, Markdown and code highlighting.
+- **⌘K global search.** Full-text search across all messages, including Chinese substrings. Results are grouped by session with highlighted matches; Enter jumps to the exact message.
+- **Session actions.** Reveal the original file in Finder, export to Markdown, or copy the command to resume the session in its original agent.
+- **Pixel habitat.** A small pixel-art house in the sidebar where Claude (fox), Codex (penguin) and Gemini (cat) work, think, celebrate, get tired or sleep based on real activity and quota.
+- **CLI.** The same data from the terminal: `agenthome scan / sessions / show / stats / quota / activity / statusline`.
+
+See [docs/features.md](docs/features.md) for a page-by-page walkthrough.
+
+| Session detail | ⌘K search |
+|---|---|
+| ![Session detail](docs/screenshots/session-dark.png) | ![Search](docs/screenshots/search-dark.png) |
+
+## Install
+
+Requirements: macOS 15 or later on Apple Silicon (arm64).
+
+1. Download `AgentHome-<version>-macos-arm64.zip` from [the latest release](https://github.com/PeterChen1997/agenthome/releases/latest).
+2. Unzip it and move `AgentHome.app` to `/Applications`.
+3. Open it. The app is signed with a Developer ID and notarized by Apple, so it opens without Gatekeeper warnings.
+
+On first launch AgentHome creates `~/AgentHome/` and scans the source directories it finds. Nothing needs to be configured.
+
+The CLI ships inside the app bundle at `AgentHome.app/Contents/MacOS/agenthome`. You can symlink it onto your `PATH`, or build it from source (see below).
+
+## Privacy and compliance
+
+- **Read-only toward agents.** AgentHome reads the agents' session directories and never modifies, moves or symlinks anything inside them. It copies; it does not link.
+- **No credentials.** It does not read API keys, OAuth tokens, credential files or the macOS Keychain.
+- **No private endpoints.** It does not call the Claude OAuth usage endpoint or Codex's private usage endpoint.
+- **No telemetry, no upload.** There is no analytics and no cloud sync. Your session data never leaves your machine.
+- **How quota is read.**
+  - Claude: every 15 minutes AgentHome runs the official `claude` CLI's `/usage` command in a background pseudo-terminal and reads the text it prints. This sends no conversation and consumes no tokens. It requires the `claude` CLI to be installed and logged in.
+  - Codex: read from the `rate_limits` snapshot that Codex itself writes into its rollout files.
+  - Gemini: there is no local quota signal, so only sessions and tokens are shown.
+
+Your archive contains your full conversation history, which may include secrets you once pasted into an agent. Protect `~/AgentHome/` like any other sensitive directory. See [SECURITY.md](SECURITY.md) for details and for reporting vulnerabilities.
+
+## How costs are calculated
+
+Cost is an estimate of the equivalent API price, not what a subscription actually charges you.
+
+- Token usage is read per request from the transcripts and priced with a bundled snapshot of the [LiteLLM](https://github.com/BerriAI/litellm) price table (snapshot of 2026-11-09).
+- Cache reads, 5-minute cache writes and 1-hour cache writes are priced separately. Long-context tiers (for example above 272k tokens for some OpenAI models) apply per request.
+- Claude sessions that were forked or resumed copy earlier messages into a new file; those duplicates are counted once, by message id.
+- Unknown models are marked as unpriced rather than counted as zero.
+- When the bundled price table changes, stored costs are recalculated automatically.
+
+Cross-checked against [ccusage](https://github.com/ryoppippi/ccusage), the totals differ by about 1%. The full audit (written in Chinese) is in [docs/12-成本口径核对.md](docs/12-成本口径核对.md).
+
+## Data layout
+
+Everything AgentHome writes lives under `~/AgentHome/`:
+
+| Path | Contents |
+|---|---|
+| `raw/<provider>/<machine>/...` | Byte-for-byte copies of transcripts, zstd-compressed, with a `manifest.json` (source path, sha256). Append-only: growing files are stored as appended byte ranges, rewritten files as new versions. Antigravity's encrypted `.pb` files are not archived. |
+| `index/agenthome.db` | SQLite index with an FTS5 trigram full-text index. It can be rebuilt from the sources. |
+| `signals/` | Quota snapshots (for example `claude-usage.json`). |
+| `config/app.json` | App preferences (appearance). |
+
+Sources read:
+
+| Agent | Location |
+|---|---|
+| Claude Code | `~/.claude/projects/` |
+| Codex | `~/.codex/sessions/`, `~/.codex/archived_sessions/` |
+| Gemini CLI | `~/.gemini/tmp/<hash>/chats/` (`.json` / `.jsonl`) |
+| Antigravity | `~/.gemini/antigravity/conversation_summaries.db` (titles, times, workspaces only) |
+
+A third layer for your own stars and notes (`user/`) is designed but not yet persisted; stars are currently kept in memory only.
+
+Note: rebuilding the index re-reads the agents' current files. Sessions whose originals the agent has already deleted would then be missing from the index; their bytes remain in `raw/`, but rebuilding the index from `raw/` is not implemented yet.
+
+## CLI
+
+```text
+agenthome scan        [--root DIR] [--codex-root DIR] [--gemini-root DIR] [--db PATH] [--no-raw]
+agenthome sessions    [--db PATH] [--limit N] [--query TEXT] [--project NAME]
+agenthome show        <SESSION-ID-OR-PREFIX> [--db PATH]
+agenthome stats       [--db PATH] [--period today|week|month|all] [--days N]
+agenthome quota       [--codex-root DIR] [--statusline FILE] [--refresh-claude]
+agenthome activity    [--db PATH] [--root DIR] [--codex-root DIR] [--gemini-root DIR]
+agenthome statusline  status|install|uninstall [--settings FILE] [--bin-dir DIR]
+```
+
+- `scan` ingests all detected sources incrementally and archives originals to the raw layer (`--no-raw` skips archiving).
+- `sessions` lists sessions; `--query` runs a full-text search over titles and messages.
+- `show` prints one session's messages.
+- `stats` prints totals, per-model, per-project and daily usage and cost (default: last 30 days).
+- `quota` prints quota snapshots; `--refresh-claude` first runs the official `claude /usage` once (about 10 seconds, no tokens used).
+- `activity` shows recent activity per source.
+- `statusline` manages the legacy Claude statusline wrapper script. It is no longer needed now that quota comes from `/usage`; `uninstall` restores your original `statusLine` in `~/.claude/settings.json` (backed up first).
+
+CLI output is in Chinese.
+
+## Build from source
+
+Requirements: macOS 15+, Xcode Command Line Tools, and rustup. The toolchain (Rust 1.99.1) is pinned in `rust-toolchain.toml` and installed automatically.
 
 ```bash
-cargo run -p agenthome-cli --release -- scan
+git clone https://github.com/PeterChen1997/agenthome.git
+cd agenthome
 ```
+
+Run the app with demo data (no local sessions needed):
+
+```bash
+cargo run -p agenthome-app -- --mock
+```
+
+Build a development `.app` bundle and open it:
 
 ```bash
 cargo build -p agenthome-app && ./script/bundle-dev.sh && open target/AgentHome.app
 ```
 
+Run the CLI:
+
 ```bash
-./script/release-macos.sh 0.1.3
+cargo run -p agenthome-cli --release -- scan
 ```
 
-## 文档
+Checks every change must pass:
 
-| 文件 | 内容 |
-|---|---|
-| [docs/00-调研总览.md](docs/00-调研总览.md) | GPUI / GPUI Kit 是什么、为什么爆火、独特性、风险、我们借什么 |
-| [docs/01-产品与架构方案.md](docs/01-产品与架构方案.md) | 产品定义、存储策略（软链 vs 拷贝）、架构、Provider 设计、UI、技术栈、路线图、已拍板决策 |
-| [docs/02-P0-验证记录.md](docs/02-P0-验证记录.md) | P0 退出标准逐项结果、真实数据暴露的问题、留给 P1 的事 |
-| [docs/03-功能清单.md](docs/03-功能清单.md) | 信息架构与功能分解（含 token 总量、趋势、重置信用、到期提醒） |
-| [docs/04-栖息地状态系统.md](docs/04-栖息地状态系统.md) | 三位住户的状态机、触发条件、动画、素材清单与 gpui 实现思路 |
-| [docs/05-P1-开发计划.md](docs/05-P1-开发计划.md) | P1 分块、接口约定、退出标准 |
-| [docs/06-statusline-安装.md](docs/06-statusline-安装.md) | 让 Claude 额度可见：statusline 包装脚本的安装步骤 |
-| [docs/07-P1-集成记录.md](docs/07-P1-集成记录.md) | P1 集成现状、真实数据数字、版本历史、已知偏差与待办 |
-| [docs/08-构建与发布流程.md](docs/08-构建与发布流程.md) | 发版全流程：工具链、签名、公证、GitHub Release、发布后验证，含踩坑 |
-| [docs/09-开发踩坑记录.md](docs/09-开发踩坑记录.md) | GPUI、数据解析、额度、生图素材、验证工具的坑 |
-| [docs/10-设计落地清单.md](docs/10-设计落地清单.md) | 设计稿与规格逐项对照代码的验收清单、收尾批次 |
-| [docs/11-开发流水线.md](docs/11-开发流水线.md) | 每项功能从认领到发布的关卡与检查项 |
-| [docs/design/](docs/design/README.md) | 设计稿 v2.1「会动的栖息地」源文件、素材、截图、方向头脑风暴，以及实现与设计稿的差异 |
-| [docs/research/01-gpui-framework.md](docs/research/01-gpui-framework.md) | GPUI 框架深度调研原始报告 |
-| [docs/research/02-gpui-kit-ecosystem.md](docs/research/02-gpui-kit-ecosystem.md) | GPUI Kit 组件库与生态应用原始报告 |
-| [docs/research/03-agent-session-formats.md](docs/research/03-agent-session-formats.md) | 17 种 agent 的本地会话存储位置与格式、规范化模型草案 |
-| [docs/research/04-usage-apis.md](docs/research/04-usage-apis.md) | 用量 / 配额数据来源、ToS 风险、竞品实现细节 |
+```bash
+cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace
+```
 
-阅读顺序：先 [CLAUDE.md](CLAUDE.md)（总索引、现状、下一步），再按需看 01、07、08。
+Offscreen screenshots (used for these docs):
 
-GPUI / GPUI Kit 的通用调研（跨项目复用）权威版本在 `~/code_hub/_research/gpui/`，本仓库 `docs/research/` 下的 01、02 是快照副本。
+```bash
+cargo build -p agenthome-app --features capture
+./target/debug/agenthome-app --mock --page dashboard --capture out.png
+```
+
+The first build compiles GPUI from source and takes several minutes. See [CONTRIBUTING.md](CONTRIBUTING.md) for the repository layout, commit conventions and how to add a new source. Design and development notes (mostly in Chinese) are indexed in [docs/README.md](docs/README.md).
+
+## Roadmap
+
+- English user interface
+- Windows and Linux builds
+- More sources (for example OpenCode and other agent CLIs)
+- Menu bar popover with quota and today's numbers
+- Persisted stars and notes; archiving of attachment files such as tool results
+
+## License
+
+[Apache License 2.0](LICENSE). Third-party notices are in [NOTICE](NOTICE) and [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).

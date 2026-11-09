@@ -175,6 +175,18 @@ impl DayGroup {
     }
 }
 
+/// 路径里的家目录换成 `~`：界面更短，截图也不会带出本机用户名。
+pub fn tilde(path: &std::path::Path) -> String {
+    match dirs::home_dir() {
+        Some(home) => match path.strip_prefix(&home) {
+            Ok(rest) if rest.as_os_str().is_empty() => "~".to_string(),
+            Ok(rest) => format!("~/{}", rest.display()),
+            Err(_) => path.display().to_string(),
+        },
+        None => path.display().to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -190,5 +202,14 @@ mod tests {
     fn countdown_formats_hours() {
         assert_eq!(countdown(2 * 3_600_000 + 10 * 60_000 + 33_000), "02:10:33");
         assert_eq!(countdown(-5), "已重置");
+    }
+
+    #[test]
+    fn tilde_hides_home_directory() {
+        // 截图与界面不能带出本机用户名。
+        let home = dirs::home_dir().unwrap();
+        assert_eq!(super::tilde(&home.join("AgentHome")), "~/AgentHome");
+        assert_eq!(super::tilde(&home), "~");
+        assert_eq!(super::tilde(std::path::Path::new("/opt/x")), "/opt/x");
     }
 }

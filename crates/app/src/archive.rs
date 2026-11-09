@@ -717,7 +717,7 @@ impl ArchiveView {
         let session = session.clone();
         let transcript = transcript.clone();
         cx.spawn_in(window, async move |_, cx| {
-            let shown = path.display().to_string();
+            let shown = crate::format::tilde(&path);
             let result = cx
                 .background_spawn(async move {
                     std::fs::write(&path, export_markdown(&session, &transcript))
@@ -968,7 +968,11 @@ impl ArchiveView {
         let usage = session.usage;
         let meta = format!(
             "{} · {} · {} → {}",
-            session.cwd.as_deref().unwrap_or("（无工作目录）"),
+            session
+                .cwd
+                .as_deref()
+                .map(|cwd| crate::format::tilde(std::path::Path::new(cwd)))
+                .unwrap_or_else(|| "（无工作目录）".to_string()),
             provider_display_name(&session.provider),
             short_datetime(session.started_at_ms),
             short_datetime(session.updated_at_ms)
