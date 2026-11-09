@@ -206,11 +206,10 @@ impl RenderOnce for Tile {
             .child(vt(self.value_size).child(self.value))
             .when_some(self.note, |tile, note| {
                 tile.child(
+                    // 窄窗口下来源拆分放不下一行：换行而不是截断，数字不能被省略号吃掉。
                     div()
                         .text_size(px(11.))
-                        .whitespace_nowrap()
-                        .overflow_hidden()
-                        .text_ellipsis()
+                        .line_height(px(15.))
                         .text_color(match self.note_color {
                             Some(c) => rgb(c).into(),
                             None => cx.theme().muted_foreground,

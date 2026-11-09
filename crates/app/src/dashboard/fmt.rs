@@ -5,14 +5,14 @@ use chrono::{Datelike as _, Local, TimeZone as _};
 
 /// 设计令牌（docs/design/canvas.json notes.tokens）。
 pub const CLAUDE: u32 = 0xE8824F;
-pub const CODEX: u32 = 0xD9DEEA;
+/// 原设计稿 #D9DEEA 在浅色主题的白底上几乎看不见，取明暗两套背景上都可辨的灰。
+pub const CODEX: u32 = 0xA3ADC2;
 pub const GEMINI: u32 = 0x8E7CFF;
 pub const AMBER: u32 = 0xF5B556;
 pub const GREEN: u32 = 0x8BD16A;
 pub const RED: u32 = 0xFF6B6B;
 pub const RED_TEXT: u32 = 0xFF8A8A;
 pub const BLUE: u32 = 0x6FA9FF;
-pub const TEXT: u32 = 0xE8ECF5;
 /// 次要文字 #9AA6C0，主题里没有对应语义字段。
 pub const MUTED: u32 = 0x9AA6C0;
 pub const LINE: u32 = 0x26304A;

@@ -11,7 +11,7 @@ use gpui_kit::{
 
 use super::cards::{BarRow, Tag, TagKind, Tile, avatar, card, card_title, legend, skeleton_rows};
 use super::fmt::{
-    AMBER, BLUE, CLAUDE, CODEX, GREEN, LINE, MUTED, day_label, hour_minute, month_day,
+    AMBER, BLUE, CLAUDE, CODEX, GEMINI, GREEN, LINE, MUTED, day_label, hour_minute, month_day,
     percent_change, provider_color, provider_name,
 };
 use super::model::{DayPoint, TREND_DAYS};
@@ -65,9 +65,22 @@ impl DashboardView {
             return panel.child(skeleton_rows(4));
         };
         let all = &tokens.all.usage;
-        let (claude, codex) = (&tokens.claude.usage, &tokens.codex.usage);
-        let split =
-            |a: u64, b: u64| format!("Claude {} · Codex {}", short_tokens(a), short_tokens(b));
+        let (claude, codex, gemini) = (
+            &tokens.claude.usage,
+            &tokens.codex.usage,
+            &tokens.gemini.usage,
+        );
+        // 按住户拆分；Gemini 没有用量时不占位置。
+        let split = |a: u64, b: u64, c: u64| {
+            let mut parts = vec![
+                format!("Claude {}", short_tokens(a)),
+                format!("Codex {}", short_tokens(b)),
+            ];
+            if c > 0 {
+                parts.push(format!("Gemini {}", short_tokens(c)));
+            }
+            parts.join(" · ")
+        };
         let hit_rate = {
             let denominator = all.cache_read_tokens + all.input_tokens;
             if denominator == 0 {
@@ -82,12 +95,18 @@ impl DashboardView {
         panel = panel.child(
             h_flex()
                 .gap(px(10.))
-                .child(
-                    Tile::new("输入", short_tokens(all.input_tokens))
-                        .note(split(claude.input_tokens, codex.input_tokens), Some(GREEN)),
-                )
+                // 来源拆分换行时四个格子仍等高、顶边对齐。
+                .items_stretch()
+                .child(Tile::new("输入", short_tokens(all.input_tokens)).note(
+                    split(claude.input_tokens, codex.input_tokens, gemini.input_tokens),
+                    Some(GREEN),
+                ))
                 .child(Tile::new("输出", short_tokens(all.output_tokens)).note(
-                    split(claude.output_tokens, codex.output_tokens),
+                    split(
+                        claude.output_tokens,
+                        codex.output_tokens,
+                        gemini.output_tokens,
+                    ),
                     Some(GREEN),
                 ))
                 // 缓存读是数字最大、最容易被误读的一项：每轮请求都把整段上下文从缓存重读一遍计数。
@@ -127,12 +146,13 @@ impl DashboardView {
             CostSource::Unknown => "成本未知",
             CostSource::Estimated | CostSource::Mixed => "估算成本",
         };
-        let stat = |label: &'static str, value: String, color: u32| {
+        let foreground = cx.theme().foreground;
+        let stat = |label: &'static str, value: String| {
             h_flex()
                 .items_baseline()
                 .gap(px(6.))
                 .child(label)
-                .child(super::cards::vt(20.).text_color(rgb(color)).child(value))
+                .child(super::cards::vt(20.).text_color(foreground).child(value))
         };
         panel = panel.child(
             h_flex()
@@ -143,7 +163,7 @@ impl DashboardView {
                 .border_color(cx.theme().muted)
                 .items_end()
                 .text_size(px(12.))
-                .text_color(rgb(MUTED))
+                .text_color(cx.theme().muted_foreground)
                 // 估算成本是这张卡真正该看的数：放大放在最前，并按住户拆开。
                 .child(
                     v_flex().gap(px(4.)).child(cost_label).child(
@@ -155,25 +175,30 @@ impl DashboardView {
                                     .text_color(rgb(AMBER))
                                     .child(short_cost(tokens.all.cost_usd)),
                             )
-                            .child(format!(
-                                "Claude {} · Codex {}",
-                                short_cost(tokens.claude.cost_usd),
-                                short_cost(tokens.codex.cost_usd)
-                            )),
+                            .child({
+                                let mut parts = vec![
+                                    format!("Claude {}", short_cost(tokens.claude.cost_usd)),
+                                    format!("Codex {}", short_cost(tokens.codex.cost_usd)),
+                                ];
+                                if tokens.gemini.usage.output_tokens > 0 {
+                                    parts.push(format!(
+                                        "Gemini {}",
+                                        short_cost(tokens.gemini.cost_usd)
+                                    ));
+                                }
+                                parts.join(" · ")
+                            }),
                     ),
                 )
-                .child(stat(
-                    "会话",
-                    tokens.all.sessions.to_string(),
-                    super::fmt::TEXT,
-                ))
-                .child(stat(
-                    "消息",
-                    tokens.all.messages.to_string(),
-                    super::fmt::TEXT,
-                )),
+                .child(stat("会话", tokens.all.sessions.to_string()))
+                .child(stat("消息", tokens.all.messages.to_string())),
         );
-        let max_output = claude.output_tokens.max(codex.output_tokens).max(1) as f32;
+        let max_output = claude
+            .output_tokens
+            .max(codex.output_tokens)
+            .max(gemini.output_tokens)
+            .max(1) as f32;
+        let show_gemini = gemini.output_tokens > 0;
         panel.child(
             v_flex()
                 .gap(px(8.))
@@ -198,7 +223,19 @@ impl DashboardView {
                         .label_width(60.)
                         .segment(codex.output_tokens as f32 / max_output, CODEX),
                 )
-                .child(legend(&[(CLAUDE, "Claude"), (CODEX, "Codex")])),
+                .when(show_gemini, |rows| {
+                    rows.child(
+                        BarRow::new("Gemini", short_tokens(gemini.output_tokens))
+                            .avatar(ProviderId::GeminiCli)
+                            .label_width(60.)
+                            .segment(gemini.output_tokens as f32 / max_output, GEMINI),
+                    )
+                })
+                .child(if show_gemini {
+                    legend(&[(CLAUDE, "Claude"), (CODEX, "Codex"), (GEMINI, "Gemini")])
+                } else {
+                    legend(&[(CLAUDE, "Claude"), (CODEX, "Codex")])
+                }),
         )
     }
 
@@ -533,7 +570,7 @@ impl DashboardView {
                         h_flex()
                             .gap(px(4.))
                             .text_size(px(12.))
-                            .text_color(rgb(MUTED))
+                            .text_color(cx.theme().muted_foreground)
                             .child("仓库")
                             .child(
                                 div()

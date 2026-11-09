@@ -140,6 +140,7 @@ impl Store {
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         migrate_incremental(&conn)?;
         reprice_if_needed(&conn)?;
+        fix_injected_codex_titles(&conn)?;
         Ok(Store { conn })
     }
 
@@ -1252,6 +1253,87 @@ fn pricing_stamp() -> String {
 const PRICING_KEY: &str = "pricing_stamp";
 
 /// 成本是入库时按当时的定价表算好存下的（`messages.cost_usd`、`sessions.estimated_cost_usd`）。
+const CODEX_TITLES_KEY: &str = "codex_injected_titles_v1";
+
+/// 早期解析把 Codex 注入的 AGENTS.md 当成用户输入，标题成了「# AGENTS.md instructions…」。
+/// 解析已修正，但增量入库不会重解析老会话；这里一次性把这些消息标成 meta、按首条真正的用户输入重写标题。
+/// 用 `meta` 记完成标记，之后打开库不再扫描。不升 `SCHEMA_VERSION`。
+fn fix_injected_codex_titles(conn: &Connection) -> Result<()> {
+    let done: Option<String> = conn
+        .query_row(
+            "SELECT value FROM meta WHERE key = ?1",
+            [CODEX_TITLES_KEY],
+            |r| r.get(0),
+        )
+        .optional()?;
+    if done.is_some() {
+        return Ok(());
+    }
+    conn.execute_batch("PRAGMA busy_timeout = 120000; BEGIN IMMEDIATE")?;
+    let result = (|| -> Result<()> {
+        conn.execute(
+            "UPDATE messages SET is_meta = 1
+             WHERE is_meta = 0 AND lower(role) = 'user'
+               AND blocks_json LIKE '[{\"type\":\"text\",\"text\":\"# AGENTS.md instructions%'
+               AND session_id IN (SELECT id FROM sessions WHERE provider = 'codex')",
+            [],
+        )?;
+        let ids: Vec<String> = {
+            let mut stmt = conn.prepare(
+                "SELECT id FROM sessions WHERE provider = 'codex'
+                 AND title LIKE '# AGENTS.md instructions%'",
+            )?;
+            stmt.query_map([], |r| r.get(0))?
+                .collect::<rusqlite::Result<_>>()?
+        };
+        for id in ids {
+            let mut stmt = conn.prepare(
+                "SELECT blocks_json FROM messages
+                 WHERE session_id = ?1 AND lower(role) = 'user' AND is_meta = 0
+                 ORDER BY timestamp_ms",
+            )?;
+            let mut title: Option<String> = None;
+            for blocks in stmt.query_map([&id], |r| r.get::<_, String>(0))? {
+                let blocks: Vec<crate::model::ContentBlock> =
+                    serde_json::from_str(&blocks?).unwrap_or_default();
+                let text: String = blocks
+                    .iter()
+                    .filter_map(|b| match b {
+                        crate::model::ContentBlock::Text { text } => Some(text.as_str()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                if crate::providers::codex::is_injected_user_text(&text) {
+                    continue;
+                }
+                let joined = text.split_whitespace().collect::<Vec<_>>().join(" ");
+                if !joined.is_empty() {
+                    title = Some(joined.chars().take(80).collect());
+                    break;
+                }
+            }
+            // 找不到真正的用户输入（只有注入内容）就留空，界面显示「未命名会话」。
+            conn.execute(
+                "UPDATE sessions SET title = ?2 WHERE id = ?1",
+                rusqlite::params![id, title.unwrap_or_default()],
+            )?;
+        }
+        conn.execute(
+            "INSERT OR REPLACE INTO meta (key, value) VALUES (?1, '1')",
+            [CODEX_TITLES_KEY],
+        )?;
+        Ok(())
+    })();
+    match result {
+        Ok(()) => conn.execute_batch("COMMIT").map_err(Into::into),
+        Err(e) => {
+            let _ = conn.execute_batch("ROLLBACK");
+            Err(e)
+        }
+    }
+}
+
 /// 定价表一换（新模型、长上下文分档、改价），老消息的成本不会自己变，只有原件变了的会话才重算，
 /// 新旧口径就混在一起。所以打开库时比对 `meta` 里记的定价表身份，不同就用 token 列全量重算一遍：
 /// 一个事务，逐条消息重估、只写变了的行，再逐会话 SQL 聚合 `estimated_cost_usd`。不升 `SCHEMA_VERSION`。

@@ -131,6 +131,263 @@
    "cache_write_5m": 2.5,
    "cache_write_1h": 4.0
   },
+  "gemini-2.0-flash": {
+   "input": 0.15,
+   "output": 0.6,
+   "cache_read": 0.15,
+   "cache_write_5m": 0.0,
+   "cache_write_1h": 0.0
+  },
+  "gemini-2.0-flash-lite": {
+   "input": 0.075,
+   "output": 0.3,
+   "cache_read": 0.075,
+   "cache_write_5m": 0.0,
+   "cache_write_1h": 0.0
+  },
+  "gemini-2.5-flash": {
+   "input": 0.3,
+   "output": 2.5,
+   "cache_read": 0.03,
+   "cache_write_5m": 0.0,
+   "cache_write_1h": 0.0
+  },
+  "gemini-2.5-flash-lite": {
+   "input": 0.1,
+   "output": 0.4,
+   "cache_read": 0.01,
+   "cache_write_5m": 0.0,
+   "cache_write_1h": 0.0
+  },
+  "gemini-2.5-flash-lite-preview-09-2025": {
+   "input": 0.1,
+   "output": 0.4,
+   "cache_read": 0.01,
+   "cache_write_5m": 0.0,
+   "cache_write_1h": 0.0
+  },
+  "gemini-2.5-flash-preview-09-2025": {
+   "input": 0.3,
+   "output": 2.5,
+   "cache_read": 0.03,
+   "cache_write_5m": 0.0,
+   "cache_write_1h": 0.0
+  },
+  "gemini-2.5-pro": {
+   "input": 1.25,
+   "output": 10.0,
+   "cache_read": 0.125,
+   "cache_write_5m": 0.0,
+   "cache_write_1h": 0.0,
+   "long_context": {
+    "above_tokens": 200000,
+    "input": 2.5,
+    "output": 15.0,
+    "cache_read": 0.25,
+    "cache_write_5m": 0.25,
+    "cache_write_1h": 0.0
+   }
+  },
+  "gemini-3-flash-preview": {
+   "input": 0.5,
+   "output": 3.0,
+   "cache_read": 0.05,
+   "cache_write_5m": 0.0,
+   "cache_write_1h": 0.0
+  },
+  "gemini-3-pro-preview": {
+   "input": 2.0,
+   "output": 12.0,
+   "cache_read": 0.2,
+   "cache_write_5m": 0.0,
+   "cache_write_1h": 0.0,
+   "long_context": {
+    "above_tokens": 200000,
+    "input": 4.0,
+    "output": 18.0,
+    "cache_read": 0.4,
+    "cache_write_5m": 0.25,
+    "cache_write_1h": 0.0
+   }
+  },
+  "gemini-3.1-flash-lite": {
+   "input": 0.25,
+   "output": 1.5,
+   "cache_read": 0.025,
+   "cache_write_5m": 0.0,
+   "cache_write_1h": 0.0
+  },
+  "gemini-3.1-flash-lite-preview": {
+   "input": 0.25,
+   "output": 1.5,
+   "cache_read": 0.025,
+   "cache_write_5m": 0.0,
+   "cache_write_1h": 0.0
+  },
+  "gemini-3.1-pro-preview": {
+   "input": 2.0,
+   "output": 12.0,
+   "cache_read": 0.2,
+   "cache_write_5m": 0.0,
+   "cache_write_1h": 0.0,
+   "long_context": {
+    "above_tokens": 200000,
+    "input": 4.0,
+    "output": 18.0,
+    "cache_read": 0.4,
+    "cache_write_5m": 0.25,
+    "cache_write_1h": 0.0
+   }
+  },
+  "gemini-3.1-pro-preview-customtools": {
+   "input": 2.0,
+   "output": 12.0,
+   "cache_read": 0.2,
+   "cache_write_5m": 0.0,
+   "cache_write_1h": 0.0,
+   "long_context": {
+    "above_tokens": 200000,
+    "input": 4.0,
+    "output": 18.0,
+    "cache_read": 0.4,
+    "cache_write_5m": 0.25,
+    "cache_write_1h": 0.0
+   }
+  },
+  "gemini-3.5-flash": {
+   "input": 1.5,
+   "output": 9.0,
+   "cache_read": 0.15,
+   "cache_write_5m": 0.0,
+   "cache_write_1h": 0.0
+  },
+  "gemini-3.5-flash-lite": {
+   "input": 0.3,
+   "output": 2.5,
+   "cache_read": 0.03,
+   "cache_write_5m": 0.0,
+   "cache_write_1h": 0.0
+  },
+  "gemini-3.6-flash": {
+   "input": 0.75,
+   "output": 3.75,
+   "cache_read": 0.075,
+   "cache_write_5m": 0.0,
+   "cache_write_1h": 0.0
+  },
+  "gemini-3.7-flash": {
+   "input": 0.75,
+   "output": 3.75,
+   "cache_read": 0.075,
+   "cache_write_5m": 0.0,
+   "cache_write_1h": 0.0
+  },
+  "gemini-3.8-flash": {
+   "input": 0.75,
+   "output": 3.75,
+   "cache_read": 0.075,
+   "cache_write_5m": 0.0,
+   "cache_write_1h": 0.0
+  },
+  "gemini-3.8-flash-cyber": {
+   "input": 1.5,
+   "output": 7.5,
+   "cache_read": 0.15,
+   "cache_write_5m": 0.0,
+   "cache_write_1h": 0.0
+  },
+  "gemini-4-argon": {
+   "input": 2.0,
+   "output": 10.0,
+   "cache_read": 0.1,
+   "cache_write_5m": 0.0,
+   "cache_write_1h": 0.0
+  },
+  "gemini-4-argon-cyber-permissive": {
+   "input": 4.0,
+   "output": 20.0,
+   "cache_read": 0.2,
+   "cache_write_5m": 0.0,
+   "cache_write_1h": 0.0
+  },
+  "gemini-exp-1206": {
+   "input": 0.3,
+   "output": 2.5,
+   "cache_read": 0.03,
+   "cache_write_5m": 0.0,
+   "cache_write_1h": 0.0
+  },
+  "gemini-flash-latest": {
+   "input": 0.75,
+   "output": 3.75,
+   "cache_read": 0.075,
+   "cache_write_5m": 0.0,
+   "cache_write_1h": 0.0
+  },
+  "gemini-flash-lite-latest": {
+   "input": 0.3,
+   "output": 2.5,
+   "cache_read": 0.03,
+   "cache_write_5m": 0.0,
+   "cache_write_1h": 0.0
+  },
+  "gemini-omni-1.1-flash": {
+   "input": 1.5,
+   "output": 9.0,
+   "cache_read": 1.5,
+   "cache_write_5m": 0.0,
+   "cache_write_1h": 0.0
+  },
+  "gemini-omni-1.1-flash-preview": {
+   "input": 1.5,
+   "output": 9.0,
+   "cache_read": 1.5,
+   "cache_write_5m": 0.0,
+   "cache_write_1h": 0.0
+  },
+  "gemini-omni-1.2-flash": {
+   "input": 1.5,
+   "output": 9.0,
+   "cache_read": 1.5,
+   "cache_write_5m": 0.0,
+   "cache_write_1h": 0.0
+  },
+  "gemini-omni-flash-preview": {
+   "input": 1.5,
+   "output": 9.0,
+   "cache_read": 1.5,
+   "cache_write_5m": 0.0,
+   "cache_write_1h": 0.0
+  },
+  "gemini-pro-latest": {
+   "input": 2.0,
+   "output": 12.0,
+   "cache_read": 0.2,
+   "cache_write_5m": 0.0,
+   "cache_write_1h": 0.0,
+   "long_context": {
+    "above_tokens": 200000,
+    "input": 4.0,
+    "output": 18.0,
+    "cache_read": 0.4,
+    "cache_write_5m": 0.0,
+    "cache_write_1h": 0.0
+   }
+  },
+  "gemini-robotics-er-1.5-preview": {
+   "input": 0.3,
+   "output": 2.5,
+   "cache_read": 0.0,
+   "cache_write_5m": 0.0,
+   "cache_write_1h": 0.0
+  },
+  "gemini-robotics-er-2-preview": {
+   "input": 1.0,
+   "output": 5.0,
+   "cache_read": 0.1,
+   "cache_write_5m": 0.0,
+   "cache_write_1h": 0.0
+  },
   "gpt-5": {
    "input": 1.25,
    "output": 10.0,

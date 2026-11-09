@@ -47,11 +47,12 @@ pub struct TodayStats {
     pub yesterday_output: u64,
 }
 
-/// 「累计 token」卡：全部 + 两位住户各自的汇总。
+/// 「累计 token」卡：全部 + 三位住户各自的汇总。
 pub struct TokenTotals {
     pub all: UsageTotals,
     pub claude: UsageTotals,
     pub codex: UsageTotals,
+    pub gemini: UsageTotals,
 }
 
 /// 「到期与重置」一行。
@@ -102,6 +103,7 @@ pub fn load_tokens(source: &dyn DataSource, period: Period) -> anyhow::Result<To
         all: source.totals(period, None)?,
         claude: source.totals(period, Some(ProviderId::ClaudeCode))?,
         codex: source.totals(period, Some(ProviderId::Codex))?,
+        gemini: source.totals(period, Some(ProviderId::GeminiCli))?,
     })
 }
 

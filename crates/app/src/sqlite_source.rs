@@ -96,9 +96,16 @@ impl DataSource for SqliteDataSource {
     fn quota(&self) -> anyhow::Result<Vec<QuotaSnapshot>> {
         // 两个信号互不依赖；一个读不到不影响另一个，但错误不吞：记到返回值里由 UI 展示。
         let mut out = Vec::new();
-        // Claude 有两路：终端的 statusline 与后台跑官方 /usage 的快照，合并成一份。
+        // Claude 额度只走官方 /usage（后台每 15 分钟读一次）。旧版装过的 statusline 包装脚本
+        // 写的快照只在 /usage 还没有任何数据时兜底（例如 claude CLI 尚未登录）。
         let usage = agenthome_core::signals::claude_usage_snapshot(None)?;
-        if let Some(s) = agenthome_core::signals::merge_claude(claude_statusline(None)?, usage) {
+        let has_usage = usage.as_ref().is_some_and(|s| !s.windows.is_empty());
+        let fallback = if has_usage {
+            None
+        } else {
+            claude_statusline(None)?
+        };
+        if let Some(s) = agenthome_core::signals::merge_claude(fallback, usage) {
             out.push(s);
         }
         if let Some(s) = codex_rollout_quota(None)? {

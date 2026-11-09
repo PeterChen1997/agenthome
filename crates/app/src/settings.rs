@@ -179,22 +179,11 @@ impl SettingsView {
         let sync = self.sync.read(cx).clone();
         let now = now_ms();
         let scanning = sync.scanning.clone();
-        let mut rows: Vec<AnyElement> = sync
+        let rows: Vec<AnyElement> = sync
             .providers
             .iter()
             .map(|p| self.render_source_row(p, now, cx))
             .collect();
-        rows.push(
-            source_row(
-                &ProviderId::GeminiCli,
-                "Gemini CLI",
-                chip("未接入", cx.theme().muted_foreground, cx),
-                "~/.gemini/tmp".into(),
-                "解析器尚未实现（路线图 P1）".into(),
-                cx,
-            )
-            .into_any_element(),
-        );
         let status: SharedString = match (&scanning, sync.last_full_scan_ms) {
             (Some(scan), _) => format!(
                 "正在入库 {} {}/{}",
@@ -583,11 +572,6 @@ fn probe_view(probe: &crate::sync::ClaudeProbe, syncing: bool, now: i64) -> Prob
             "正常",
             Tone::Ok,
             format!("{} 成功读取（{}）", relative_time(at, now), bin.display()),
-        ),
-        (None, None, Some(_)) if probe.skipped_at_ms.is_some() => view(
-            "已跳过",
-            Tone::Ok,
-            "终端 statusline 刚更新过，本轮未运行".into(),
         ),
         _ => view("等待中", Tone::Muted, "启动后马上运行第一次".into()),
     }

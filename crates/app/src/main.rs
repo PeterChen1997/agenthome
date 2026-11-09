@@ -36,7 +36,7 @@ const PIXEL_HABITAT_THEME: &str = include_str!("../assets/themes/pixel-habitat.j
 /// 红绿灯位置：垂直居中在左栏顶行（`workspace::TOP_ROW_HEIGHT` = 44，灯高约 12）。
 const TRAFFIC_LIGHT_POSITION: Point<Pixels> = point(px(16.), px(16.));
 
-const USAGE: &str = "用法：agenthome-app [--db PATH] [--mock] [--habitat-demo] [--appearance light|dark] [--page dashboard|archive|settings] [--search TEXT]\n  --db PATH            索引库路径，默认 ~/AgentHome/index/agenthome.db（不存在时启动后自动建库）\n  --mock               使用内存 mock 数据源\n  --habitat-demo       只开一个栖息地演示窗口\n  --appearance MODE    固定明 / 暗主题，不跟随系统（调试与截图用）\n  --page PAGE          启动后打开的页面\n  --search TEXT        启动后弹出 ⌘K 面板并搜索 TEXT";
+const USAGE: &str = "用法：agenthome-app [--db PATH] [--mock] [--habitat-demo] [--appearance light|dark] [--page dashboard|archive|settings] [--search TEXT] [--session ID] [--capture PNG]\n  --db PATH            索引库路径，默认 ~/AgentHome/index/agenthome.db（不存在时启动后自动建库）\n  --mock               使用内存 mock 数据源\n  --habitat-demo       只开一个栖息地演示窗口\n  --appearance MODE    固定明 / 暗主题，不跟随系统（调试与截图用）\n  --page PAGE          启动后打开的页面\n  --search TEXT        启动后弹出 ⌘K 面板并搜索 TEXT\n  --session ID         启动后打开该会话\n  --capture PATH       等待后把窗口离屏渲染成 PNG 并退出（需 --features capture）\n  --capture-delay SEC  截图前等待秒数，默认 4";
 
 fn main() {
     let mut mock = false;
@@ -45,6 +45,7 @@ fn main() {
     let mut db: Option<PathBuf> = None;
     let mut start_page: Option<String> = None;
     let mut start_search: Option<String> = None;
+    let mut start_session: Option<String> = None;
     let mut capture: Option<(PathBuf, u64)> = None;
     let mut arguments = std::env::args().skip(1);
     while let Some(argument) = arguments.next() {
@@ -72,6 +73,13 @@ fn main() {
                 }
                 _ => {
                     eprintln!("--page 只接受 dashboard、archive 或 settings。\n{USAGE}");
+                    std::process::exit(2);
+                }
+            },
+            "--session" => match arguments.next() {
+                Some(id) => start_session = Some(id),
+                None => {
+                    eprintln!("--session 需要会话 id。\n{USAGE}");
                     std::process::exit(2);
                 }
             },
@@ -165,13 +173,14 @@ fn main() {
                     follow_system_appearance(window);
                 }
                 let workspace = cx.new(|cx| Workspace::new(source, demo, sync_db, window, cx));
-                if start_page.is_some() || start_search.is_some() {
+                if start_page.is_some() || start_search.is_some() || start_session.is_some() {
                     let workspace = workspace.clone();
                     let page = start_page.clone();
                     let search = start_search.clone();
+                    let session = start_session.clone();
                     window.defer(cx, move |window, cx| {
                         workspace.update(cx, |workspace, cx| {
-                            workspace.apply_startup(page.as_deref(), search, window, cx)
+                            workspace.apply_startup(page.as_deref(), search, session, window, cx)
                         });
                     });
                 }

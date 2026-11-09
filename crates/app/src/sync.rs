@@ -19,8 +19,8 @@ use std::time::{Duration, Instant};
 
 use agenthome_core::model::ProviderId;
 use agenthome_core::{
-    ClaudeCodeProvider, CodexProvider, IngestCache, RawArchive, RawStats, Report, SourceProvider,
-    Store, WatchEvent, ingest_all_cached, ingest_paths, paths, watch_roots,
+    ClaudeCodeProvider, CodexProvider, GeminiProvider, IngestCache, RawArchive, RawStats, Report,
+    SourceProvider, Store, WatchEvent, ingest_all_cached, ingest_paths, paths, watch_roots,
 };
 use gpui_kit::{App, AsyncApp, Entity, Task};
 
@@ -35,8 +35,6 @@ const MAX_DELAY: Duration = Duration::from_secs(10);
 const FALLBACK_SCAN: Duration = Duration::from_secs(3_600);
 /// 后台跑官方 `claude /usage` 刷新 Claude 订阅额度的间隔（每次约 10 秒、不耗 token）。
 const CLAUDE_PROBE_INTERVAL: Duration = Duration::from_secs(15 * 60);
-/// 终端 statusline 在这段时间内更新过，就跳过定时的 /usage（数据已足够新）。
-const STATUSLINE_FRESH_MS: i64 = 10 * 60_000;
 /// 前台检查后台快照的间隔。
 const UI_POLL: Duration = Duration::from_millis(500);
 
@@ -89,8 +87,6 @@ pub struct ClaudeProbe {
     pub last_ok_ms: Option<i64>,
     /// 最近一次失败原因；成功后清空。
     pub last_error: Option<String>,
-    /// 最近一次因终端 statusline 已足够新而跳过的时刻。
-    pub skipped_at_ms: Option<i64>,
 }
 
 /// raw 层原件归档的状况。
@@ -159,7 +155,7 @@ impl SyncHandle {
         let _ = self.commands.send(Command::ScanAll);
     }
 
-    /// 立即跑一次官方 `/usage` 刷新 Claude 额度（不受「statusline 足够新」的跳过规则限制）。
+    /// 立即跑一次官方 `/usage` 刷新 Claude 额度（不等 15 分钟的定时）。
     pub fn refresh_claude_quota(&self) {
         let _ = self.probe.send(true);
     }
@@ -171,6 +167,7 @@ impl SyncEngine {
         let roots: Vec<(ProviderId, PathBuf)> = vec![
             (ProviderId::ClaudeCode, paths::claude_projects_dir()),
             (ProviderId::Codex, paths::codex_sessions_dir()),
+            (ProviderId::GeminiCli, paths::gemini_dir()),
         ];
         let shared = Arc::new(Mutex::new(SyncState {
             providers: roots
@@ -268,6 +265,12 @@ fn run_worker(
     };
     let claude = ClaudeCodeProvider::new(paths::claude_projects_dir());
     let codex = CodexProvider::new(paths::codex_sessions_dir());
+    let gemini = GeminiProvider::new(paths::gemini_dir());
+    let sources = Sources {
+        claude: &claude,
+        codex: &codex,
+        gemini: &gemini,
+    };
     let raw_root = paths::raw_dir_for_db(&db_path);
     let raw = match RawArchive::open(raw_root.clone()) {
         Ok(raw) => Some(raw),
@@ -328,8 +331,7 @@ fn run_worker(
         &mut store,
         raw.as_ref(),
         &batch,
-        &claude,
-        &codex,
+        &sources,
         &mut cache,
         &shared,
     );
@@ -361,8 +363,7 @@ fn run_worker(
             &mut store,
             raw.as_ref(),
             &batch,
-            &claude,
-            &codex,
+            &sources,
             &mut cache,
             &shared,
         );
@@ -371,6 +372,13 @@ fn run_worker(
         }
     }
     drop(watcher);
+}
+
+/// 同步引擎管的三个来源。
+struct Sources<'a> {
+    claude: &'a ClaudeCodeProvider,
+    codex: &'a CodexProvider,
+    gemini: &'a GeminiProvider,
 }
 
 /// 一次要处理的变化：要全量扫描的来源 + 其余来源里变了的文件。
@@ -399,14 +407,14 @@ fn scan(
     store: &mut Store,
     raw: Option<&RawArchive>,
     batch: &Batch,
-    claude: &ClaudeCodeProvider,
-    codex: &CodexProvider,
+    sources: &Sources<'_>,
     cache: &mut IngestCache,
     shared: &Mutex<SyncState>,
 ) {
-    let both: [(&ProviderId, &dyn SourceProvider); 2] = [
-        (&ProviderId::ClaudeCode, claude),
-        (&ProviderId::Codex, codex),
+    let both: [(&ProviderId, &dyn SourceProvider); 3] = [
+        (&ProviderId::ClaudeCode, sources.claude),
+        (&ProviderId::Codex, sources.codex),
+        (&ProviderId::GeminiCli, sources.gemini),
     ];
     let full: Vec<&dyn SourceProvider> = both
         .iter()
@@ -517,14 +525,10 @@ fn apply_report(p: &mut ProviderSync, report: &Report, now: i64, full: bool) {
 
 /// Claude 额度线程：启动即跑一次，之后每 [`CLAUDE_PROBE_INTERVAL`] 一次；`true` 指令强制立即跑。
 fn run_claude_probe(shared: Arc<Mutex<SyncState>>, receiver: mpsc::Receiver<bool>) {
-    use agenthome_core::signals::{claude_statusline, claude_usage, find_claude_binary};
+    use agenthome_core::signals::{claude_usage, find_claude_binary};
 
-    let mut force = false;
     loop {
         let binary = find_claude_binary();
-        let statusline_fresh = claude_statusline(None).ok().flatten().is_some_and(|s| {
-            !s.windows.is_empty() && now_ms() - s.fetched_at_ms <= STATUSLINE_FRESH_MS
-        });
         match &binary {
             None => update(&shared, |s| {
                 s.claude_probe.binary = None;
@@ -532,10 +536,6 @@ fn run_claude_probe(shared: Arc<Mutex<SyncState>>, receiver: mpsc::Receiver<bool
                     "找不到官方 claude 命令（~/.local/bin、/opt/homebrew/bin、/usr/local/bin）"
                         .into(),
                 );
-            }),
-            Some(_) if statusline_fresh && !force => update(&shared, |s| {
-                s.claude_probe.binary = binary.clone();
-                s.claude_probe.skipped_at_ms = Some(now_ms());
             }),
             Some(bin) => {
                 update(&shared, |s| {
@@ -559,10 +559,9 @@ fn run_claude_probe(shared: Arc<Mutex<SyncState>>, receiver: mpsc::Receiver<bool
                 });
             }
         }
-        force = match receiver.recv_timeout(CLAUDE_PROBE_INTERVAL) {
-            Ok(forced) => forced,
-            Err(RecvTimeoutError::Timeout) => false,
-            Err(RecvTimeoutError::Disconnected) => break,
-        };
+        // 定时到点或收到「立即刷新」都直接再跑一次。
+        if let Err(RecvTimeoutError::Disconnected) = receiver.recv_timeout(CLAUDE_PROBE_INTERVAL) {
+            break;
+        }
     }
 }

@@ -7,8 +7,8 @@ use agenthome_core::model::{Freshness, ProviderId, QuotaSnapshot, QuotaWindow};
 use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AnyElement, Context, Entity, FontWeight, IntoElement, ParentElement as _, Render, SharedString,
-    Styled as _, Subscription, Task, Window, div, px, rgb,
+    AnyElement, App, Context, Entity, FontWeight, Hsla, IntoElement, ParentElement as _, Render,
+    SharedString, Styled as _, Subscription, Task, Window, div, px, rgb,
 };
 
 use super::cards::{Tag, TagKind, avatar, card, card_title, hp_bar, hp_tier, vt};
@@ -99,7 +99,11 @@ impl ResidentsCard {
         let snapshot = snapshots.iter().find(|s| s.provider == provider);
         let plan: SharedString = snapshot
             .and_then(|s| s.plan.clone())
-            .unwrap_or_else(|| "未接入".to_string())
+            .unwrap_or_else(|| match who {
+                // Gemini 没有本地额度信号，但会话与 token 已接入。
+                ResidentId::Gemini => "已接入".to_string(),
+                _ => "未接入".to_string(),
+            })
             .into();
         let header = h_flex()
             .items_baseline()
@@ -117,21 +121,33 @@ impl ResidentsCard {
             )
             .child(div().ml_auto().child(match snapshot {
                 Some(s) => compliance_tag(s),
-                None => Tag::new("未接入额度", TagKind::Dim),
+                None => Tag::new(
+                    if who == ResidentId::Gemini {
+                        "无额度信号"
+                    } else {
+                        "未接入额度"
+                    },
+                    TagKind::Dim,
+                ),
             }));
 
         let mut body = v_flex().flex_1().min_w_0().gap(px(6.)).child(header);
         match snapshot {
             Some(snapshot) => {
                 body = body.children(snapshot.windows.iter().map(|w| window_row(w, cx)));
-                body = body.child(reset_line(snapshot, now_ms));
+                body = body.child(reset_line(snapshot, now_ms, cx));
             }
             None => {
                 body = body.child(window_row_empty(cx)).child(
                     div()
                         .text_size(px(11.5))
-                        .text_color(rgb(MUTED))
-                        .child("本地没有这个来源的额度快照，先在设置里接入。"),
+                        .text_color(cx.theme().muted_foreground)
+                        .child(match who {
+                            ResidentId::Gemini => {
+                                "Gemini / Antigravity 没有可读的本地额度信号，只统计会话与 token。"
+                            }
+                            _ => "本地没有这个来源的额度快照，先在设置里确认来源已接入。",
+                        }),
                 );
             }
         }
@@ -220,7 +236,7 @@ fn window_row(window: &QuotaWindow, cx: &mut Context<ResidentsCard>) -> AnyEleme
                 .justify_between()
                 .items_baseline()
                 .text_size(px(12.))
-                .text_color(rgb(MUTED))
+                .text_color(cx.theme().muted_foreground)
                 .child(window.label.clone())
                 .child(
                     vt(22.)
@@ -244,7 +260,7 @@ fn window_row_empty(cx: &mut Context<ResidentsCard>) -> AnyElement {
                 .justify_between()
                 .items_baseline()
                 .text_size(px(12.))
-                .text_color(rgb(MUTED))
+                .text_color(cx.theme().muted_foreground)
                 .child("配额")
                 .child(vt(22.).text_color(cx.theme().muted_foreground).child("--")),
         )
@@ -253,7 +269,7 @@ fn window_row_empty(cx: &mut Context<ResidentsCard>) -> AnyElement {
 }
 
 /// 底部一行：各窗口重置倒计时 + Codex 重置信用。
-fn reset_line(snapshot: &QuotaSnapshot, now_ms: i64) -> AnyElement {
+fn reset_line(snapshot: &QuotaSnapshot, now_ms: i64, cx: &App) -> AnyElement {
     let mut line = h_flex()
         .flex_wrap()
         .gap(px(14.))
@@ -271,7 +287,7 @@ fn reset_line(snapshot: &QuotaSnapshot, now_ms: i64) -> AnyElement {
                 .child(format!("{} 重置", window.label))
                 .child(
                     vt(16.)
-                        .text_color(rgb(due_color(remaining, Some(100.0 - window.used_percent))))
+                        .text_color(due_color(remaining, Some(100.0 - window.used_percent), cx))
                         .child(countdown(remaining)),
                 ),
         );
@@ -288,7 +304,7 @@ fn reset_line(snapshot: &QuotaSnapshot, now_ms: i64) -> AnyElement {
                 .child("·")
                 .child(
                     vt(16.)
-                        .text_color(rgb(due_color(expires - now_ms, None)))
+                        .text_color(due_color(expires - now_ms, None, cx))
                         .child(countdown(expires - now_ms)),
                 )
                 .child("后过期");
@@ -298,14 +314,15 @@ fn reset_line(snapshot: &QuotaSnapshot, now_ms: i64) -> AnyElement {
     line.into_any_element()
 }
 
-/// 倒计时颜色：不足 1 小时红；不足 6 小时或窗口剩余不足 1/4 琥珀；其余正文色。
-fn due_color(remaining_ms: i64, quota_left: Option<f32>) -> u32 {
+/// 倒计时颜色：不足 1 小时红；不足 6 小时或窗口剩余不足 1/4 琥珀；其余用主题正文色
+/// （写死深色主题的浅字，浅色主题下会看不见）。
+fn due_color(remaining_ms: i64, quota_left: Option<f32>, cx: &App) -> Hsla {
     if remaining_ms < 3_600_000 {
-        RED_TEXT
+        rgb(RED_TEXT).into()
     } else if remaining_ms < 6 * 3_600_000 || quota_left.is_some_and(|left| left < 25.0) {
-        AMBER
+        rgb(AMBER).into()
     } else {
-        fmt::TEXT
+        cx.theme().foreground
     }
 }
 
@@ -369,7 +386,7 @@ impl DueCard {
                     .font_family(FONT_PIXEL_MONO)
                     .text_size(px(22.))
                     .line_height(px(22.))
-                    .text_color(rgb(due_color(remaining, item.quota_left)))
+                    .text_color(due_color(remaining, item.quota_left, cx))
                     .child(countdown(remaining)),
             )
             .into_any_element()

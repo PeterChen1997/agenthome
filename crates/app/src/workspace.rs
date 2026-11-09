@@ -124,12 +124,24 @@ impl ResidentPanel {
                     (None, false) => "订阅".to_string(),
                     (None, true) => "未接入额度".to_string(),
                 })
-                .unwrap_or_else(|| "未接入额度".to_string())
+                .unwrap_or_else(|| match who {
+                    ResidentId::Gemini => "已接入".to_string(),
+                    _ => "未接入额度".to_string(),
+                })
                 .into()
         };
         let (sub_label, sub_value): (SharedString, SharedString) = match (away, window) {
             (true, _) => ("在设置里接入".into(), "".into()),
-            (false, None) => ("等待 /usage 读取额度".into(), "".into()),
+            // 各来源的额度信号不同：Claude 靠后台 /usage，Codex 靠 rollout 快照，Gemini 没有本地额度信号。
+            (false, None) => (
+                match who {
+                    ResidentId::Claude => "等待 /usage 读取额度",
+                    ResidentId::Codex => "等待 rollout 额度快照",
+                    ResidentId::Gemini => "只统计会话 · 无额度信号",
+                }
+                .into(),
+                "".into(),
+            ),
             (false, Some(w)) => (
                 format!("{} 重置", w.label).into(),
                 w.resets_at_ms
@@ -536,14 +548,21 @@ impl Workspace {
     }
 
     /// 弹出 ⌘K 全局搜索面板；已经开着浮层时不重复弹。
-    /// 启动参数 `--page` / `--search`：打开指定页面，或直接弹出带查询的 ⌘K 面板。
+    /// 启动参数 `--page` / `--search` / `--session`：打开指定页面、弹出带查询的 ⌘K 面板，或打开某个会话。
     pub fn apply_startup(
         &mut self,
         page: Option<&str>,
         search: Option<String>,
+        session: Option<String>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if let Some(id) = session {
+            self.page = Page::Archive;
+            self.archive.update(cx, |archive, cx| {
+                archive.open_session_at(id, None, window, cx)
+            });
+        }
         match page {
             Some("dashboard") => self.page = Page::Dashboard,
             Some("settings") => self.page = Page::Settings,

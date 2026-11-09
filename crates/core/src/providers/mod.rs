@@ -58,6 +58,12 @@ pub trait SourceProvider {
     fn accepts(&self, _path: &Path) -> Option<bool> {
         None
     }
+
+    /// 这个原件要不要拷进 raw 层。默认要；解不开、又会被整份改写的文件（如 Antigravity 的
+    /// 加密 `.pb`）不拷：每次改写都会另存一个新版本，磁盘只增不减，换不来任何可读内容。
+    fn archive_raw(&self, _path: &Path) -> bool {
+        true
+    }
 }
 
 /// 续读时按消息 id 取已入库的消息（同一 `message.id` 的续行、迟到的 usage 要改它）。

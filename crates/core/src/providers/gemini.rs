@@ -346,6 +346,12 @@ impl SourceProvider for GeminiProvider {
     fn id(&self) -> ProviderId {
         ProviderId::GeminiCli
     }
+
+    /// Antigravity 的 `.pb` 是加密 / 压缩的，解不开且会被整份改写，不进 raw 层；
+    /// Gemini CLI 的 json / jsonl 照常归档。
+    fn archive_raw(&self, path: &Path) -> bool {
+        path.extension().is_none_or(|ext| ext != "pb")
+    }
     fn detect(&self) -> bool {
         GeminiProvider::detect(self)
     }

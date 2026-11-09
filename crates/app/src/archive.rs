@@ -847,7 +847,15 @@ impl ArchiveView {
                     .child(if self.loading_sessions {
                         "…".to_string()
                     } else {
-                        sessions.len().to_string()
+                        // 列表把子代理折叠进父会话，左栏「全部会话」数的是全部会话（含子代理），
+                        // 两个数不同时把差别写出来，免得看着像统计错了。
+                        let total: u32 = self.projects.iter().map(|p| p.session_count).sum();
+                        let shown = sessions.len();
+                        if self.view == ViewFilter::All && total as usize > shown {
+                            format!("{shown} · 含子代理共 {total}")
+                        } else {
+                            shown.to_string()
+                        }
                     }),
             );
         let body = if let Some(error) = &self.sessions_error {

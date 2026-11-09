@@ -156,11 +156,15 @@ fn 本机出现的模型全部可定价() {
         "gpt-5.3-codex-spark",
         "gpt-5.2",
         "gpt-5.4-mini",
+        // Gemini CLI 会话里出现过的模型（LiteLLM 只有 vertex_ai/ 前缀的条目，生成价表时去掉了前缀）。
+        "gemini-3-pro-preview",
+        "gemini-2.5-pro",
     ] {
         assert!(lookup(m).is_some(), "{m}");
     }
+    // 不认识的模型必须是 None（界面显示「未知」），不能悄悄按 0 计成「免费」。
     assert_eq!(
-        estimate_usd("gemini-3-pro-preview", &Usage::default()),
+        estimate_usd("some-unknown-model-x", &Usage::default()),
         None
     );
 }

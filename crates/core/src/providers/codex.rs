@@ -551,8 +551,7 @@ impl CodexLineParser {
                     }
                     "user" => {
                         self.flush_assistant();
-                        // `<environment_context>` / `<user_instructions>` 等注入内容不是用户手写。
-                        let is_meta = text.trim_start().starts_with('<');
+                        let is_meta = is_injected_user_text(&text);
                         self.push(self.message(
                             format!("l{line_no}"),
                             Role::User,
@@ -892,8 +891,16 @@ fn content_text(c: Option<&Value>) -> String {
     }
 }
 
+/// Codex 以 user 角色注入、并非用户手写的内容：`<environment_context>` / `<user_instructions>`
+/// 等标签块，以及仓库的 AGENTS.md（`# AGENTS.md instructions for <路径>`）。
+/// 它们不能当会话标题，否则列表里一片「# AGENTS.md instructions…」。
+pub fn is_injected_user_text(text: &str) -> bool {
+    let text = text.trim_start();
+    text.starts_with('<') || text.starts_with("# AGENTS.md instructions")
+}
+
 /// 首条非 meta 用户输入前 80 字符（换行压成空格）。
-fn first_user_title(m: &Message) -> Option<String> {
+pub fn first_user_title(m: &Message) -> Option<String> {
     if m.role != Role::User || m.is_meta {
         return None;
     }

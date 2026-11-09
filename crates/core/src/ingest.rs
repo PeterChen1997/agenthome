@@ -281,7 +281,7 @@ fn ingest_files(
 
     for (i, path) in files.into_iter().enumerate() {
         // 先归档：与 index 是否已最新无关（老用户的库早已入库，原件却从没拷过），解析失败的原件也要留。
-        if let Some(raw) = raw {
+        if let Some(raw) = raw.filter(|_| provider.archive_raw(&path)) {
             let root = provider.source_root(&path).unwrap_or(provider.root());
             match raw.archive(&provider.id(), root, &path) {
                 Ok(outcome) => report.raw.record(&outcome),
