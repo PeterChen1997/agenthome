@@ -23,6 +23,7 @@ pub mod raw;
 pub mod signals;
 pub mod statusline_setup;
 pub mod store;
+pub mod update;
 pub mod watch;
 
 pub use ingest::{

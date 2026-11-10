@@ -74,7 +74,7 @@ The CLI ships inside the app bundle at `AgentHome.app/Contents/MacOS/agenthome`.
 - **Read-only toward agents.** AgentHome reads the agents' session directories and never modifies, moves or symlinks anything inside them. It copies; it does not link.
 - **No credentials.** It does not read API keys, OAuth tokens, credential files or the macOS Keychain.
 - **No private endpoints.** It does not call the Claude OAuth usage endpoint or Codex's private usage endpoint.
-- **No telemetry, no upload.** There is no analytics and no cloud sync. Your session data never leaves your machine.
+- **No telemetry, no upload.** There is no analytics and no cloud sync. Your session data never leaves your machine. The only network request AgentHome makes itself is the update check: at launch and once a day it asks GitHub for the latest release's version number (turn it off in Settings → Software update). It only tells you about a new version; it never downloads or installs anything.
 - **How quota is read.**
   - Claude: every 15 minutes AgentHome runs the official `claude` CLI's `/usage` command in a background pseudo-terminal and reads the text it prints. This sends no conversation and consumes no tokens. It requires the `claude` CLI to be installed and logged in.
   - Codex: read from the `rate_limits` snapshot that Codex itself writes into its rollout files.

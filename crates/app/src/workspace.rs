@@ -40,6 +40,7 @@ use crate::pressure_badge::PressureBadge;
 use crate::search_palette::{PaletteEvent, SearchPalette};
 use crate::settings::{SettingsEvent, SettingsView};
 use crate::sync::{SyncEngine, SyncState};
+use crate::updater::UpdateState;
 
 actions!(agenthome, [OpenSearch]);
 
@@ -347,6 +348,11 @@ pub struct Workspace {
     /// 顶行按下鼠标后、首次移动时开始拖窗口（同 gpui-kit TitleBar 的做法）。
     drag_pending: bool,
     feed: LiveFeed,
+    /// 检查更新的状态（设置页也读这一份）。
+    update: Entity<UpdateState>,
+    /// 本次运行已经弹过提醒的版本：同一版只弹一次，「稍后」后不再打扰，下次启动再提醒。
+    prompted_version: Option<String>,
+    _update_task: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -380,6 +386,10 @@ impl Workspace {
         let palette = cx.new(|cx| SearchPalette::new(source.clone(), window, cx));
         let dashboard =
             cx.new(|cx| DashboardView::new(source, habitat_compact, live.clone(), window, cx));
+        let update = cx.new(|_| UpdateState::default());
+        // 演示 / 截图模式不联网；真实模式按设置自动检查。
+        let update_task =
+            (!demo && sync_db.is_some()).then(|| crate::updater::start_auto(update.clone(), cx));
         let sync = cx.new(|_| SyncState::default());
         let sync_engine = sync_db
             .clone()
@@ -389,6 +399,7 @@ impl Workspace {
                 sync.clone(),
                 sync_engine.as_ref().map(SyncEngine::handle),
                 live.clone(),
+                update.clone(),
                 sync_db,
                 cx,
             )
@@ -435,6 +446,36 @@ impl Workspace {
                     .update(cx, |dashboard, cx| dashboard.set_quota(quota, cx));
                 cx.notify();
             }),
+            // 查到新版本：弹一次提醒（同一版本本次运行只弹一次），左栏底部常驻入口。
+            cx.observe_in(&update, window, |this, update, window, cx| {
+                let available = update.read(cx).available().cloned();
+                if let Some(release) = available
+                    && this.prompted_version.as_deref() != Some(release.version.as_str())
+                {
+                    this.prompted_version = Some(release.version.clone());
+                    let url = release.url.clone();
+                    window.open_alert_dialog(cx, move |alert, _, _| {
+                        let url = url.clone();
+                        alert
+                            .title(t!("update.prompt_title", version = release.version).to_string())
+                            .description(
+                                t!(
+                                    "update.prompt_body",
+                                    current = crate::updater::current_version()
+                                )
+                                .to_string(),
+                            )
+                            .show_cancel(true)
+                            .ok_text(t!("update.download").to_string())
+                            .cancel_text(t!("update.later").to_string())
+                            .on_ok(move |_, _, cx| {
+                                cx.open_url(&url);
+                                true
+                            })
+                    });
+                }
+                cx.notify();
+            }),
             // 左栏的「视图 / 项目」选中态随归档页状态变化，归档页重绘时外壳跟着重绘。
             cx.observe(&archive, |_, _, cx| cx.notify()),
             cx.observe(&sync, |this, sync, cx| {
@@ -475,6 +516,9 @@ impl Workspace {
             seen_probe_ok_ms: None,
             drag_pending: false,
             feed,
+            update,
+            prompted_version: None,
+            _update_task: update_task,
             _subscriptions: subscriptions,
         }
     }
@@ -532,6 +576,7 @@ impl Workspace {
                 ),
             }
         };
+        let update_available = self.update.read(cx).available().cloned();
         // 底部品牌行（同 Notion 左下角的工作区行）：图标 + 名字，名字下一行是同步状态。
         h_flex()
             .id("sidebar-footer")
@@ -553,13 +598,36 @@ impl Workspace {
                     .min_w_0()
                     .gap(px(2.))
                     .child(
-                        div()
-                            .font_family(FONT_PIXEL_SANS)
-                            // 品牌字：Pixelify 在 11px 整数倍时落在整像素上。
-                            .text_size(px(11.))
-                            .font_semibold()
-                            .text_color(cx.theme().primary)
-                            .child("AgentHome"),
+                        h_flex()
+                            .items_center()
+                            .gap(px(6.))
+                            .child(
+                                div()
+                                    .font_family(FONT_PIXEL_SANS)
+                                    // 品牌字：Pixelify 在 11px 整数倍时落在整像素上。
+                                    .text_size(px(11.))
+                                    .font_semibold()
+                                    .text_color(cx.theme().primary)
+                                    .child("AgentHome"),
+                            )
+                            .when_some(update_available, |row, release| {
+                                let url = release.url.clone();
+                                row.child(
+                                    div()
+                                        .id("update-available")
+                                        .px(px(5.))
+                                        .rounded(px(3.))
+                                        .bg(cx.theme().success.opacity(0.18))
+                                        .text_color(cx.theme().success)
+                                        .text_size(px(10.5))
+                                        .cursor_pointer()
+                                        .child(
+                                            t!("update.badge", version = release.version)
+                                                .to_string(),
+                                        )
+                                        .on_click(move |_, _, cx| cx.open_url(&url)),
+                                )
+                            }),
                     )
                     .child(
                         h_flex()

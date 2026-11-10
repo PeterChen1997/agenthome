@@ -1,0 +1,46 @@
+_version: 2
+update.title:
+  en: Software update
+  zh-CN: 软件更新
+update.hint:
+  en: Checks GitHub for a newer release; only the version number is fetched, nothing about your sessions is sent
+  zh-CN: 到 GitHub 查有没有新版本；只读取版本号，不发送任何会话数据
+update.current:
+  en: Current version
+  zh-CN: 当前版本
+update.checking:
+  en: Checking for updates…
+  zh-CN: 正在检查更新…
+update.failed:
+  en: "Couldn't check for updates: %{error}"
+  zh-CN: "检查更新失败：%{error}"
+update.available:
+  en: "Version %{version} is available"
+  zh-CN: "有新版本 %{version} 可以下载"
+update.up_to_date:
+  en: "You're on the latest version · checked %{time}"
+  zh-CN: "已是最新版本 · %{time}检查"
+update.never_checked:
+  en: Not checked yet
+  zh-CN: 还没有检查过
+update.check_now:
+  en: Check now
+  zh-CN: 检查更新
+update.download:
+  en: Download
+  zh-CN: 前往下载
+update.later:
+  en: Later
+  zh-CN: 稍后
+update.auto:
+  en: Check automatically (at launch and once a day)
+  zh-CN: 自动检查（启动时与每天一次）
+update.prompt_title:
+  en: "AgentHome %{version} is available"
+  zh-CN: "AgentHome %{version} 已发布"
+update.prompt_body:
+  en: "You're on %{current}. Download the new version from the release page, unzip it and drag it into Applications to replace the old one; your archive and index stay as they are."
+  zh-CN: "当前是 %{current}。到发布页下载新版本，解压后拖进「应用程序」覆盖旧版即可，归档和索引库不受影响。"
+update.badge:
+  en: "New %{version}"
+  zh-CN: "新版本 %{version}"

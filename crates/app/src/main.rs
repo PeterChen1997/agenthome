@@ -21,6 +21,7 @@ mod search_palette;
 mod settings;
 mod sqlite_source;
 mod sync;
+mod updater;
 mod workspace;
 
 use std::path::PathBuf;

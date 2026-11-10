@@ -172,6 +172,18 @@ pub fn save_reset_credits_consent() -> anyhow::Result<()> {
     save_key("codex_reset_credits_consent", "yes")
 }
 
+/// 是否自动检查更新（默认开；设置页可关）。读不到按开。
+pub fn auto_update_check() -> bool {
+    !load_key("auto_update_check")
+        .ok()
+        .flatten()
+        .is_some_and(|v| v == "off")
+}
+
+pub fn save_auto_update_check(on: bool) -> anyhow::Result<()> {
+    save_key("auto_update_check", if on { "on" } else { "off" })
+}
+
 fn load_key(key: &str) -> anyhow::Result<Option<String>> {
     let path = config_path();
     let text = match std::fs::read_to_string(&path) {

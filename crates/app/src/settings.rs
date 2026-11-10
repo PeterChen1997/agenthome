@@ -13,14 +13,15 @@ use agenthome_core::model::{Freshness, ProviderId};
 use agenthome_core::signals::ResetCreditsSnapshot;
 use agenthome_core::statusline_setup::{self, StatuslinePaths, StatuslineStatus};
 use agenthome_core::{paths, pricing};
-use gpui_kit::component::button::Button;
+use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::switch::Switch;
 use gpui_kit::component::tab::{Tab, TabBar};
 use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, Sizable as _, WindowExt as _, h_flex, v_flex,
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AnyElement, AppContext as _, Context, Entity, EventEmitter, FontWeight,
+    AnyElement, AppContext as _, Context, Entity, EventEmitter, FontWeight, Hsla,
     InteractiveElement as _, IntoElement, ParentElement as _, Render, SharedString,
     StatefulInteractiveElement as _, Styled as _, Subscription, Task, Window, div, px,
 };
@@ -30,6 +31,7 @@ use crate::format::{now_ms, relative_time};
 use crate::live::LiveState;
 use crate::message_row::provider_avatar;
 use crate::sync::{ProviderSync, RawSync, SyncHandle, SyncState};
+use crate::updater::UpdateState;
 
 /// 库体积等慢变化信息的刷新间隔。
 const DISK_POLL: Duration = Duration::from_secs(30);
@@ -60,6 +62,8 @@ pub struct SettingsView {
     sync: Entity<SyncState>,
     sync_handle: Option<SyncHandle>,
     live: Entity<LiveState>,
+    update: Entity<UpdateState>,
+    auto_update: bool,
     index_db: Option<PathBuf>,
     disk: DiskInfo,
     appearance: Appearance,
@@ -77,12 +81,14 @@ impl SettingsView {
         sync: Entity<SyncState>,
         sync_handle: Option<SyncHandle>,
         live: Entity<LiveState>,
+        update: Entity<UpdateState>,
         index_db: Option<PathBuf>,
         cx: &mut Context<Self>,
     ) -> Self {
         let subscriptions = vec![
             cx.observe(&sync, |_, _, cx| cx.notify()),
             cx.observe(&live, |_, _, cx| cx.notify()),
+            cx.observe(&update, |_, _, cx| cx.notify()),
         ];
         let db = index_db.clone();
         let disk_task = cx.spawn(async move |this, cx| {
@@ -107,6 +113,8 @@ impl SettingsView {
             sync,
             sync_handle,
             live,
+            update,
+            auto_update: config::auto_update_check(),
             index_db,
             disk: DiskInfo::default(),
             appearance: config::current_appearance(),
@@ -753,6 +761,90 @@ impl SettingsView {
         .into_any_element()
     }
 
+    /// 软件更新：当前版本、最近一次检查的结果、自动检查开关与「检查更新」按钮。
+    fn render_updates(&self, cx: &mut Context<Self>) -> AnyElement {
+        let state = self.update.read(cx).clone();
+        let now = crate::format::now_ms();
+        let available = state.available().cloned();
+        let (status, tone): (String, Option<Hsla>) = if state.checking {
+            (t!("update.checking").to_string(), None)
+        } else if let Some(error) = &state.last_error {
+            (
+                t!("update.failed", error = error).to_string(),
+                Some(cx.theme().danger),
+            )
+        } else if let Some(release) = &available {
+            (
+                t!("update.available", version = release.version).to_string(),
+                Some(cx.theme().success),
+            )
+        } else if let Some(at) = state.last_checked_ms {
+            (
+                t!("update.up_to_date", time = relative_time(at, now)).to_string(),
+                None,
+            )
+        } else {
+            (t!("update.never_checked").to_string(), None)
+        };
+        section(
+            t!("update.title").to_string(),
+            t!("update.hint").to_string(),
+            cx,
+        )
+        .child(kv(
+            t!("update.current"),
+            crate::updater::current_version(),
+            cx,
+        ))
+        .child(match tone {
+            Some(color) => div().text_size(px(12.)).text_color(color).child(status),
+            None => muted(status, cx),
+        })
+        .child(
+            h_flex()
+                .gap(px(8.))
+                .items_center()
+                .child(
+                    Button::new("update-check")
+                        .outline()
+                        .small()
+                        .label(t!("update.check_now").to_string())
+                        .loading(state.checking)
+                        .disabled(state.checking)
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            crate::updater::check_now(&this.update, cx);
+                        })),
+                )
+                .when_some(available, |row, release| {
+                    row.child(
+                        Button::new("update-download")
+                            .primary()
+                            .small()
+                            .label(t!("update.download").to_string())
+                            .on_click(move |_, _, cx| cx.open_url(&release.url)),
+                    )
+                }),
+        )
+        .child(
+            Switch::new("auto-update-check")
+                .checked(self.auto_update)
+                .label(t!("update.auto").to_string())
+                .on_click(cx.listener(|this, on: &bool, _, cx| {
+                    match config::save_auto_update_check(*on) {
+                        Ok(()) => this.auto_update = *on,
+                        Err(error) => {
+                            this.notice = Some(Notice {
+                                ok: false,
+                                text: format!("{error:#}").into(),
+                            });
+                        }
+                    }
+                    cx.notify();
+                })),
+        )
+        .into_any_element()
+    }
+
     fn render_about(&self, cx: &mut Context<Self>) -> AnyElement {
         section(t!("settings.about_title").to_string(), "", cx)
             .child(muted(t!("settings.about_quota").to_string(), cx))
@@ -819,6 +911,7 @@ impl Render for SettingsView {
                     .child(self.render_storage(cx))
                     .child(self.render_appearance(cx))
                     .child(self.render_language(cx))
+                    .child(self.render_updates(cx))
                     .child(self.render_about(cx)),
             )
     }
