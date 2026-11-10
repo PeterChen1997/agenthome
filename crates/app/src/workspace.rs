@@ -40,7 +40,7 @@ use crate::pressure_badge::PressureBadge;
 use crate::search_palette::{PaletteEvent, SearchPalette};
 use crate::settings::{SettingsEvent, SettingsView};
 use crate::sync::{SyncEngine, SyncState};
-use crate::updater::UpdateState;
+use crate::updater::{InstallPhase, UpdateState};
 
 actions!(agenthome, [OpenSearch]);
 
@@ -476,23 +476,28 @@ impl Workspace {
                     && this.prompted_version.as_deref() != Some(release.version.as_str())
                 {
                     this.prompted_version = Some(release.version.clone());
-                    let url = release.url.clone();
+                    // 能替换自身就「立即更新」（下载、验证、重启），否则退回「前往下载」。
+                    let in_app = crate::updater::install_target().is_some();
+                    let update = update.clone();
                     window.open_alert_dialog(cx, move |alert, _, _| {
-                        let url = url.clone();
+                        let update = update.clone();
+                        let current = crate::updater::current_version();
                         alert
                             .title(t!("update.prompt_title", version = release.version).to_string())
-                            .description(
-                                t!(
-                                    "update.prompt_body",
-                                    current = crate::updater::current_version()
-                                )
-                                .to_string(),
-                            )
+                            .description(if in_app {
+                                t!("update.prompt_body_in_app", current = current).to_string()
+                            } else {
+                                t!("update.prompt_body", current = current).to_string()
+                            })
                             .show_cancel(true)
-                            .ok_text(t!("update.download").to_string())
+                            .ok_text(if in_app {
+                                t!("update.install_now").to_string()
+                            } else {
+                                t!("update.download").to_string()
+                            })
                             .cancel_text(t!("update.later").to_string())
                             .on_ok(move |_, _, cx| {
-                                cx.open_url(&url);
+                                crate::updater::install_now(&update, cx);
                                 true
                             })
                     });
@@ -601,6 +606,7 @@ impl Workspace {
             }
         };
         let update_available = self.update.read(cx).available().cloned();
+        let update_phase = self.update.read(cx).install.clone();
         // 底部品牌行（同 Notion 左下角的工作区行）：图标 + 名字，名字下一行是同步状态。
         h_flex()
             .id("sidebar-footer")
@@ -635,7 +641,13 @@ impl Workspace {
                                     .child("AgentHome"),
                             )
                             .when_some(update_available, |row, release| {
-                                let url = release.url.clone();
+                                let update = self.update.clone();
+                                let label = match &update_phase {
+                                    InstallPhase::Downloading => t!("update.badge_downloading"),
+                                    InstallPhase::Installing => t!("update.badge_installing"),
+                                    _ => t!("update.badge", version = release.version),
+                                }
+                                .to_string();
                                 row.child(
                                     div()
                                         .id("update-available")
@@ -645,11 +657,11 @@ impl Workspace {
                                         .text_color(cx.theme().success)
                                         .text_size(px(10.5))
                                         .cursor_pointer()
-                                        .child(
-                                            t!("update.badge", version = release.version)
-                                                .to_string(),
-                                        )
-                                        .on_click(move |_, _, cx| cx.open_url(&url)),
+                                        .child(label)
+                                        // 点了就更新（不能替换自身时打开发布页）。
+                                        .on_click(move |_, _, cx| {
+                                            crate::updater::install_now(&update, cx)
+                                        }),
                                 )
                             }),
                     )

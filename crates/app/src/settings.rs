@@ -31,7 +31,7 @@ use crate::format::{now_ms, relative_time};
 use crate::live::LiveState;
 use crate::message_row::provider_avatar;
 use crate::sync::{ProviderSync, RawSync, SyncHandle, SyncState};
-use crate::updater::UpdateState;
+use crate::updater::{InstallPhase, UpdateState};
 
 /// 库体积等慢变化信息的刷新间隔。
 const DISK_POLL: Duration = Duration::from_secs(30);
@@ -766,26 +766,41 @@ impl SettingsView {
         let state = self.update.read(cx).clone();
         let now = crate::format::now_ms();
         let available = state.available().cloned();
-        let (status, tone): (String, Option<Hsla>) = if state.checking {
-            (t!("update.checking").to_string(), None)
-        } else if let Some(error) = &state.last_error {
-            (
-                t!("update.failed", error = error).to_string(),
-                Some(cx.theme().danger),
-            )
-        } else if let Some(release) = &available {
-            (
-                t!("update.available", version = release.version).to_string(),
-                Some(cx.theme().success),
-            )
-        } else if let Some(at) = state.last_checked_ms {
-            (
-                t!("update.up_to_date", time = relative_time(at, now)).to_string(),
-                None,
-            )
-        } else {
-            (t!("update.never_checked").to_string(), None)
-        };
+        let in_app = crate::updater::install_target().is_some();
+        let busy = matches!(
+            state.install,
+            InstallPhase::Downloading | InstallPhase::Installing
+        );
+        let (status, tone): (String, Option<Hsla>) =
+            if let InstallPhase::Failed(error) = &state.install {
+                (
+                    t!("update.install_failed", error = error).to_string(),
+                    Some(cx.theme().danger),
+                )
+            } else if state.install == InstallPhase::Downloading {
+                (t!("update.downloading").to_string(), None)
+            } else if state.install == InstallPhase::Installing {
+                (t!("update.installing").to_string(), None)
+            } else if state.checking {
+                (t!("update.checking").to_string(), None)
+            } else if let Some(error) = &state.last_error {
+                (
+                    t!("update.failed", error = error).to_string(),
+                    Some(cx.theme().danger),
+                )
+            } else if let Some(release) = &available {
+                (
+                    t!("update.available", version = release.version).to_string(),
+                    Some(cx.theme().success),
+                )
+            } else if let Some(at) = state.last_checked_ms {
+                (
+                    t!("update.up_to_date", time = relative_time(at, now)).to_string(),
+                    None,
+                )
+            } else {
+                (t!("update.never_checked").to_string(), None)
+            };
         section(
             t!("update.title").to_string(),
             t!("update.hint").to_string(),
@@ -816,12 +831,28 @@ impl SettingsView {
                         })),
                 )
                 .when_some(available, |row, release| {
+                    let url = release.url.clone();
                     row.child(
-                        Button::new("update-download")
+                        Button::new("update-install")
                             .primary()
                             .small()
-                            .label(t!("update.download").to_string())
-                            .on_click(move |_, _, cx| cx.open_url(&release.url)),
+                            .label(if in_app {
+                                t!("update.install_now").to_string()
+                            } else {
+                                t!("update.download").to_string()
+                            })
+                            .loading(busy)
+                            .disabled(busy)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                crate::updater::install_now(&this.update, cx);
+                            })),
+                    )
+                    .child(
+                        Button::new("update-notes")
+                            .ghost()
+                            .small()
+                            .label(t!("update.release_notes").to_string())
+                            .on_click(move |_, _, cx| cx.open_url(&url)),
                     )
                 }),
         )

@@ -42,5 +42,29 @@ update.prompt_body:
   en: "You're on %{current}. Download the new version from the release page, unzip it and drag it into Applications to replace the old one; your archive and index stay as they are."
   zh-CN: "当前是 %{current}。到发布页下载新版本，解压后拖进「应用程序」覆盖旧版即可，归档和索引库不受影响。"
 update.badge:
-  en: "New %{version}"
-  zh-CN: "新版本 %{version}"
+  en: "Update to %{version}"
+  zh-CN: "更新到 %{version}"
+update.badge_downloading:
+  en: Downloading update…
+  zh-CN: 正在下载更新…
+update.badge_installing:
+  en: Restarting…
+  zh-CN: 即将重启…
+update.install_now:
+  en: Update now
+  zh-CN: 立即更新
+update.release_notes:
+  en: Release notes
+  zh-CN: 发布说明
+update.downloading:
+  en: "Downloading and verifying the new version (checksum, signature, notarization)… AgentHome restarts by itself when it's done"
+  zh-CN: "正在下载并验证新版本（校验和、签名、公证）…完成后应用会自动重启"
+update.installing:
+  en: Verified. AgentHome is closing to install the new version and will reopen by itself
+  zh-CN: 验证通过，应用即将退出安装新版本，随后自动重新打开
+update.install_failed:
+  en: "Update failed, nothing was changed: %{error}"
+  zh-CN: "更新失败，没有改动任何东西：%{error}"
+update.prompt_body_in_app:
+  en: "You're on %{current}. Update now downloads the new version, checks its signature and notarization, replaces the app and restarts it. Your archive and index stay as they are."
+  zh-CN: "当前是 %{current}。点「立即更新」会下载新版本，验证签名与公证后替换应用并自动重启，归档和索引库不受影响。"
