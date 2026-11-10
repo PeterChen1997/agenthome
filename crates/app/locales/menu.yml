@@ -1,0 +1,4 @@
+_version: 2
+menu.quit:
+  en: Quit AgentHome
+  zh-CN: 退出 AgentHome

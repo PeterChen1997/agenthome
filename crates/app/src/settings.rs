@@ -154,6 +154,7 @@ impl SettingsView {
         }
         self.language = language;
         config::apply_language(language);
+        crate::set_app_menus(cx);
         self.notice = match config::save_language(language) {
             Ok(()) => None,
             Err(error) => Some(Notice {

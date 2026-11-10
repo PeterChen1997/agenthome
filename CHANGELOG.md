@@ -4,6 +4,19 @@ All notable changes to AgentHome are listed here. Versions follow [Semantic Vers
 
 Downloads are on the [releases page](https://github.com/PeterChen1997/agenthome/releases). Release builds are for macOS 15+ on Apple Silicon.
 
+## 0.2.0 - 2026-11-10
+
+### Added
+
+- **Menu bar.** A pixel-house icon in the macOS menu bar opens a usage summary: the habitat, today's cost, output and sessions, and one row per agent (Claude, Codex, Gemini) with its status, 5-hour quota left, a 10-cell bar, reset countdown, the tightest other window and today's output and cost. The three most recent sessions open straight into the archive. Buttons open the main window, sync now, open Settings or quit. The popup closes when you click elsewhere.
+- **English interface.** Settings → Language offers System, 简体中文 and English; "System" picks Chinese when the macOS preferred language is Chinese and English otherwise. The choice is saved in `~/AgentHome/config/app.json`. Demo data follows the language too. Launch option `--lang zh-CN|en` pins the language without saving it.
+- Launch option `--menubar-popup` opens the popup content as a normal window, for screenshots.
+
+### Changed
+
+- Closing the main window now hides it; AgentHome keeps running in the menu bar, syncing and updating quota. Reopen it from the menu bar popup or the Dock icon. Quit with ⌘Q (new app menu), from the popup or from the Dock menu.
+- Command-line help and developer error messages of the desktop app are in English.
+
 ## 0.1.6 - 2026-11-09
 
 ### Fixed

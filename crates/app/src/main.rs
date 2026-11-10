@@ -56,6 +56,25 @@ const USAGE: &str = "Usage: agenthome-app [--db PATH] [--mock] [--habitat-demo] 
   --capture PATH       render the window offscreen to PNG after a delay, then quit (needs --features capture)
   --capture-delay SEC  seconds to wait before capturing, default 4";
 
+gpui_kit::actions!(agenthome_app, [Quit]);
+
+/// 应用菜单只放「退出 ⌘Q」：关主窗口只是隐藏（菜单栏常驻），退出要有标准入口。
+fn install_app_menu(cx: &mut gpui_kit::App) {
+    cx.on_action(|_: &Quit, cx| cx.quit());
+    cx.bind_keys([gpui_kit::KeyBinding::new("cmd-q", Quit, None)]);
+    set_app_menus(cx);
+}
+
+/// 切换界面语言后重新调用，让菜单文字跟着变。
+pub(crate) fn set_app_menus(cx: &mut gpui_kit::App) {
+    cx.set_menus([
+        gpui_kit::Menu::new("AgentHome").items([gpui_kit::MenuItem::action(
+            t!("menu.quit").to_string(),
+            Quit,
+        )]),
+    ]);
+}
+
 fn main() {
     let mut mock = false;
     let mut habitat_demo = false;
@@ -191,6 +210,7 @@ fn main() {
     application.on_reopen(menubar::reopen);
     application.run(move |cx| {
         gpui_kit::init(cx);
+        install_app_menu(cx);
         register_fonts(cx);
         apply_pixel_habitat_theme(cx);
         // 命令行 --appearance 优先（截图用，不写偏好）；否则用设置页保存的偏好。
