@@ -179,11 +179,17 @@ pub fn estimate_usd(model: &str, usage: &Usage) -> Option<f64> {
     };
     let r = p.rates_for_prompt(input + cache_read + cw5 + cw1h);
     let f = |n: u64| n as f64 / 1_000_000.0;
+    // 缓存写单价为 0 表示没有缓存写溢价（OpenAI）：这部分照普通输入计费，不是免费。
+    let cache_write_5m = if r.cache_write_5m > 0.0 {
+        r.cache_write_5m
+    } else {
+        r.input
+    };
     Some(
         f(input) * r.input
             + f(usage.output_tokens) * r.output
             + f(cache_read) * r.cache_read
-            + f(cw5) * r.cache_write_5m
+            + f(cw5) * cache_write_5m
             + f(cw1h) * r.cache_write_1h,
     )
 }
@@ -315,5 +321,25 @@ mod tests {
         let c = estimate_usd("gpt-5-codex", &u).unwrap();
         assert!((c - 1.575).abs() < 1e-9, "{c}");
         assert_eq!(estimate_usd("not-a-model", &u), None);
+    }
+
+    #[test]
+    fn 无缓存写溢价的模型_缓存写按输入价而不是免费() {
+        // OpenAI 没有缓存写溢价，定价表里写单价为 0。Codex 把缓存写从 input 里拆出来以后，
+        // 这部分若按 0 计会凭空少算一截成本；它实际是按普通输入计费的。
+        let split = Usage {
+            input_tokens: 400_000,
+            cache_write_tokens: 600_000,
+            output_tokens: 100_000,
+            ..Usage::default()
+        };
+        let whole = Usage {
+            input_tokens: 1_000_000,
+            output_tokens: 100_000,
+            ..Usage::default()
+        };
+        let a = estimate_usd("gpt-5-codex", &split).unwrap();
+        let b = estimate_usd("gpt-5-codex", &whole).unwrap();
+        assert!((a - b).abs() < 1e-12, "{a} vs {b}");
     }
 }

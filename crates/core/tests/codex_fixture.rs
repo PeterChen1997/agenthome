@@ -482,3 +482,107 @@ fn 会话级估算成本等于消息之和_不二次扣缓存() {
         assert!((s.estimated_cost_usd.unwrap() - per_message).abs() < 1e-12);
     }
 }
+
+/// fork / 续写出来的旧版文件（没有 token_usage_record）：第一条 token_count 的 total 带着父会话的
+/// 累计量（本机见过 2 亿 vs 本次 18.7 万）。直接取 total 会把父会话的用量整段再算一遍。
+#[test]
+fn 分叉文件第一条累计值不算父会话的用量() {
+    let dir = tempfile::tempdir().unwrap();
+    let day = dir.path().join("2025").join("10").join("13");
+    std::fs::create_dir_all(&day).unwrap();
+    let id = "0199d624-3fc4-7752-a28c-fc1e6c3fbeef";
+    let lines = [
+        line(
+            "2025-10-13T10:00:00.000Z",
+            "session_meta",
+            json!({"id": id, "timestamp": "2025-10-13T10:00:00.000Z", "cwd": "/tmp/proj-c",
+                   "originator": "codex_cli_rs", "cli_version": "0.40.0", "source": "cli"}),
+        ),
+        line(
+            "2025-10-13T10:00:01.000Z",
+            "response_item",
+            json!({"type": "message", "role": "user", "content": [{"type": "input_text", "text": "分叉后的新问题"}]}),
+        ),
+        line(
+            "2025-10-13T10:00:01.500Z",
+            "turn_context",
+            json!({"cwd": "/tmp/proj-c", "model": "gpt-5"}),
+        ),
+        line(
+            "2025-10-13T10:00:02.000Z",
+            "response_item",
+            json!({"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "好"}]}),
+        ),
+        // 父会话累计了 1 亿输入；本次请求只有 3000。
+        line(
+            "2025-10-13T10:00:02.100Z",
+            "event_msg",
+            json!({"type": "token_count",
+                   "info": {"total_token_usage": usage(100_003_000, 0, 50_000, 0),
+                            "last_token_usage": usage(3_000, 0, 40, 0)},
+                   "rate_limits": null}),
+        ),
+    ];
+    let path = day.join(format!("rollout-2025-10-13T10-00-00-{id}.jsonl"));
+    std::fs::write(&path, lines.join("\n")).unwrap();
+    let s = CodexProvider::new(dir.path().to_path_buf())
+        .parse_file(&path)
+        .unwrap()
+        .session;
+    assert_eq!((s.usage.input_tokens, s.usage.output_tokens), (3_000, 40));
+}
+
+/// `cache_write_input_tokens` 和 `cached_input_tokens` 一样出自 `input_tokens_details`，是 input 的
+/// 一部分（官方 codex-api 测试：100 = 40 读 + 60 写）。不扣会让 token 总数重复计入缓存写。
+#[test]
+fn 缓存写是输入的一部分_不重复计数() {
+    let dir = tempfile::tempdir().unwrap();
+    let day = dir.path().join("2025").join("10").join("14");
+    std::fs::create_dir_all(&day).unwrap();
+    let id = "0199d624-3fc4-7752-a28c-fc1e6c3fcafe";
+    let u = json!({"input_tokens": 100, "cached_input_tokens": 40, "cache_write_input_tokens": 60,
+                   "output_tokens": 10, "reasoning_output_tokens": 5, "total_tokens": 110});
+    let lines = [
+        line(
+            "2025-10-14T10:00:00.000Z",
+            "session_meta",
+            json!({"id": id, "timestamp": "2025-10-14T10:00:00.000Z", "cwd": "/tmp/proj-d",
+                   "originator": "codex_cli_rs", "cli_version": "0.40.0", "source": "cli"}),
+        ),
+        line(
+            "2025-10-14T10:00:01.000Z",
+            "turn_context",
+            json!({"cwd": "/tmp/proj-d", "model": "gpt-5"}),
+        ),
+        line(
+            "2025-10-14T10:00:02.000Z",
+            "response_item",
+            json!({"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "好"}]}),
+        ),
+        line(
+            "2025-10-14T10:00:02.100Z",
+            "event_msg",
+            json!({"type": "token_count",
+                   "info": {"total_token_usage": u, "last_token_usage": u}, "rate_limits": null}),
+        ),
+    ];
+    let path = day.join(format!("rollout-2025-10-14T10-00-00-{id}.jsonl"));
+    std::fs::write(&path, lines.join("\n")).unwrap();
+    let s = CodexProvider::new(dir.path().to_path_buf())
+        .parse_file(&path)
+        .unwrap()
+        .session;
+    assert_eq!(
+        (
+            s.usage.input_tokens,
+            s.usage.cache_read_tokens,
+            s.usage.cache_write_tokens
+        ),
+        (0, 40, 60)
+    );
+    assert_eq!(
+        s.usage.total_tokens(),
+        110,
+        "输入 100 + 输出 10，不能是 170"
+    );
+}

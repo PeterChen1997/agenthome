@@ -686,7 +686,13 @@ impl CodexLineParser {
                             .map(parse_usage)
                             .unwrap_or(total)
                     }),
-                    None => total,
+                    // 文件里第一条：fork / 续写出来的文件，total 带着父会话的累计量，
+                    // 只能取本次请求的 last_token_usage。
+                    None => p
+                        .pointer("/info/last_token_usage")
+                        .filter(|v| !v.is_null())
+                        .map(parse_usage)
+                        .unwrap_or(total),
                 };
                 self.last_total = p.pointer("/info/total_token_usage").map(parse_usage);
                 if delta.total_tokens() > 0 && self.mode != UsageMode::Record {
@@ -845,14 +851,20 @@ impl CodexLineParser {
     }
 }
 
+/// Codex 的 TokenUsage：`cached_input_tokens` 与 `cache_write_input_tokens` 都来自 Responses API 的
+/// `input_tokens_details`，是 `input_tokens` 的组成部分（官方 codex-api `sse/responses.rs`），
+/// 入库前都要从 input 里扣掉，否则 token 数重复。
 fn parse_usage(u: &Value) -> Usage {
     let n = |k: &str| u.get(k).and_then(Value::as_u64).unwrap_or(0);
     let cached = n("cached_input_tokens");
+    let cache_write = n("cache_write_input_tokens");
     Usage {
-        input_tokens: n("input_tokens").saturating_sub(cached),
+        input_tokens: n("input_tokens")
+            .saturating_sub(cached)
+            .saturating_sub(cache_write),
         output_tokens: n("output_tokens"),
         cache_read_tokens: cached,
-        cache_write_tokens: n("cache_write_input_tokens"),
+        cache_write_tokens: cache_write,
         cache_write_5m_tokens: 0,
         cache_write_1h_tokens: 0,
         reasoning_tokens: n("reasoning_output_tokens"),
