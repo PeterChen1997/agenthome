@@ -160,6 +160,18 @@ pub fn save_language(language: Language) -> anyhow::Result<()> {
     save_key("language", language.key())
 }
 
+/// 用户是否已同意「由官方 codex 查询 ChatGPT 重置额度」。只问一次；读不到按未同意。
+pub fn reset_credits_consented() -> bool {
+    load_key("codex_reset_credits_consent")
+        .ok()
+        .flatten()
+        .is_some_and(|v| v == "yes")
+}
+
+pub fn save_reset_credits_consent() -> anyhow::Result<()> {
+    save_key("codex_reset_credits_consent", "yes")
+}
+
 fn load_key(key: &str) -> anyhow::Result<Option<String>> {
     let path = config_path();
     let text = match std::fs::read_to_string(&path) {

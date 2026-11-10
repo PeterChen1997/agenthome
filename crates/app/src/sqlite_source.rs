@@ -111,7 +111,15 @@ impl DataSource for SqliteDataSource {
         if let Some(s) = agenthome_core::signals::merge_claude(fallback, usage) {
             out.push(s);
         }
-        if let Some(s) = codex_rollout_quota(None)? {
+        if let Some(mut s) = codex_rollout_quota(None)? {
+            // 重置额度只在用户手动查询后才有（设置页「查询」），查过就并进来。
+            if let Some(reset) = agenthome_core::signals::load_reset_credits(None)? {
+                agenthome_core::signals::apply_reset_credits(
+                    &mut s,
+                    &reset,
+                    crate::format::now_ms(),
+                );
+            }
             out.push(s);
         }
         Ok(out)

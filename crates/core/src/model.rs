@@ -420,6 +420,9 @@ pub struct Credits {
     pub has_credits: bool,
     pub reset_credits: Option<u32>,
     pub expires_at_ms: Option<i64>,
+    /// 每张未用重置额度的过期时刻（先后排序）；来自手动查询，rollout 里没有。
+    #[serde(default)]
+    pub reset_credit_expiries_ms: Vec<i64>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

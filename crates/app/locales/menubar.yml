@@ -83,3 +83,6 @@ menubar.quit:
 menubar.load_failed:
   en: "Could not load today's stats: %{error}"
   zh-CN: "读取今日统计失败：%{error}"
+menubar.reset_credits:
+  en: "%{count} reset credits"
+  zh-CN: "重置额度 %{count} 张"

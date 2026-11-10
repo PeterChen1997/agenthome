@@ -12,6 +12,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use agenthome_core::model::{Period, ProviderId, QuotaSnapshot, QuotaWindow, SessionQuery};
+use agenthome_core::pressure::{PressureReading, worst_pressure};
 use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
@@ -22,9 +23,12 @@ use gpui_kit::{
 
 use crate::assets::{FONT_PIXEL_MONO, FONT_PIXEL_SANS};
 use crate::data::DataSource;
-use crate::format::{countdown, now_ms, relative_time, short_cost, short_tokens, thousands};
+use crate::format::{
+    countdown, now_ms, quota_window_label, relative_time, short_cost, short_tokens, thousands,
+};
 use crate::habitat::{HabitatSize, HabitatView, ResidentId, ResidentState};
 use crate::live::{LiveFeed, LiveState, primary_window, resident_of, shown_state};
+use crate::pressure_badge::PressureBadge;
 use crate::sync::{SyncHandle, SyncState};
 
 #[cfg(target_os = "macos")]
@@ -119,20 +123,33 @@ pub struct WindowUse {
     pub resets_in_ms: Option<i64>,
 }
 
-/// Codex 的信用额度。
+/// Codex 的信用额度与重置额度。
 #[derive(Clone, Debug, PartialEq)]
 pub struct CreditsLine {
     pub balance: Option<String>,
     pub unlimited: bool,
+    /// 未用的重置额度张数（设置页手动查询后才有）。
+    pub reset_credits: Option<u32>,
     pub expires_in_ms: Option<i64>,
 }
 
-/// 住户行要显示的额度：主窗口 + 最吃紧的另一个窗口 + 信用。
+/// 压力最大的那个窗口。
+#[derive(Clone, Debug, PartialEq)]
+pub struct WindowPressure {
+    /// 不是主窗口时为它的短标签（「7d」），是主窗口时为 None（不必重复窗口名）。
+    pub label: Option<String>,
+    /// 完整窗口名（「7 天」），悬停说明用。
+    pub window: String,
+    pub reading: PressureReading,
+}
+
+/// 住户行要显示的额度：主窗口 + 最吃紧的另一个窗口 + 信用 + 使用压力。
 #[derive(Clone, Debug, PartialEq)]
 pub struct AgentQuota {
     pub primary: WindowUse,
     pub secondary: Option<WindowUse>,
     pub credits: Option<CreditsLine>,
+    pub pressure: Option<WindowPressure>,
 }
 
 /// 窗口短标签：300 分钟 → 5h，10080 分钟 → 7d，单模型窗口带上模型名；没有分钟数时退回来源给的标签。
@@ -179,16 +196,26 @@ pub fn agent_quota(snapshot: &QuotaSnapshot, now_ms: i64) -> Option<AgentQuota> 
     let credits = snapshot
         .credits
         .as_ref()
-        .filter(|credits| credits.has_credits || credits.unlimited)
+        .filter(|credits| {
+            credits.has_credits || credits.unlimited || credits.reset_credits.is_some_and(|n| n > 0)
+        })
         .map(|credits| CreditsLine {
             balance: credits.balance.clone(),
             unlimited: credits.unlimited,
+            reset_credits: credits.reset_credits.filter(|n| *n > 0),
             expires_in_ms: credits.expires_at_ms.map(|at| at - now_ms),
+        });
+    let pressure =
+        worst_pressure(&snapshot.windows, now_ms).map(|(window, reading)| WindowPressure {
+            label: (window.id != primary.id).then(|| window_short_label(window)),
+            window: quota_window_label(window),
+            reading,
         });
     Some(AgentQuota {
         primary: window_use(primary, now_ms),
         secondary,
         credits,
+        pressure,
     })
 }
 
@@ -551,11 +578,26 @@ impl MenuBarPanel {
             )
             .into()
         });
+        // 重置额度 3 天内过期：抢在第二个窗口前面显示，并着色提醒（1 天内红、3 天内琥珀）。
+        let credit_alert = quota
+            .as_ref()
+            .and_then(|q| q.credits.as_ref())
+            .filter(|credits| credits.reset_credits.is_some())
+            .and_then(|credits| credits.expires_in_ms)
+            .and_then(|ms| {
+                if ms < 86_400_000 {
+                    Some(cx.theme().danger)
+                } else if ms < 3 * 86_400_000 {
+                    Some(cx.theme().warning)
+                } else {
+                    None
+                }
+            });
         let right: SharedString = match &quota {
             Some(AgentQuota {
                 secondary: Some(window),
                 ..
-            }) => {
+            }) if credit_alert.is_none() => {
                 let percent = (100.0 - window.used_percent).round();
                 match window.resets_in_ms {
                     Some(ms) => t!(
@@ -571,6 +613,21 @@ impl MenuBarPanel {
                     ),
                 }
                 .into()
+            }
+            Some(AgentQuota {
+                credits: Some(credits),
+                ..
+            }) if credits.reset_credits.is_some() => {
+                let count = credits.reset_credits.unwrap_or_default();
+                let amount: String = t!("menubar.reset_credits", count = count).into();
+                match credits.expires_in_ms {
+                    Some(ms) if ms > 0 => format!(
+                        "{amount} · {}",
+                        t!("menubar.credits_expire", time = countdown(ms))
+                    )
+                    .into(),
+                    _ => amount.into(),
+                }
             }
             Some(AgentQuota {
                 credits: Some(credits),
@@ -685,12 +742,39 @@ impl MenuBarPanel {
                             .justify_between()
                             .text_size(px(11.))
                             .text_color(cx.theme().muted_foreground)
-                            .child(div().truncate().child(left))
-                            .child(div().flex_none().child(if quota.is_some() {
-                                right
-                            } else {
-                                today_text.clone().unwrap_or_default()
-                            })),
+                            .child(
+                                h_flex()
+                                    .min_w_0()
+                                    .gap(px(6.))
+                                    .child(div().truncate().child(left))
+                                    .items_center()
+                                    .when_some(
+                                        quota.as_ref().and_then(|q| q.pressure.clone()),
+                                        |line, pressure| {
+                                            line.child(
+                                                PressureBadge::new(
+                                                    SharedString::from(format!(
+                                                        "menubar-pressure-{}",
+                                                        who.slug()
+                                                    )),
+                                                    pressure.reading,
+                                                    pressure.window,
+                                                )
+                                                .prefix(pressure.label),
+                                            )
+                                        },
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .flex_none()
+                                    .when_some(credit_alert, |d, color| d.text_color(color))
+                                    .child(if quota.is_some() {
+                                        right
+                                    } else {
+                                        today_text.clone().unwrap_or_default()
+                                    }),
+                            ),
                     )
                     .when_some(today_text.filter(|_| quota.is_some()), |column, text| {
                         column.child(
@@ -1250,6 +1334,7 @@ mod tests {
             has_credits: true,
             reset_credits: None,
             expires_at_ms: Some(86_400_000),
+            reset_credit_expiries_ms: Vec::new(),
         });
         let quota = agent_quota(&codex, 0).expect("has a window");
         // 超过 100% 的读数夹到 100，避免条与文字溢出。
@@ -1259,6 +1344,7 @@ mod tests {
             Some(CreditsLine {
                 balance: Some("3".into()),
                 unlimited: false,
+                reset_credits: None,
                 expires_in_ms: Some(86_400_000),
             })
         );
@@ -1268,8 +1354,20 @@ mod tests {
             has_credits: false,
             reset_credits: None,
             expires_at_ms: None,
+            reset_credit_expiries_ms: Vec::new(),
         });
         assert_eq!(agent_quota(&codex, 0).and_then(|q| q.credits), None);
+        // 余额为 0 但查到了未用的重置额度：照样显示，否则临期提醒没地方出现。
+        codex.credits = Some(Credits {
+            balance: Some("0".into()),
+            unlimited: false,
+            has_credits: false,
+            reset_credits: Some(2),
+            expires_at_ms: Some(2 * 86_400_000),
+            reset_credit_expiries_ms: vec![2 * 86_400_000, 3 * 86_400_000],
+        });
+        let credits = agent_quota(&codex, 0).and_then(|q| q.credits);
+        assert_eq!(credits.map(|c| c.reset_credits), Some(Some(2)));
     }
 
     #[test]

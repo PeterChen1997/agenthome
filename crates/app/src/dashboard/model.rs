@@ -176,19 +176,31 @@ pub fn due_items(snapshots: &[QuotaSnapshot]) -> Vec<DueItem> {
                 quota_left: Some(left),
             });
         }
-        if let Some(credits) = &snapshot.credits
-            && let Some(at_ms) = credits.expires_at_ms
-        {
-            items.push(DueItem {
-                provider: snapshot.provider.clone(),
-                title: t!("dashboard.due_credit_expiry", name = name).into_owned(),
-                note: credits
-                    .reset_credits
-                    .map(|n| t!("dashboard.due_credits_unused", count = n).into_owned())
-                    .unwrap_or_default(),
-                at_ms,
-                quota_left: None,
-            });
+        if let Some(credits) = &snapshot.credits {
+            // 查到了每张的过期时刻就各占一行（两张可能相差一天，都要提醒）；否则只有最早那张。
+            let expiries: Vec<i64> = if credits.reset_credit_expiries_ms.is_empty() {
+                credits.expires_at_ms.into_iter().collect()
+            } else {
+                credits.reset_credit_expiries_ms.clone()
+            };
+            let total = expiries.len();
+            for (ix, at_ms) in expiries.into_iter().enumerate() {
+                let note = if total > 1 {
+                    t!("dashboard.due_credit_nth", n = ix + 1, total = total).into_owned()
+                } else {
+                    credits
+                        .reset_credits
+                        .map(|n| t!("dashboard.due_credits_unused", count = n).into_owned())
+                        .unwrap_or_default()
+                };
+                items.push(DueItem {
+                    provider: snapshot.provider.clone(),
+                    title: t!("dashboard.due_credit_expiry", name = name).into_owned(),
+                    note,
+                    at_ms,
+                    quota_left: None,
+                });
+            }
         }
     }
     items.sort_by_key(|item| item.at_ms);
@@ -237,15 +249,14 @@ mod tests {
     fn due_items_are_sorted_and_include_credit_expiry() {
         let source = MockDataSource::new();
         let items = due_items(&source.quota().expect("mock 不该失败"));
-        assert_eq!(items.len(), 5, "4 个窗口 + 1 个信用过期");
+        // 每张重置额度过期时间不同，都要各自提醒：4 个窗口 + 2 张重置额度。
+        assert_eq!(items.len(), 6, "{items:?}");
         assert!(items.windows(2).all(|w| w[0].at_ms <= w[1].at_ms));
-        let credit = items
-            .iter()
-            .find(|i| i.quota_left.is_none())
-            .expect("应有信用过期项");
-        assert_eq!(credit.provider, ProviderId::Codex);
+        let credits: Vec<_> = items.iter().filter(|i| i.quota_left.is_none()).collect();
+        assert_eq!(credits.len(), 2);
+        assert!(credits.iter().all(|c| c.provider == ProviderId::Codex));
         // 测试不切 locale（全局、并行），断言默认的英文。
-        assert_eq!(credit.note, "3 unused");
+        assert_eq!(credits[0].note, "Credit 1 of 2 · use it before then");
         let seven_day = items
             .iter()
             .find(|i| {

@@ -10,11 +10,14 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use agenthome_core::model::{Freshness, ProviderId};
+use agenthome_core::signals::ResetCreditsSnapshot;
 use agenthome_core::statusline_setup::{self, StatuslinePaths, StatuslineStatus};
 use agenthome_core::{paths, pricing};
 use gpui_kit::component::button::Button;
 use gpui_kit::component::tab::{Tab, TabBar};
-use gpui_kit::component::{ActiveTheme as _, Disableable as _, Sizable as _, h_flex, v_flex};
+use gpui_kit::component::{
+    ActiveTheme as _, Disableable as _, Sizable as _, WindowExt as _, h_flex, v_flex,
+};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, AppContext as _, Context, Entity, EventEmitter, FontWeight,
@@ -39,6 +42,13 @@ struct Notice {
     text: SharedString,
 }
 
+/// ChatGPT 重置额度：只在用户点「查询」时由官方 codex 查一次。
+struct ResetCreditsState {
+    running: bool,
+    snapshot: Option<ResetCreditsSnapshot>,
+    error: Option<SharedString>,
+}
+
 /// 后台读到的磁盘信息。
 #[derive(Clone, Default)]
 struct DiskInfo {
@@ -57,6 +67,7 @@ pub struct SettingsView {
     language: Language,
     notice: Option<Notice>,
     busy: bool,
+    reset: ResetCreditsState,
     _disk_task: Task<()>,
     _action_task: Task<()>,
     _subscriptions: Vec<Subscription>,
@@ -103,6 +114,13 @@ impl SettingsView {
             language: config::load_language().unwrap_or_default(),
             notice: None,
             busy: false,
+            reset: ResetCreditsState {
+                running: false,
+                snapshot: agenthome_core::signals::load_reset_credits(None)
+                    .ok()
+                    .flatten(),
+                error: None,
+            },
             _disk_task: disk_task,
             _action_task: Task::ready(()),
             _subscriptions: subscriptions,
@@ -207,6 +225,174 @@ impl SettingsView {
                 cx.notify();
             });
         });
+    }
+
+    /// 点「查询重置额度」：第一次先弹授权说明，同意后才查；之后每次点直接查。
+    fn on_reset_credits_click(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.reset.running {
+            return;
+        }
+        if config::reset_credits_consented() {
+            self.query_reset_credits(cx);
+            return;
+        }
+        let this = cx.entity().downgrade();
+        window.open_alert_dialog(cx, move |alert, _, _| {
+            let this = this.clone();
+            alert
+                .title(t!("settings.reset_consent_title").to_string())
+                .description(t!("settings.reset_consent_body").to_string())
+                .show_cancel(true)
+                .ok_text(t!("settings.reset_consent_ok").to_string())
+                .cancel_text(t!("settings.reset_consent_cancel").to_string())
+                .on_ok(move |_, _, cx| {
+                    let _ = this.update(cx, |this, cx| {
+                        if let Err(error) = config::save_reset_credits_consent() {
+                            this.reset.error = Some(format!("{error:#}").into());
+                        }
+                        this.query_reset_credits(cx);
+                    });
+                    true
+                })
+        });
+    }
+
+    fn query_reset_credits(&mut self, cx: &mut Context<Self>) {
+        self.reset.running = true;
+        self.reset.error = None;
+        cx.notify();
+        self._action_task = cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_spawn(
+                    async move { agenthome_core::signals::refresh_reset_credits(None) },
+                )
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.reset.running = false;
+                match result {
+                    Ok(snapshot) => this.reset.snapshot = Some(snapshot),
+                    Err(error) => this.reset.error = Some(format!("{error:#}").into()),
+                }
+                cx.notify();
+            });
+        });
+    }
+
+    /// 额度来源里 Codex 下面的「ChatGPT 重置额度」一段。
+    fn render_reset_credits(&self, now: i64, cx: &mut Context<Self>) -> AnyElement {
+        const DAY: i64 = 86_400_000;
+        let state = &self.reset;
+        let theme = cx.theme();
+        let (chip_text, chip_color): (String, gpui_kit::Hsla) =
+            match (&state.snapshot, &state.error) {
+                (_, Some(_)) => (t!("settings.reset_failed_chip").into(), theme.danger),
+                (Some(snapshot), None) => (
+                    t!("settings.reset_count", count = snapshot.live_count(now)).into(),
+                    theme.success,
+                ),
+                (None, None) => (
+                    t!("settings.reset_not_queried").into(),
+                    theme.muted_foreground,
+                ),
+            };
+        let fetched = state.snapshot.as_ref().map(|snapshot| {
+            t!(
+                "settings.reset_fetched",
+                time = relative_time(snapshot.fetched_at_ms, now)
+            )
+            .to_string()
+        });
+        let rows: Vec<AnyElement> = state
+            .snapshot
+            .as_ref()
+            .map(|snapshot| snapshot.live_credits(now))
+            .unwrap_or_default()
+            .into_iter()
+            .map(|credit| {
+                let title = credit
+                    .title
+                    .clone()
+                    .unwrap_or_else(|| t!("settings.reset_untitled").to_string());
+                let (text, color) = match credit.expires_at_ms {
+                    Some(at) => {
+                        let left = at - now;
+                        let when = chrono::TimeZone::timestamp_millis_opt(&chrono::Local, at)
+                            .single()
+                            .map(|t| t.format("%m-%d %H:%M").to_string())
+                            .unwrap_or_default();
+                        let color = if left < DAY {
+                            cx.theme().danger
+                        } else if left < 3 * DAY {
+                            cx.theme().warning
+                        } else {
+                            cx.theme().foreground
+                        };
+                        (
+                            t!(
+                                "settings.reset_expires",
+                                title = title,
+                                time = when,
+                                left = crate::format::countdown(left)
+                            )
+                            .to_string(),
+                            color,
+                        )
+                    }
+                    None => (
+                        t!("settings.reset_no_expiry", title = title).to_string(),
+                        cx.theme().foreground,
+                    ),
+                };
+                div()
+                    .text_size(px(12.5))
+                    .text_color(color)
+                    .child(text)
+                    .into_any_element()
+            })
+            .collect();
+        v_flex()
+            .gap(px(6.))
+            .child(
+                h_flex()
+                    .gap(px(10.))
+                    .items_center()
+                    .child(div().w(px(24.)))
+                    .child(strong(t!("settings.reset_title").to_string()))
+                    .child(chip(chip_text, chip_color, cx))
+                    .child(div().flex_1())
+                    .when_some(fetched, |row, text| row.child(muted(text, cx))),
+            )
+            .child(
+                div()
+                    .pl(px(34.))
+                    .child(muted(t!("settings.reset_desc").to_string(), cx)),
+            )
+            .when(!rows.is_empty(), |col| {
+                col.child(v_flex().pl(px(34.)).gap(px(2.)).children(rows))
+            })
+            .when_some(state.error.clone(), |col, error| {
+                col.child(
+                    div()
+                        .pl(px(34.))
+                        .text_size(px(12.))
+                        .text_color(cx.theme().danger)
+                        .child(error),
+                )
+            })
+            .child(
+                h_flex().pl(px(34.)).child(
+                    Button::new("codex-reset-credits-query")
+                        .outline()
+                        .small()
+                        .label(t!("settings.reset_query").to_string())
+                        .loading(state.running)
+                        .disabled(state.running)
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.on_reset_credits_click(window, cx)
+                        })),
+                ),
+            )
+            .into_any_element()
     }
 
     fn render_sources(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -340,6 +526,7 @@ impl SettingsView {
         };
         let probe_chip = chip(probe_view.chip, probe_color, cx);
         let can_probe = self.sync_handle.is_some() && probe.binary.is_some() && !probe.running;
+        let reset_credits = self.render_reset_credits(now, cx);
 
         section(
             t!("settings.quota_title").to_string(),
@@ -431,6 +618,7 @@ impl SettingsView {
                         .child(muted(t!("settings.codex_rollout_desc").to_string(), cx)),
                 ),
         )
+        .child(reset_credits)
         .into_any_element()
     }
 

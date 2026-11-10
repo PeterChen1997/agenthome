@@ -44,3 +44,48 @@ format.window_minutes:
 format.window_spend_limit:
   en: Spend limit
   zh-CN: 消费上限
+format.pressure_relaxed:
+  en: Plenty
+  zh-CN: 宽裕
+format.pressure_steady:
+  en: On pace
+  zh-CN: 正常
+format.pressure_tight:
+  en: Tight
+  zh-CN: 偏紧
+format.pressure_critical:
+  en: At risk
+  zh-CN: 紧张
+format.pressure_exhausted:
+  en: Used up
+  zh-CN: 已用尽
+format.pressure_runs_out:
+  en: "At this pace, out in %{time}"
+  zh-CN: "照此速度 %{time} 后用完"
+format.pressure_desc_relaxed:
+  en: "Over 30% left at reset"
+  zh-CN: "到重置时还剩三成以上"
+format.pressure_desc_steady:
+  en: "Lasts until reset, little to spare"
+  zh-CN: "刚好够用到重置"
+format.pressure_desc_tight:
+  en: "Runs out a bit before reset"
+  zh-CN: "会比重置早一点用完"
+format.pressure_desc_critical:
+  en: "Runs out well before reset"
+  zh-CN: "离重置还早就会用完"
+format.pressure_desc_exhausted:
+  en: "Used up, waiting for reset"
+  zh-CN: "已经用完，等重置"
+format.pressure_tip_projected:
+  en: "At this pace, about %{percent}% of the quota will be used by reset."
+  zh-CN: "照现在的速度，到重置时约用掉额度的 %{percent}%。"
+format.pressure_tip_runs_out:
+  en: " Out in %{time}."
+  zh-CN: "约 %{time} 后用完。"
+format.pressure_tip_exhausted:
+  en: "This window is used up; it frees up again at reset."
+  zh-CN: "这个窗口已经用完，重置后恢复。"
+format.pressure_tip_how:
+  en: "Estimated from the share used versus the time elapsed in the window."
+  zh-CN: "按已用比例与窗口已过去的时间推算。"

@@ -256,6 +256,7 @@ pub fn parse_rate_limits(rl: &Value, mtime_ms: i64, now_ms: i64, source: &str) -
             .get("expires_at")
             .and_then(Value::as_i64)
             .map(|s| s * 1000),
+        reset_credit_expiries_ms: Vec::new(),
     });
     QuotaSnapshot {
         provider: ProviderId::Codex,

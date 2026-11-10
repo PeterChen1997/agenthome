@@ -236,3 +236,45 @@ settings.raw_unreadable_one:
 settings.raw_unreadable_other:
   en: "%{count} unreadable manifests"
   zh-CN: "%{count} 个清单读不懂"
+settings.reset_title:
+  en: ChatGPT reset credits
+  zh-CN: ChatGPT 重置额度
+settings.reset_desc:
+  en: "Not stored on this Mac. Query starts the official codex (bundled with the ChatGPT app) to read them once with your signed-in account. Read-only: nothing is redeemed and AgentHome never reads your credentials. Updates only when you click."
+  zh-CN: "本机文件里没有这项数据。点「查询」后，AgentHome 启动官方 codex（ChatGPT 桌面版自带）用你已登录的账号只读查一次：不兑换，AgentHome 也不读你的登录凭据。只在你点的时候更新。"
+settings.reset_query:
+  en: Query
+  zh-CN: 查询
+settings.reset_not_queried:
+  en: Not queried
+  zh-CN: 未查询
+settings.reset_failed_chip:
+  en: Failed
+  zh-CN: 查询失败
+settings.reset_count:
+  en: "%{count} unused"
+  zh-CN: "%{count} 张未用"
+settings.reset_fetched:
+  en: "Queried %{time}"
+  zh-CN: "查询于 %{time}"
+settings.reset_untitled:
+  en: Reset credit
+  zh-CN: 重置额度
+settings.reset_expires:
+  en: "%{title} · expires %{time} (in %{left})"
+  zh-CN: "%{title} · %{time} 过期（还有 %{left}）"
+settings.reset_no_expiry:
+  en: "%{title} · never expires"
+  zh-CN: "%{title} · 不过期"
+settings.reset_consent_title:
+  en: Query ChatGPT reset credits?
+  zh-CN: 查询 ChatGPT 重置额度？
+settings.reset_consent_body:
+  en: "AgentHome will start the official codex program on this Mac. Codex uses the ChatGPT account you are signed in with to ask OpenAI how many reset credits you have and when they expire.\n\n· Read-only: no credit is redeemed.\n· AgentHome does not read your credentials; codex handles sign-in itself.\n· The result is saved to ~/AgentHome/signals/codex-reset-credits.json.\n· It runs only when you click Query; you won't be asked again."
+  zh-CN: "AgentHome 会在本机启动官方 codex 程序，由它用你已登录的 ChatGPT 账号向 OpenAI 查询重置额度的张数和过期时间。\n\n· 只读：不会兑换任何一张。\n· AgentHome 不读你的登录凭据，鉴权由 codex 自己完成。\n· 结果保存在 ~/AgentHome/signals/codex-reset-credits.json。\n· 只在你点「查询」时运行；同意后不再询问。"
+settings.reset_consent_ok:
+  en: Allow and query
+  zh-CN: 同意并查询
+settings.reset_consent_cancel:
+  en: Cancel
+  zh-CN: 取消

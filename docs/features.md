@@ -89,7 +89,7 @@ The **Refresh quota** button at the top right re-reads quota immediately.
 One column per agent: resident avatar, plan (for example Max or Plus), current habitat state, and a tag naming the data source.
 
 - **Claude** (tag: Compliant · official /usage): 5-hour and 7-day windows with percentage remaining and countdowns to reset. Data comes from running the official `claude` CLI's `/usage` in the background every 15 minutes.
-- **Codex** (tag: Compliant · rollout snapshot): 5-hour and weekly windows, plus **reset credits** with the number of credits and time until they expire. Data comes from the `rate_limits` snapshot Codex writes into its own rollout files.
+- **Codex** (tag: Compliant · rollout snapshot): 5-hour and weekly windows, plus ChatGPT **reset credits** with how many you have and when each expires. Window data comes from the `rate_limits` snapshot Codex writes into its own rollout files; reset credits are not stored locally, so you click Query in Settings (you are asked to allow it the first time) and the official codex bundled with the ChatGPT app reads them once with your signed-in account. AgentHome never reads credentials and never redeems a credit.
 - **Gemini**: No quota signal. Gemini CLI and Antigravity have no readable local quota data, so only sessions and tokens are counted.
 
 Bars are stamina bars: they show what remains in each window ("Bar = what's left in the window") and change color as it runs low. Countdowns turn amber when a reset is less than 6 hours away or less than a quarter of the window remains, and red when less than an hour is left.

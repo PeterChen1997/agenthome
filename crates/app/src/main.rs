@@ -16,6 +16,7 @@ mod habitat;
 mod live;
 mod menubar;
 mod message_row;
+mod pressure_badge;
 mod search_palette;
 mod settings;
 mod sqlite_source;

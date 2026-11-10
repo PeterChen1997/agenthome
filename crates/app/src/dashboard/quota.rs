@@ -4,6 +4,7 @@
 use std::time::Duration;
 
 use agenthome_core::model::{Freshness, ProviderId, QuotaSnapshot, QuotaWindow};
+use agenthome_core::pressure::{Pressure, pressure};
 use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
@@ -18,6 +19,7 @@ use crate::assets::PixelMono as _;
 use crate::format::{now_ms, quota_window_label};
 use crate::habitat::{HabitatView, ResidentId};
 use crate::live::{LiveState, shown_state};
+use crate::pressure_badge::PressureBadge;
 
 /// 额度快照与倒计时时钟。
 pub struct QuotaState {
@@ -155,7 +157,12 @@ impl ResidentsCard {
         let mut body = v_flex().flex_1().min_w_0().gap(px(6.)).child(header);
         match snapshot {
             Some(snapshot) => {
-                body = body.children(snapshot.windows.iter().map(|w| window_row(w, cx)));
+                body = body.children(
+                    snapshot
+                        .windows
+                        .iter()
+                        .map(|w| window_row(who.slug(), w, now_ms, cx)),
+                );
                 body = body.child(reset_line(snapshot, now_ms, cx));
             }
             None => {
@@ -255,9 +262,18 @@ fn compliance_tag(snapshot: &QuotaSnapshot) -> Tag {
     }
 }
 
-/// 一个窗口：标签 + 剩余百分比 + 10 格体力条。
-fn window_row(window: &QuotaWindow, cx: &mut Context<ResidentsCard>) -> AnyElement {
+/// 一个窗口：标签 + 使用压力 + 剩余百分比 + 10 格体力条；照当前速度会在重置前用完时，下面写多久后用完。
+fn window_row(
+    provider_key: &str,
+    window: &QuotaWindow,
+    now_ms: i64,
+    cx: &mut Context<ResidentsCard>,
+) -> AnyElement {
     let left = (100.0 - window.used_percent).clamp(0.0, 100.0);
+    let reading = pressure(window, now_ms);
+    let runs_out = reading
+        .filter(|r| matches!(r.level, Pressure::Tight | Pressure::Critical))
+        .and_then(|r| r.runs_out_in_ms.map(|ms| (r.level, ms)));
     v_flex()
         .gap(px(4.))
         .child(
@@ -266,7 +282,22 @@ fn window_row(window: &QuotaWindow, cx: &mut Context<ResidentsCard>) -> AnyEleme
                 .items_baseline()
                 .text_size(px(12.))
                 .text_color(cx.theme().muted_foreground)
-                .child(quota_window_label(window))
+                .child(
+                    h_flex()
+                        .items_center()
+                        .gap(px(6.))
+                        .child(quota_window_label(window))
+                        .when_some(reading, |row, reading| {
+                            row.child(PressureBadge::new(
+                                SharedString::from(format!(
+                                    "dashboard-pressure-{}-{}",
+                                    provider_key, window.id
+                                )),
+                                reading,
+                                quota_window_label(window),
+                            ))
+                        }),
+                )
                 .child(
                     vt(22.)
                         .text_color(if left > 50.0 {
@@ -278,6 +309,17 @@ fn window_row(window: &QuotaWindow, cx: &mut Context<ResidentsCard>) -> AnyEleme
                 ),
         )
         .child(hp_bar(Some(left), cx))
+        .when_some(runs_out, |row, (level, ms)| {
+            row.child(
+                div()
+                    .text_size(px(11.5))
+                    .text_color(match level {
+                        Pressure::Tight => amber_text(cx),
+                        _ => rgb(RED_TEXT).into(),
+                    })
+                    .child(t!("format.pressure_runs_out", time = countdown(ms))),
+            )
+        })
         .into_any_element()
 }
 
@@ -386,10 +428,17 @@ fn reset_line(snapshot: &QuotaSnapshot, now_ms: i64, cx: &App) -> AnyElement {
 
 /// 倒计时颜色：不足 1 小时红；不足 6 小时或窗口剩余不足 1/4 琥珀；其余用主题正文色
 /// （写死深色主题的浅字，浅色主题下会看不见）。
+/// 重置额度过期（`quota_left` 为 None）要提前提醒：3 天内琥珀、1 天内红。
 fn due_color(remaining_ms: i64, quota_left: Option<f32>, cx: &App) -> Hsla {
-    if remaining_ms < 3_600_000 {
+    const DAY: i64 = 86_400_000;
+    let (red, amber) = if quota_left.is_none() {
+        (DAY, 3 * DAY)
+    } else {
+        (3_600_000, 6 * 3_600_000)
+    };
+    if remaining_ms < red {
         rgb(RED_TEXT).into()
-    } else if remaining_ms < 6 * 3_600_000 || quota_left.is_some_and(|left| left < 25.0) {
+    } else if remaining_ms < amber || quota_left.is_some_and(|left| left < 25.0) {
         amber_text(cx)
     } else {
         cx.theme().foreground

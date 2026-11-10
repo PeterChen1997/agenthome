@@ -10,6 +10,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
+use agenthome_core::pressure::worst_pressure;
 use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, Icon, IconName, InteractiveElementExt as _, Sizable as _,
     StyledExt as _, WindowExt as _,
@@ -33,7 +34,9 @@ use crate::data::DataSource;
 use crate::format::{countdown, now_ms, relative_time};
 use crate::habitat::{HabitatSize, HabitatView, ResidentId, ResidentState};
 use crate::live::{LiveFeed, LiveState, primary_window};
+use crate::menubar::{WindowPressure, window_short_label};
 use crate::message_row::{provider_avatar, secondary};
+use crate::pressure_badge::PressureBadge;
 use crate::search_palette::{PaletteEvent, SearchPalette};
 use crate::settings::{SettingsEvent, SettingsView};
 use crate::sync::{SyncEngine, SyncState};
@@ -105,6 +108,17 @@ impl ResidentPanel {
         let away = !live.connected(who);
         let quota = live.quota_for(who);
         let window = quota.and_then(primary_window);
+        // 使用压力看最紧的窗口（可能是 7 天而不是左栏显示的 5 小时）。
+        let pressure = quota
+            .zip(window)
+            .and_then(|(quota, primary)| {
+                worst_pressure(&quota.windows, now).map(|(worst, reading)| WindowPressure {
+                    label: (worst.id != primary.id).then(|| window_short_label(worst)),
+                    window: crate::format::quota_window_label(worst),
+                    reading,
+                })
+            })
+            .filter(|_| !away);
         let hp = window
             .map(|w| (100.0 - w.used_percent).round().clamp(0.0, 100.0) as u8)
             .unwrap_or(0);
@@ -191,12 +205,33 @@ impl ResidentPanel {
                                     .child(plan),
                             )
                             .when(window.is_some(), |row| {
+                                // 压力徽标与百分比放在同一个居中对齐的组里，免得基线错位。
                                 row.child(
-                                    div()
+                                    h_flex()
                                         .ml_auto()
-                                        .font_family(FONT_PIXEL_MONO)
-                                        .text_size(px(15.))
-                                        .child(format!("{hp}%")),
+                                        .flex_none()
+                                        .items_center()
+                                        .gap(px(6.))
+                                        .when_some(pressure, |group, pressure| {
+                                            group.child(
+                                                PressureBadge::new(
+                                                    SharedString::from(format!(
+                                                        "sidebar-pressure-{}",
+                                                        who.slug()
+                                                    )),
+                                                    pressure.reading,
+                                                    pressure.window,
+                                                )
+                                                .prefix(pressure.label),
+                                            )
+                                        })
+                                        .child(
+                                            div()
+                                                .font_family(FONT_PIXEL_MONO)
+                                                .text_size(px(15.))
+                                                .line_height(px(17.))
+                                                .child(format!("{hp}%")),
+                                        ),
                                 )
                             }),
                     )

@@ -5,6 +5,7 @@
 //! - `store`：SQLite 索引层（可随时从原件重建），含仪表盘查询。
 //! - `providers`：各 agent 的发现与解析（`SourceProvider`）。
 //! - `ingest`：扫描 + 解析 + 入库的调度。
+//! - `pressure`：额度使用压力（已用比例对照窗口已过时间）。
 //! - `pricing`：内嵌定价表与成本估算。
 //! - `signals`：额度信号（Claude statusline 文件、Codex rollout 快照）。
 //! - `paths`：默认目录。
@@ -15,6 +16,7 @@
 pub mod ingest;
 pub mod model;
 pub mod paths;
+pub mod pressure;
 pub mod pricing;
 pub mod providers;
 pub mod raw;

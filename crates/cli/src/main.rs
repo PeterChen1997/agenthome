@@ -91,6 +91,9 @@ enum Cmd {
         /// 先在后台跑一次官方 `claude` 的 /usage 刷新 Claude 订阅额度（约 10 秒，不发对话、不耗 token）
         #[arg(long)]
         refresh_claude: bool,
+        /// 启动官方 codex 只读查询一次 ChatGPT 重置额度（由 codex 自己鉴权；不兑换、不读凭据）
+        #[arg(long)]
+        refresh_codex_reset_credits: bool,
     },
     /// 各来源最近活动
     Activity {
@@ -147,7 +150,13 @@ fn main() -> Result<()> {
             codex_root,
             statusline,
             refresh_claude,
-        } => quota(codex_root, statusline, refresh_claude),
+            refresh_codex_reset_credits,
+        } => quota(
+            codex_root,
+            statusline,
+            refresh_claude,
+            refresh_codex_reset_credits,
+        ),
         Cmd::Activity {
             db,
             root,
@@ -651,7 +660,12 @@ fn quota(
     codex_root: Option<PathBuf>,
     statusline: Option<PathBuf>,
     refresh_claude: bool,
+    refresh_codex_reset_credits: bool,
 ) -> Result<()> {
+    if refresh_codex_reset_credits {
+        println!("正在启动官方 codex 查询重置额度 …");
+        agenthome_core::signals::refresh_reset_credits(None)?;
+    }
     let usage_path = agenthome_core::signals::claude_usage::claude_usage_path();
     if refresh_claude {
         let claude = agenthome_core::signals::find_claude_binary().ok_or_else(|| {
@@ -682,6 +696,29 @@ fn quota(
     match codex_rollout_quota(Some(&root))? {
         Some(s) => print_snapshot(&s),
         None => println!("无快照：目录不存在，或最近 10 个 rollout 里没有 rate_limits 记录。"),
+    }
+    let reset_path = agenthome_core::signals::codex_reset_credits::codex_reset_credits_path();
+    println!("\n== ChatGPT 重置额度（手动查询 {}）", reset_path.display());
+    match agenthome_core::signals::load_reset_credits(Some(&reset_path))? {
+        Some(r) => {
+            println!(
+                "可用 {} 张  查询于: {}  来源: {}",
+                r.available,
+                fmt_time(r.fetched_at_ms),
+                r.source
+            );
+            for c in &r.credits {
+                println!(
+                    "  {}  过期: {}",
+                    c.title.as_deref().unwrap_or("-"),
+                    c.expires_at_ms
+                        .map_or_else(|| "不过期".to_string(), fmt_time)
+                );
+            }
+        }
+        None => {
+            println!("没查过：用 --refresh-codex-reset-credits 查一次，或在 app 设置页点「查询」。")
+        }
     }
     Ok(())
 }

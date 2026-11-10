@@ -264,7 +264,7 @@ dashboard.window_reset:
   zh-CN: "%{window} 重置"
 dashboard.reset_credits:
   en: "Reset credits"
-  zh-CN: "重置信用"
+  zh-CN: "重置额度"
 dashboard.credits_one:
   en: "%{count} credit"
   zh-CN: "%{count} 张"
@@ -302,8 +302,8 @@ dashboard.due_low_quota:
   en: "Less than 1/4 left"
   zh-CN: "剩余已不足 1/4"
 dashboard.due_credit_expiry:
-  en: "%{name} reset credits expire"
-  zh-CN: "%{name} 重置信用过期"
+  en: "%{name} reset credit expires"
+  zh-CN: "%{name} 重置额度过期"
 dashboard.due_credits_unused:
   en: "%{count} unused"
   zh-CN: "%{count} 张未用"
@@ -324,3 +324,6 @@ dashboard.fmt_weekday_time:
 dashboard.weekdays:
   en: "Mon,Tue,Wed,Thu,Fri,Sat,Sun"
   zh-CN: "一,二,三,四,五,六,日"
+dashboard.due_credit_nth:
+  en: "Credit %{n} of %{total} · use it before then"
+  zh-CN: "第 %{n} 张 / 共 %{total} 张 · 过期前记得用"

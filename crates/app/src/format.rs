@@ -160,6 +160,19 @@ pub fn quota_window_label(window: &agenthome_core::model::QuotaWindow) -> String
     }
 }
 
+/// 额度使用压力的档位名（宽裕 / 正常 / 偏紧 / 紧张 / 已用尽）。
+pub fn pressure_label(level: agenthome_core::pressure::Pressure) -> String {
+    use agenthome_core::pressure::Pressure;
+    match level {
+        Pressure::Relaxed => t!("format.pressure_relaxed"),
+        Pressure::Steady => t!("format.pressure_steady"),
+        Pressure::Tight => t!("format.pressure_tight"),
+        Pressure::Critical => t!("format.pressure_critical"),
+        Pressure::Exhausted => t!("format.pressure_exhausted"),
+    }
+    .into()
+}
+
 /// 会话列表的日期分组。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DayGroup {
