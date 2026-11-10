@@ -25,7 +25,7 @@ use gpui_kit::{
 };
 
 use crate::archive::{ArchiveView, side_item};
-use crate::assets::{FONT_PIXEL_MONO, FONT_PIXEL_SANS};
+use crate::assets::{FONT_PIXEL_MONO, FONT_PIXEL_SANS, PixelMono as _};
 use crate::dashboard::DashboardView;
 use crate::data::DataSource;
 use crate::format::{countdown, now_ms, relative_time};
@@ -99,8 +99,8 @@ impl ResidentPanel {
 
     fn render_resident(&self, who: ResidentId, now: i64, cx: &mut Context<Self>) -> AnyElement {
         let live = self.live.read(cx);
-        let residents = self.habitat.read(cx).residents();
-        let away = residents[who.index()].state == ResidentState::Away;
+        // 「接入」只看本机有没有这个来源的数据，与仪表盘额度卡、菜单栏弹窗同一判定（`LiveState::connected`）。
+        let away = !live.connected(who);
         let quota = live.quota_for(who);
         let window = quota.and_then(primary_window);
         let hp = window
@@ -212,12 +212,7 @@ impl ResidentPanel {
                             .text_xs()
                             .text_color(secondary(cx))
                             .child(sub_label)
-                            .child(
-                                div()
-                                    .font_family(FONT_PIXEL_MONO)
-                                    .text_size(px(14.))
-                                    .child(sub_value),
-                            ),
+                            .child(div().pixel_mono(&sub_value, 14., cx).child(sub_value)),
                     ),
             )
             .into_any_element()
@@ -271,8 +266,7 @@ impl Render for ResidentPanel {
                                 .py(px(1.))
                                 .rounded(px(2.))
                                 .bg(cx.theme().background.opacity(0.78))
-                                .font_family(FONT_PIXEL_MONO)
-                                .text_size(px(11.))
+                                .pixel_mono(&caption, 11., cx)
                                 .text_color(cx.theme().primary)
                                 .child(caption),
                         )
@@ -336,7 +330,8 @@ impl Workspace {
         let residents = cx.new(|cx| ResidentPanel::new(live.clone(), habitat_compact.clone(), cx));
         let archive = cx.new(|cx| ArchiveView::new(source.clone(), window, cx));
         let palette = cx.new(|cx| SearchPalette::new(source.clone(), window, cx));
-        let dashboard = cx.new(|cx| DashboardView::new(source, habitat_compact, window, cx));
+        let dashboard =
+            cx.new(|cx| DashboardView::new(source, habitat_compact, live.clone(), window, cx));
         let sync = cx.new(|_| SyncState::default());
         let sync_engine = sync_db
             .clone()

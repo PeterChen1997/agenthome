@@ -197,8 +197,8 @@ mock.look_first:
 mock.tool_output_tail:
   en: |-
     warning: `agenthome-app` (bin "agenthome-app") generated 3 warnings (run `cargo clippy --fix --bin "agenthome-app"` to apply 1 suggestion)
-        Checking agenthome-core v0.1.6 (/Users/peter/code_hub/agenthome/crates/core)
-        Checking agenthome-cli v0.1.6 (/Users/peter/code_hub/agenthome/crates/cli)
+        Checking agenthome-core v0.1.6 (/Users/demo/code_hub/agenthome/crates/core)
+        Checking agenthome-cli v0.1.6 (/Users/demo/code_hub/agenthome/crates/cli)
         Finished `dev` profile [unoptimized + debuginfo] target(s) in 4.21s
   zh-CN: 这是一段较长的工具输出，用来验证折叠态只显示前 200 个字符。这是一段较长的工具输出，用来验证折叠态只显示前 200 个字符。这是一段较长的工具输出，用来验证折叠态只显示前 200 个字符。这是一段较长的工具输出，用来验证折叠态只显示前 200 个字符。这是一段较长的工具输出，用来验证折叠态只显示前 200 个字符。这是一段较长的工具输出，用来验证折叠态只显示前 200 个字符。
 mock.thinking:

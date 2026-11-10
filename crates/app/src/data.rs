@@ -191,17 +191,17 @@ fn mock_summary(m: MockSession) -> SessionSummary {
             let dir = m.cwd.replace('/', "-");
             match native.split_once('/') {
                 Some((parent, agent)) => {
-                    format!("/Users/peter/.claude/projects/{dir}/{parent}/subagents/{agent}.jsonl")
+                    format!("/Users/demo/.claude/projects/{dir}/{parent}/subagents/{agent}.jsonl")
                 }
-                None => format!("/Users/peter/.claude/projects/{dir}/{native}.jsonl"),
+                None => format!("/Users/demo/.claude/projects/{dir}/{native}.jsonl"),
             }
         }
         ProviderId::Codex => {
             format!(
-                "/Users/peter/.codex/sessions/2026/11/05/rollout-2026-11-05T09-00-00-{native}.jsonl"
+                "/Users/demo/.codex/sessions/2026/11/05/rollout-2026-11-05T09-00-00-{native}.jsonl"
             )
         }
-        _ => format!("/Users/peter/.gemini/tmp/{native}/chats/session.json"),
+        _ => format!("/Users/demo/.gemini/tmp/{native}/chats/session.json"),
     };
     let estimated = m
         .models
@@ -284,7 +284,7 @@ impl MockDataSource {
                 ..Usage::default()
             };
             let id = format!("{}:mock-machine:{i:04}", provider.as_str());
-            let cwd = format!("/Users/peter/code_hub/{project_name}");
+            let cwd = format!("/Users/demo/code_hub/{project_name}");
             // 每三个 Claude 会话里有一个带 cost-state 真值（比估算略高），其余按定价表估算。
             let recorded = (provider == ProviderId::ClaudeCode && i % 3 == 0).then_some(1.08);
             let started_at_ms = updated_at_ms - duration_ms;
@@ -357,7 +357,7 @@ impl MockDataSource {
             provider: ProviderId::ClaudeCode,
             kind: SessionKind::Subagent,
             title: "mock.subagent_codex_cost".to_string(),
-            cwd: "/Users/peter/code_hub/agenthome".to_string(),
+            cwd: "/Users/demo/code_hub/agenthome".to_string(),
             project_name: "agenthome",
             started_at_ms: now_ms - 2 * 3_600_000,
             updated_at_ms: now_ms - 2 * 3_600_000 + 240_000,
@@ -372,7 +372,7 @@ impl MockDataSource {
             provider: ProviderId::ClaudeCode,
             kind: SessionKind::Subagent,
             title: "mock.subagent_legacy_scripts".to_string(),
-            cwd: "/Users/peter/code_hub/infra-scripts/legacy".to_string(),
+            cwd: "/Users/demo/code_hub/infra-scripts/legacy".to_string(),
             project_name: "legacy",
             started_at_ms: now_ms - 12 * 86_400_000,
             updated_at_ms: now_ms - 12 * 86_400_000 + 600_000,
@@ -388,7 +388,7 @@ impl MockDataSource {
             .iter()
             .map(|name| ProjectRow {
                 name: (*name).to_string(),
-                cwd: Some(format!("/Users/peter/code_hub/{name}")),
+                cwd: Some(format!("/Users/demo/code_hub/{name}")),
                 session_count: u32::try_from(
                     sessions.iter().filter(|s| s.project_name == *name).count(),
                 )
@@ -552,7 +552,7 @@ impl MockDataSource {
                     let tool = pick(&["Read", "Bash", "Edit", "Grep"], &mut rng);
                     let input = match tool.as_str() {
                         "Read" => {
-                            serde_json::json!({ "file_path": "/Users/peter/code_hub/agenthome/crates/app/src/main.rs" })
+                            serde_json::json!({ "file_path": "/Users/demo/code_hub/agenthome/crates/app/src/main.rs" })
                         }
                         "Bash" => {
                             serde_json::json!({ "command": "cargo clippy -p agenthome-app", "description": tr("mock.bash_description", locale) })
@@ -813,6 +813,13 @@ impl DataSource for MockDataSource {
                 expiring_within_7d: 0,
                 compressed: 4,
             },
+            ProviderHealth {
+                provider: ProviderId::GeminiCli,
+                sessions: 5,
+                archive_only: 0,
+                expiring_within_7d: 0,
+                compressed: 0,
+            },
         ])
     }
 
@@ -833,11 +840,13 @@ impl DataSource for MockDataSource {
                 last_kind: Some(agenthome_core::model::ActivityKind::AssistantText),
                 active_sessions: 1,
             },
+            // 演示数据里有 Gemini 会话（见 `new`），所以 Gemini 算已接入：
+            // 左栏、额度卡、菜单栏与底部「N 个来源」都按这条判定，三位住户都在。
             ProviderActivity {
                 provider: ProviderId::GeminiCli,
-                detected: false,
-                last_activity_ms: None,
-                last_kind: None,
+                detected: true,
+                last_activity_ms: Some(now - 2 * 3_600_000),
+                last_kind: Some(agenthome_core::model::ActivityKind::SessionEnd),
                 active_sessions: 0,
             },
         ])

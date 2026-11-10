@@ -151,7 +151,7 @@ settings.probe_demo:
   zh-CN: 演示数据
 settings.probe_demo_text:
   en: Background refresh doesn't run in demo mode
-  zh-CN: mock 模式不运行后台刷新
+  zh-CN: 演示模式不运行后台刷新
 settings.probe_running:
   en: Refreshing
   zh-CN: 刷新中

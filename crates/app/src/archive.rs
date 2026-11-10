@@ -30,7 +30,9 @@ use gpui_kit::{
     Window, div, px, uniform_list,
 };
 
-use crate::assets::{FONT_PIXEL_MONO, FONT_PIXEL_SANS};
+use crate::assets::{
+    FONT_PIXEL_MONO, FONT_PIXEL_SANS, PixelMono as _, body_size_for_pixel, has_cjk,
+};
 use crate::data::{DataSource, ProjectRow};
 use crate::format::{DayGroup, now_ms, relative_time, short_cost, short_datetime, short_tokens};
 use crate::message_row::{
@@ -787,10 +789,10 @@ impl ArchiveView {
         let expiring: u64 = self.health.iter().map(|h| h.expiring_within_7d).sum();
         let view_count = |view: ViewFilter| -> (String, bool) {
             match view {
-                ViewFilter::All => (total.to_string(), false),
+                ViewFilter::All => (crate::format::thousands(u64::from(total)), false),
                 ViewFilter::Starred => (self.starred.len().to_string(), false),
-                ViewFilter::ArchiveOnly => (archive_only.to_string(), false),
-                ViewFilter::Expiring => (expiring.to_string(), expiring > 0),
+                ViewFilter::ArchiveOnly => (crate::format::thousands(archive_only), false),
+                ViewFilter::Expiring => (crate::format::thousands(expiring), expiring > 0),
             }
         };
         let shown = if self.projects_expanded {
@@ -821,7 +823,10 @@ impl ArchiveView {
                     SharedString::from(format!("project:{}", project.name)),
                     None,
                     project.name.clone(),
-                    Some((project.session_count.to_string(), false)),
+                    Some((
+                        crate::format::thousands(u64::from(project.session_count)),
+                        false,
+                    )),
                     self.selected_project.as_ref() == Some(project),
                     cx.listener(move |this, _, _, cx| {
                         let next =
@@ -882,26 +887,31 @@ impl ArchiveView {
                     .font_semibold()
                     .child(self.view.label()),
             )
-            .child(
-                div()
-                    .font_family(FONT_PIXEL_MONO)
-                    .text_size(px(16.))
-                    .text_color(cx.theme().muted_foreground)
-                    .child(if self.loading_sessions {
-                        "…".to_string()
+            .child({
+                let count_text = if self.loading_sessions {
+                    "…".to_string()
+                } else {
+                    // 列表把子代理折叠进父会话，左栏「全部会话」数的是全部会话（含子代理），
+                    // 两个数不同时把差别写出来，免得看着像统计错了。
+                    let total: u32 = self.projects.iter().map(|p| p.session_count).sum();
+                    let shown = sessions.len();
+                    if self.view == ViewFilter::All && total as usize > shown {
+                        t!(
+                            "archive.count_with_subagents",
+                            shown = crate::format::thousands(shown as u64),
+                            total = crate::format::thousands(u64::from(total))
+                        )
+                        .into_owned()
                     } else {
-                        // 列表把子代理折叠进父会话，左栏「全部会话」数的是全部会话（含子代理），
-                        // 两个数不同时把差别写出来，免得看着像统计错了。
-                        let total: u32 = self.projects.iter().map(|p| p.session_count).sum();
-                        let shown = sessions.len();
-                        if self.view == ViewFilter::All && total as usize > shown {
-                            t!("archive.count_with_subagents", shown = shown, total = total)
-                                .into_owned()
-                        } else {
-                            shown.to_string()
-                        }
-                    }),
-            );
+                        crate::format::thousands(shown as u64)
+                    }
+                };
+                // 「含子代理共」是中文：VT323 没有中文字形，含中文时退回正文字体。
+                div()
+                    .pixel_mono(&count_text, 16., cx)
+                    .text_color(cx.theme().muted_foreground)
+                    .child(count_text)
+            });
         let body = if let Some(error) = &self.sessions_error {
             div()
                 .p_4()
@@ -1042,12 +1052,13 @@ impl ArchiveView {
                 .items_baseline()
                 .gap_1()
                 .child(tool_calls.to_string())
-                .child(
+                .child({
+                    let text = t!("archive.tool_failures", count = tool_failures).into_owned();
                     div()
-                        .text_size(px(16.))
+                        .pixel_mono(&text, 16., cx)
                         .text_color(cx.theme().muted_foreground)
-                        .child(t!("archive.tool_failures", count = tool_failures)),
-                )
+                        .child(text)
+                })
                 .into_any_element()
         } else {
             div().child(tool_calls.to_string()).into_any_element()
@@ -1097,6 +1108,7 @@ impl ArchiveView {
                     .outline()
                     .small()
                     .label(t!("archive.export"))
+                    .tooltip(t!("archive.export_tip"))
                     .disabled(transcript.is_none())
                     .on_click(cx.listener(|this, _, window, cx| this.export(window, cx))),
             )
@@ -1104,8 +1116,9 @@ impl ArchiveView {
                 Button::new("resume")
                     .primary()
                     .small()
-                    .label(t!(
-                        "archive.resume",
+                    .label(t!("archive.resume"))
+                    .tooltip(t!(
+                        "archive.resume_tip",
                         provider = provider_display_name(&session.provider)
                     ))
                     .on_click(
@@ -1172,7 +1185,7 @@ impl ArchiveView {
                     ))
                     .child(stat_text(
                         t!("archive.stat_messages").into(),
-                        session.message_count.to_string(),
+                        crate::format::thousands(u64::from(session.message_count)),
                         None,
                         cx,
                     ))
@@ -1354,7 +1367,10 @@ fn render_session_row(
     let messages = if session.message_count == 1 {
         t!("archive.row_messages_one")
     } else {
-        t!("archive.row_messages_other", count = session.message_count)
+        t!(
+            "archive.row_messages_other",
+            count = crate::format::thousands(u64::from(session.message_count))
+        )
     };
     let meta = format!(
         "{} · {} · {messages} · {}",
@@ -1364,6 +1380,8 @@ fn render_session_row(
     );
     v_flex()
         .id(SharedString::from(session.id.clone()))
+        // 撑满列宽：否则选中 / 悬停底色只铺到内容宽度为止。
+        .w_full()
         .h(px(SESSION_ROW_HEIGHT))
         .justify_center()
         .pl_3()
@@ -1407,21 +1425,15 @@ fn render_session_row(
                 .text_color(secondary(cx))
                 .child(div().flex_1().min_w_0().truncate().child(meta))
                 .when(subagents > 0, |row| {
-                    row.child(Tag::secondary().small().font_family(FONT_PIXEL_MONO).child(
-                        if subagents == 1 {
-                            t!("archive.subagents_tag_one")
-                        } else {
-                            t!("archive.subagents_tag_other", count = subagents)
-                        },
-                    ))
+                    let text = if subagents == 1 {
+                        t!("archive.subagents_tag_one")
+                    } else {
+                        t!("archive.subagents_tag_other", count = subagents)
+                    };
+                    row.child(pixel_tag(Tag::secondary(), &text))
                 })
                 .when(active, |row| {
-                    row.child(
-                        Tag::success()
-                            .small()
-                            .font_family(FONT_PIXEL_MONO)
-                            .child(t!("archive.active")),
-                    )
+                    row.child(pixel_tag(Tag::success(), &t!("archive.active")))
                 }),
         )
         .on_click(move |_, _, cx| {
@@ -1501,6 +1513,17 @@ fn empty_hint(text: SharedString, cx: &App) -> AnyElement {
         .into_any_element()
 }
 
+/// 列表行的小标签：纯拉丁文字用 VT323；含中文（「+1 子代理」「进行中」）时保持 Tag 自带的正文字体，
+/// 否则中文会退回到按 VT323 字号画的系统字体，比旁边的字大一圈。
+fn pixel_tag(tag: Tag, text: &str) -> Tag {
+    let tag = tag.small();
+    if has_cjk(text) {
+        tag.child(text.to_string())
+    } else {
+        tag.font_family(FONT_PIXEL_MONO).child(text.to_string())
+    }
+}
+
 /// 指标块：小标题 + VT323 大数字。
 fn stat(label: SharedString, value: impl IntoElement, cx: &App) -> AnyElement {
     v_flex()
@@ -1528,9 +1551,16 @@ fn stat_text(
     color: Option<gpui_kit::Hsla>,
     cx: &App,
 ) -> AnyElement {
+    // 值可能是中文（如模型「未知」）：含中文时退回正文字体。
     stat(
         label,
-        div().when_some(color, |v, c| v.text_color(c)).child(value),
+        div()
+            .when(has_cjk(&value), |v| {
+                v.font_family(cx.theme().font_family.clone())
+                    .text_size(px(body_size_for_pixel(22.)))
+            })
+            .when_some(color, |v, c| v.text_color(c))
+            .child(value),
         cx,
     )
 }

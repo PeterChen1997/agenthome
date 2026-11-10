@@ -13,7 +13,7 @@ use gpui_kit::{App, AppContext as _, AsyncApp, Entity, Task, WeakEntity};
 
 use crate::data::DataSource;
 use crate::format::now_ms;
-use crate::habitat::{ActivityKind, HabitatEvent, HabitatView, ResidentId};
+use crate::habitat::{ActivityKind, HabitatEvent, HabitatView, ResidentId, ResidentState};
 
 /// 活动信号轮询间隔。
 const POLL: Duration = Duration::from_secs(5);
@@ -45,6 +45,25 @@ impl LiveState {
     /// 本机检测到的来源数。
     pub fn detected_count(&self) -> usize {
         self.activity.iter().filter(|a| a.detected).count()
+    }
+
+    /// 「已接入」的唯一事实来源：本机有这个来源的数据（活动信号的 `detected`）。
+    /// 左栏住户行、仪表盘额度卡、菜单栏弹窗都只问这里，不各自拿栖息地状态或额度快照推断。
+    pub fn connected(&self, who: ResidentId) -> bool {
+        self.activity
+            .iter()
+            .any(|a| resident_of(&a.provider) == Some(who) && a.detected)
+    }
+}
+
+/// 住户行要显示的状态：未接入返回 None（只写「未接入」，不再拼栖息地状态）；
+/// 已接入时用栖息地状态，栖息地还停在「外出」（第一轮信号到达前）按休息中显示，
+/// 免得出现「已接入 · 外出」这种自相矛盾的组合。
+pub fn shown_state(connected: bool, state: ResidentState) -> Option<ResidentState> {
+    match (connected, state) {
+        (false, _) => None,
+        (true, ResidentState::Away) => Some(ResidentState::Sleeping),
+        (true, state) => Some(state),
     }
 }
 
@@ -288,6 +307,32 @@ mod tests {
             source: String::new(),
             freshness: Freshness::Live,
         }
+    }
+
+    #[test]
+    fn connection_and_habitat_state_never_contradict() {
+        // QA 截图里同一帧左栏写「未接入」、额度卡写「已接入 · 外出」：接入只看本机数据，
+        // 未接入不显示状态，已接入不显示「外出」。
+        let mut live = LiveState::default();
+        assert!(!live.connected(ResidentId::Gemini));
+        live.activity = vec![ProviderActivity {
+            provider: ProviderId::GeminiCli,
+            detected: true,
+            last_activity_ms: None,
+            last_kind: None,
+            active_sessions: 0,
+        }];
+        assert!(live.connected(ResidentId::Gemini));
+        assert!(!live.connected(ResidentId::Claude));
+        assert_eq!(shown_state(false, ResidentState::Working), None);
+        assert_eq!(
+            shown_state(true, ResidentState::Away),
+            Some(ResidentState::Sleeping)
+        );
+        assert_eq!(
+            shown_state(true, ResidentState::Tired),
+            Some(ResidentState::Tired)
+        );
     }
 
     #[test]

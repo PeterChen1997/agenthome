@@ -23,7 +23,7 @@ use gpui_kit::{
     WeakEntity, Window, div, px,
 };
 
-use crate::assets::FONT_PIXEL_MONO;
+use crate::assets::PixelMono as _;
 use crate::data::DataSource;
 use crate::format::{now_ms, relative_time};
 use crate::message_row::{provider_avatar, provider_short_name};
@@ -76,6 +76,75 @@ pub(crate) fn split_marks(snippet: &str) -> (String, Vec<Range<usize>>) {
         ranges.push(start..text.len());
     }
     (text, ranges)
+}
+
+/// 去掉片段里常见的 Markdown 标记：反引号、`**`、行首的 `#` 标题与 `- ` / `* ` / `+ ` / `> ` 列表符号，
+/// 换行与连续空白压成一个空格。高亮标记原样保留，之后交给 [`split_marks`] 算区间，所以高亮位置随之正确偏移。
+///
+/// core 的 FTS 片段已把换行压成空格，看不到真正的行首；这里把「片段开头、省略号后、句末标点或中文后的空格之后」
+/// 都当作行首（Markdown 列表在压平后正是「上一句。 - 下一条」这种形状），英文正文里的「a - b」不受影响。
+pub(crate) fn strip_markdown(snippet: &str) -> String {
+    let chars: Vec<char> = snippet.chars().collect();
+    let mut out = String::with_capacity(snippet.len());
+    let mut i = 0;
+    while let Some(&c) = chars.get(i) {
+        let next = chars.get(i + 1).copied();
+        if c == '`' {
+            i += 1;
+            continue;
+        }
+        if c == '*' && next == Some('*') {
+            i += 2;
+            continue;
+        }
+        if c.is_whitespace() {
+            push_space(&mut out);
+            i += 1;
+            continue;
+        }
+        if at_line_start(&out) {
+            let hashes = chars.iter().skip(i).take_while(|&&h| h == '#').count();
+            if (1..=6).contains(&hashes) && chars.get(i + hashes) == Some(&' ') {
+                i += hashes + 1;
+                continue;
+            }
+            if matches!(c, '-' | '*' | '+' | '>') && next == Some(' ') {
+                i += 2;
+                continue;
+            }
+        }
+        out.push(c);
+        i += 1;
+    }
+    out.trim().to_string()
+}
+
+/// 追加一个空格（不重复、不在开头）。
+fn push_space(out: &mut String) {
+    if !out.is_empty() && !out.ends_with(' ') {
+        out.push(' ');
+    }
+}
+
+/// `out` 末尾是否相当于 Markdown 的行首（忽略高亮标记）。
+fn at_line_start(out: &str) -> bool {
+    let mut rest = out
+        .chars()
+        .rev()
+        .filter(|&c| c != SEARCH_MARK_START && c != SEARCH_MARK_END);
+    match rest.next() {
+        None | Some('…') => true,
+        Some(' ') => match rest.find(|&c| c != ' ') {
+            None => true,
+            Some(c) => {
+                matches!(
+                    c,
+                    '…' | '.' | '!' | '?' | ';' | ':' | '。' | '！' | '？' | '；' | '：'
+                ) || crate::assets::has_cjk(&c.to_string())
+            }
+        },
+        Some(_) => false,
+    }
 }
 
 /// 同一会话的命中：组头是会话，组内是消息命中（最多 `HITS_PER_SESSION` 条）。
@@ -505,7 +574,7 @@ impl SearchPalette {
 
 /// 命中词高亮：强调色字 + 半透明强调色底 + 加粗。
 fn highlighted(snippet: &str, cx: &App) -> StyledText {
-    let (text, ranges) = split_marks(snippet);
+    let (text, ranges) = split_marks(&strip_markdown(snippet));
     let style = HighlightStyle {
         color: Some(cx.theme().primary),
         background_color: Some(cx.theme().primary.opacity(0.18)),
@@ -571,13 +640,13 @@ fn session_header(group: &HitGroup, now: i64, cx: &App) -> AnyElement {
                 )),
         )
         .when(more > 0, |row| {
+            let text = t!("search.more_hits", count = more).to_string();
             row.child(
                 div()
                     .flex_none()
-                    .font_family(FONT_PIXEL_MONO)
-                    .text_size(px(14.))
+                    .pixel_mono(&text, 14., cx)
                     .text_color(cx.theme().muted_foreground)
-                    .child(t!("search.more_hits", count = more).to_string()),
+                    .child(text),
             )
         })
         .into_any_element()
@@ -683,6 +752,43 @@ mod tests {
             "{SEARCH_MARK_END}a{SEARCH_MARK_START}{SEARCH_MARK_END}b"
         ));
         assert!(ranges.is_empty());
+    }
+
+    #[test]
+    fn markdown_marks_are_stripped_and_highlight_follows() {
+        // QA 截图：片段里露出反引号和「- 」列表符号。去掉后高亮仍要正好落在命中词上。
+        let snippet = marked(&[
+            ("…只依赖 `DataSource`，不关心背后是 ", false),
+            ("SQLite", true),
+            (" 还是内存。 - 查询在后台线程跑； - 结果…", false),
+        ]);
+        let (text, ranges) = split_marks(&strip_markdown(&snippet));
+        assert_eq!(
+            text,
+            "…只依赖 DataSource，不关心背后是 SQLite 还是内存。 查询在后台线程跑； 结果…"
+        );
+        let picked: Vec<&str> = ranges.iter().filter_map(|r| text.get(r.clone())).collect();
+        assert_eq!(picked, ["SQLite"]);
+    }
+
+    #[test]
+    fn headings_bold_and_line_breaks_are_cleaned() {
+        let snippet = marked(&[
+            ("## 结论\n- 问题出在 **", false),
+            ("unwrap", true),
+            ("** 上\n> 引用", false),
+        ]);
+        let (text, ranges) = split_marks(&strip_markdown(&snippet));
+        assert_eq!(text, "结论 问题出在 unwrap 上 引用");
+        let picked: Vec<&str> = ranges.iter().filter_map(|r| text.get(r.clone())).collect();
+        assert_eq!(picked, ["unwrap"]);
+    }
+
+    #[test]
+    fn prose_dashes_and_single_stars_survive() {
+        // 正文里的连字符、乘号不是 Markdown 标记，不能误删。
+        assert_eq!(strip_markdown("use a - b and 2 * 3"), "use a - b and 2 * 3");
+        assert_eq!(strip_markdown("issue #12 fixed"), "issue #12 fixed");
     }
 
     fn hit(session: &str, message: Option<&str>, at: i64) -> SearchHit {

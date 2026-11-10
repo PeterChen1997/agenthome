@@ -61,58 +61,60 @@ struct Beat {
 }
 
 /// 与 `docs/design/Habitat.dc.html` 里的 SCRIPT 一致。
+/// Gemini 没有额度信号，体力恒为 100（数据层也按满体力喂），否则 mock 模式下剧本的 0 与
+/// 数据层的 100 来回拉扯，住户会每隔几秒「完成了」一次。
 const DEMO_SCRIPT: [Beat; 10] = {
     use ResidentState::*;
     use TimeOfDay::*;
     [
         Beat {
             tod: Night,
-            residents: [(Working, 58), (Thinking, 82), (Sleeping, 0)],
+            residents: [(Working, 58), (Thinking, 82), (Sleeping, 100)],
             toast: None,
         },
         Beat {
             tod: Night,
-            residents: [(Thinking, 57), (Working, 81), (Sleeping, 0)],
+            residents: [(Thinking, 57), (Working, 81), (Sleeping, 100)],
             toast: Some("habitat.demo_tool"),
         },
         Beat {
             tod: Night,
-            residents: [(Working, 55), (Working, 80), (Sleeping, 0)],
+            residents: [(Working, 55), (Working, 80), (Sleeping, 100)],
             toast: None,
         },
         Beat {
             tod: Night,
-            residents: [(Happy, 54), (Working, 79), (Sleeping, 0)],
+            residents: [(Happy, 54), (Working, 79), (Sleeping, 100)],
             toast: Some("habitat.demo_session_done"),
         },
         Beat {
             tod: Evening,
-            residents: [(Working, 40), (Tired, 18), (Sleeping, 0)],
+            residents: [(Working, 40), (Tired, 18), (Sleeping, 100)],
             toast: Some("habitat.demo_low"),
         },
         Beat {
             tod: Evening,
-            residents: [(Working, 38), (Sleeping, 0), (Sleeping, 0)],
+            residents: [(Working, 38), (Sleeping, 0), (Sleeping, 100)],
             toast: Some("habitat.demo_exhausted"),
         },
         Beat {
             tod: Day,
-            residents: [(Tired, 15), (Sleeping, 0), (Away, 0)],
+            residents: [(Tired, 15), (Sleeping, 0), (Away, 100)],
             toast: None,
         },
         Beat {
             tod: Day,
-            residents: [(Sleeping, 0), (Happy, 100), (Away, 0)],
+            residents: [(Sleeping, 0), (Happy, 100), (Away, 100)],
             toast: Some("habitat.demo_codex_reset"),
         },
         Beat {
             tod: Day,
-            residents: [(Happy, 100), (Working, 97), (Away, 0)],
+            residents: [(Happy, 100), (Working, 97), (Away, 100)],
             toast: Some("habitat.demo_claude_reset"),
         },
         Beat {
             tod: Night,
-            residents: [(Working, 92), (Thinking, 90), (Sleeping, 0)],
+            residents: [(Working, 92), (Thinking, 90), (Sleeping, 100)],
             toast: None,
         },
     ]
@@ -123,6 +125,9 @@ pub struct HabitatView {
     state: HabitatState,
     /// `Some(下一拍下标)` 表示在跑演示剧本。
     demo_step: Option<usize>,
+    /// 收到过数据层的 `Detected`：「是否接入」以真实数据为准，演示剧本不再改它，
+    /// 否则住户行（读数据）与小屋（读剧本）会一个说已接入、一个说外出。
+    live_presence: bool,
     /// 上一个时段与切换时刻：淡入期间垫在当前背景下面。
     fading_from: Option<(TimeOfDay, Instant)>,
     /// 每条 toast 换一个号，动画才会从头播。
@@ -139,6 +144,7 @@ impl HabitatView {
             size,
             state: HabitatState::new(TimeOfDay::from_hour(local.hour()), now),
             demo_step: None,
+            live_presence: false,
             fading_from: None,
             toast_serial: 0,
             clock: clock_text(&local),
@@ -150,8 +156,10 @@ impl HabitatView {
 
     /// 数据层事件入口。
     pub fn apply(&mut self, event: HabitatEvent, cx: &mut Context<Self>) {
-        if matches!(event, HabitatEvent::Toast(_)) {
-            self.toast_serial += 1;
+        match event {
+            HabitatEvent::Toast(_) => self.toast_serial += 1,
+            HabitatEvent::Detected { .. } => self.live_presence = true,
+            _ => {}
         }
         self.state.reduce(event, Instant::now());
         cx.notify();
@@ -234,9 +242,11 @@ impl HabitatView {
         let now = Instant::now();
         self.set_time_of_day(beat.tod, now);
         for (who, (state, hp)) in ResidentId::ALL.into_iter().zip(beat.residents) {
-            let detected = state != ResidentState::Away;
-            self.state
-                .reduce(HabitatEvent::Detected { who, detected }, now);
+            if !self.live_presence {
+                let detected = state != ResidentState::Away;
+                self.state
+                    .reduce(HabitatEvent::Detected { who, detected }, now);
+            }
             self.state.reduce(HabitatEvent::Quota { who, hp }, now);
             let kind = match state {
                 ResidentState::Working => Some(ActivityKind::AssistantText),

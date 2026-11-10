@@ -223,9 +223,6 @@ dashboard.quota_title:
 dashboard.quota_subtitle:
   en: "Bar = what's left in the window · resets and data source per window"
   zh-CN: "体力条 = 窗口剩余 · 各窗口重置时间与数据来源"
-dashboard.status_away:
-  en: "Away"
-  zh-CN: "外出"
 dashboard.plan_connected:
   en: "Connected"
   zh-CN: "已接入"
@@ -245,19 +242,19 @@ dashboard.missing_quota_hint:
   en: "No local quota snapshot for this source. Check in Settings that it is connected."
   zh-CN: "本地没有这个来源的额度快照，先在设置里确认来源已接入。"
 dashboard.compliant:
-  en: "Compliant · %{source}"
+  en: "%{source}"
   zh-CN: "合规 · %{source}"
 dashboard.maybe_stale:
-  en: "Possibly stale · %{source}"
+  en: "Stale? %{source}"
   zh-CN: "可能过期 · %{source}"
 dashboard.source_usage:
-  en: "official /usage"
+  en: "Official /usage"
   zh-CN: "官方 /usage"
 dashboard.source_rollout:
-  en: "rollout snapshot"
+  en: "Rollout snapshot"
   zh-CN: "rollout 快照"
 dashboard.source_local_file:
-  en: "local file"
+  en: "Local file"
   zh-CN: "本地文件"
 dashboard.quota:
   en: "Quota"
@@ -269,8 +266,8 @@ dashboard.reset_credits:
   en: "Reset credits"
   zh-CN: "重置信用"
 dashboard.credits_one:
-  en: "1 credit"
-  zh-CN: "1 张"
+  en: "%{count} credit"
+  zh-CN: "%{count} 张"
 dashboard.credits_other:
   en: "%{count} credits"
   zh-CN: "%{count} 张"

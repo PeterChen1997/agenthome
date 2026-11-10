@@ -74,17 +74,21 @@ pub fn short_cost(usd: f64) -> String {
     } else if usd < 100. {
         format!("${usd:.1}")
     } else {
-        let whole = usd.round() as u64;
-        let digits = whole.to_string();
-        let mut out = String::with_capacity(digits.len() + 2);
-        for (i, ch) in digits.chars().enumerate() {
-            if i > 0 && (digits.len() - i).is_multiple_of(3) {
-                out.push(',');
-            }
-            out.push(ch);
-        }
-        format!("${out}")
+        format!("${}", thousands(usd.round() as u64))
     }
+}
+
+/// 计数加千分位：48180 → 48,180。中英文都用逗号。
+pub fn thousands(n: u64) -> String {
+    let digits = n.to_string();
+    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
+    for (i, ch) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(ch);
+    }
+    out
 }
 
 /// 倒计时 HH:MM:SS；已过期显示「已重置」。
@@ -221,6 +225,15 @@ mod tests {
         assert_eq!(short_cost(0.41), "$0.41");
         assert_eq!(short_cost(10.24), "$10.2");
         assert_eq!(short_cost(1255.4), "$1,255");
+    }
+
+    #[test]
+    fn counts_get_thousands_separators() {
+        // 仪表盘里「消息 48180」与旁边「$1,483」口径不一，计数也要千分位才好读。
+        assert_eq!(thousands(0), "0");
+        assert_eq!(thousands(999), "999");
+        assert_eq!(thousands(48_180), "48,180");
+        assert_eq!(thousands(1_234_567), "1,234,567");
     }
 
     #[test]

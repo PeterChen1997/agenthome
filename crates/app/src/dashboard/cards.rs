@@ -9,8 +9,10 @@ use gpui_kit::{
     SharedString, Styled as _, Window, div, img, px, relative, rgb, rgba,
 };
 
-use super::fmt::{AMBER, GREEN, LINE, MUTED, RED, RED_TEXT, avatar_path, provider_color};
-use crate::assets::{FONT_PIXEL_MONO, FONT_PIXEL_SANS};
+use super::fmt::{
+    AMBER, GREEN, LINE, MUTED, RED, RED_TEXT, amber_text, avatar_path, provider_color,
+};
+use crate::assets::{FONT_PIXEL_MONO, FONT_PIXEL_SANS, PixelMono as _};
 
 /// 卡片壳：面板底 + 1px 线 + 4px 圆角，内容纵向排列。
 pub fn card(cx: &App) -> Div {
@@ -96,14 +98,25 @@ pub fn hp_tier(left: f32) -> u32 {
     }
 }
 
-/// 10 格体力条；None 表示没有数据，全灰。
-pub fn hp_bar(left: Option<f32>) -> Div {
+/// 体力条颜色的主题版：分档同 [`hp_tier`]，取主题的 success / warning / danger，
+/// 与左栏住户行一致（深色主题下与设计令牌同值，浅色主题自动换成浅色那一套）。
+pub fn hp_color(left: f32, cx: &App) -> Hsla {
+    match hp_tier(left) {
+        GREEN => cx.theme().success,
+        AMBER => cx.theme().warning,
+        _ => cx.theme().danger,
+    }
+}
+
+/// 10 格体力条；None 表示没有数据，全灰。未点亮的格用主题 `border`，与左栏住户行同一种空格色。
+pub fn hp_bar(left: Option<f32>, cx: &App) -> Div {
     let filled = left.map_or(0, |l| (l / 10.0).round().clamp(0.0, 10.0) as usize);
-    let color = left.map(hp_tier);
+    let color = left.map(|l| hp_color(l, cx));
+    let empty = cx.theme().border;
     h_flex().gap(px(3.)).children((0..10).map(move |i| {
         div().flex_1().h(px(10.)).rounded(px(1.)).bg(match color {
-            Some(c) if i < filled => rgb(c),
-            _ => rgb(LINE),
+            Some(c) if i < filled => c,
+            _ => empty,
         })
     }))
 }
@@ -116,7 +129,7 @@ pub enum TagKind {
     Dim,
 }
 
-/// VT323 小标签（合规 / 告警 / 计数）。
+/// VT323 小标签（合规 / 告警 / 计数）；含中文时改用正文字体（见 `assets::has_cjk`）。
 #[derive(IntoElement)]
 pub struct Tag {
     text: SharedString,
@@ -136,7 +149,7 @@ impl RenderOnce for Tag {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let (bg, fg): (Hsla, Hsla) = match self.kind {
             TagKind::Ok => (rgba((GREEN << 8) | 0x29).into(), rgb(GREEN).into()),
-            TagKind::Warn => (rgba((AMBER << 8) | 0x29).into(), rgb(AMBER).into()),
+            TagKind::Warn => (rgba((AMBER << 8) | 0x29).into(), amber_text(cx)),
             TagKind::Err => (rgba((RED << 8) | 0x29).into(), rgb(RED_TEXT).into()),
             TagKind::Dim => (cx.theme().muted, rgb(MUTED).into()),
         };
@@ -148,8 +161,7 @@ impl RenderOnce for Tag {
             .rounded(px(2.))
             .bg(bg)
             .text_color(fg)
-            .font_family(FONT_PIXEL_MONO)
-            .text_size(px(14.))
+            .pixel_mono(&self.text, 14., cx)
             .line_height(px(14.))
             .whitespace_nowrap()
             .child(self.text)

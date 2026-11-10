@@ -109,8 +109,8 @@ archive.select_session_hint:
   en: "Its title, stats and messages grouped by turn will appear here."
   zh-CN: "右侧会显示标题、指标与按轮次组织的消息流。"
 archive.reveal_tip:
-  en: "Select the original session file in Finder"
-  zh-CN: "在 Finder 中定位会话原件"
+  en: "Reveal the original session file in Finder"
+  zh-CN: "在 Finder 中显示会话原件"
 archive.reveal_missing:
   en: "The original file is no longer on disk"
   zh-CN: "原件已不在磁盘上"
@@ -133,14 +133,20 @@ archive.unstar:
   en: "Unstar"
   zh-CN: "取消星标"
 archive.reveal:
-  en: "Reveal in Finder"
-  zh-CN: "在 Finder 显示"
+  en: "Finder"
+  zh-CN: "Finder"
 archive.export:
-  en: "Export Markdown"
-  zh-CN: "导出 Markdown"
+  en: "Export"
+  zh-CN: "导出"
+archive.export_tip:
+  en: "Export as Markdown"
+  zh-CN: "导出为 Markdown"
 archive.resume:
-  en: "Continue in %{provider}"
-  zh-CN: "用 %{provider} 继续"
+  en: "Resume"
+  zh-CN: "继续"
+archive.resume_tip:
+  en: "Copy the command to continue in %{provider}"
+  zh-CN: "复制命令，在 %{provider} 里继续这个会话"
 archive.stat_model:
   en: "Model"
   zh-CN: "模型"

@@ -11,12 +11,13 @@ use gpui_kit::{
     SharedString, Styled as _, Subscription, Task, Window, div, px, rgb,
 };
 
-use super::cards::{Tag, TagKind, avatar, card, card_title, hp_bar, hp_tier, vt};
-use super::fmt::{self, AMBER, GREEN, MUTED, RED_TEXT, countdown};
+use super::cards::{Tag, TagKind, avatar, card, card_title, hp_bar, hp_color, vt};
+use super::fmt::{self, GREEN, MUTED, RED_TEXT, amber_text, countdown};
 use super::model::{DueItem, due_items};
-use crate::assets::FONT_PIXEL_MONO;
+use crate::assets::PixelMono as _;
 use crate::format::{now_ms, quota_window_label};
 use crate::habitat::{HabitatView, ResidentId};
+use crate::live::{LiveState, shown_state};
 
 /// 额度快照与倒计时时钟。
 pub struct QuotaState {
@@ -67,6 +68,7 @@ fn provider_of(who: ResidentId) -> ProviderId {
 pub struct ResidentsCard {
     quota: Entity<QuotaState>,
     habitat: Entity<HabitatView>,
+    live: Entity<LiveState>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -74,15 +76,18 @@ impl ResidentsCard {
     pub fn new(
         quota: Entity<QuotaState>,
         habitat: Entity<HabitatView>,
+        live: Entity<LiveState>,
         cx: &mut Context<Self>,
     ) -> Self {
         let subscriptions = vec![
             cx.observe(&quota, |_, _, cx| cx.notify()),
             cx.observe(&habitat, |_, _, cx| cx.notify()),
+            cx.observe(&live, |_, _, cx| cx.notify()),
         ];
         Self {
             quota,
             habitat,
+            live,
             _subscriptions: subscriptions,
         }
     }
@@ -90,36 +95,52 @@ impl ResidentsCard {
     fn render_resident(
         &self,
         who: ResidentId,
-        status: SharedString,
+        status: Option<SharedString>,
         snapshots: &[QuotaSnapshot],
         now_ms: i64,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let provider = provider_of(who);
         let snapshot = snapshots.iter().find(|s| s.provider == provider);
-        let plan: SharedString = snapshot
-            .and_then(|s| s.plan.clone())
-            .unwrap_or_else(|| match who {
-                // Gemini 没有本地额度信号，但会话与 token 已接入。
-                ResidentId::Gemini => t!("dashboard.plan_connected").into_owned(),
-                _ => t!("dashboard.plan_not_connected").into_owned(),
-            })
-            .into();
+        // 未接入（`status` 为 None）只写「未接入」；已接入时套餐名优先，没有套餐名写「已接入」。
+        let plan: SharedString = match (&status, snapshot.and_then(|s| s.plan.clone())) {
+            (None, _) => t!("dashboard.plan_not_connected").into_owned(),
+            (Some(_), Some(plan)) => plan,
+            (Some(_), None) => t!("dashboard.plan_connected").into_owned(),
+        }
+        .into();
+        let summary: SharedString = match &status {
+            Some(status) => format!("{plan} · {status}").into(),
+            None => plan,
+        };
+        // 标题行放不下时（窄窗口、英文长状态如「Low battery」）标签整体换到下一行，
+        // 不截断、不压到右边一列；名字与状态各自不换行。
         let header = h_flex()
-            .items_baseline()
-            .gap(px(8.))
+            .flex_wrap()
+            .items_center()
+            .gap_x(px(8.))
+            .gap_y(px(4.))
             .child(
-                div()
-                    .text_size(px(13.5))
-                    .font_weight(FontWeight::MEDIUM)
-                    .child(who.name()),
+                h_flex()
+                    .min_w_0()
+                    .items_baseline()
+                    .gap(px(8.))
+                    .child(
+                        div()
+                            .flex_none()
+                            .text_size(px(13.5))
+                            .font_weight(FontWeight::MEDIUM)
+                            .child(who.name()),
+                    )
+                    .child(
+                        div()
+                            .min_w_0()
+                            .truncate()
+                            .text_size(px(12.5))
+                            .child(summary),
+                    ),
             )
-            .child(
-                div()
-                    .text_size(px(12.5))
-                    .child(format!("{plan} · {status}")),
-            )
-            .child(div().ml_auto().child(match snapshot {
+            .child(div().flex_none().ml_auto().child(match snapshot {
                 Some(s) => compliance_tag(s),
                 None => Tag::new(
                     if who == ResidentId::Gemini {
@@ -177,13 +198,15 @@ impl Render for ResidentsCard {
             (quota.snapshots.clone(), quota.now_ms, quota.error.clone())
         };
         let residents = self.habitat.read(cx).residents().clone();
+        let live = self.live.read(cx);
+        let connected = ResidentId::ALL.map(|who| live.connected(who));
         let rows: Vec<AnyElement> = ResidentId::ALL
             .into_iter()
             .map(|who| {
-                let status: SharedString = residents
-                    .get(who.index())
-                    .map(|r| r.state.label().to_string().into())
-                    .unwrap_or_else(|| t!("dashboard.status_away").into());
+                // 是否接入看本机数据（与左栏、菜单栏同一判定），状态文案看栖息地。
+                let status: Option<SharedString> = residents.get(who.index()).and_then(|r| {
+                    shown_state(connected[who.index()], r.state).map(|s| s.label().into())
+                });
                 self.render_resident(who, status, &snapshots, now_ms, cx)
             })
             .collect();
@@ -235,7 +258,6 @@ fn compliance_tag(snapshot: &QuotaSnapshot) -> Tag {
 /// 一个窗口：标签 + 剩余百分比 + 10 格体力条。
 fn window_row(window: &QuotaWindow, cx: &mut Context<ResidentsCard>) -> AnyElement {
     let left = (100.0 - window.used_percent).clamp(0.0, 100.0);
-    let tier = hp_tier(left);
     v_flex()
         .gap(px(4.))
         .child(
@@ -247,15 +269,15 @@ fn window_row(window: &QuotaWindow, cx: &mut Context<ResidentsCard>) -> AnyEleme
                 .child(quota_window_label(window))
                 .child(
                     vt(22.)
-                        .text_color(if tier == GREEN {
+                        .text_color(if left > 50.0 {
                             cx.theme().foreground
                         } else {
-                            rgb(tier).into()
+                            hp_color(left, cx)
                         })
                         .child(format!("{left:.0}%")),
                 ),
         )
-        .child(hp_bar(Some(left)))
+        .child(hp_bar(Some(left), cx))
         .into_any_element()
 }
 
@@ -271,7 +293,7 @@ fn window_row_empty(cx: &mut Context<ResidentsCard>) -> AnyElement {
                 .child(t!("dashboard.quota"))
                 .child(vt(22.).text_color(cx.theme().muted_foreground).child("--")),
         )
-        .child(hp_bar(None))
+        .child(hp_bar(None, cx))
         .into_any_element()
 }
 
@@ -287,6 +309,7 @@ fn reset_line(snapshot: &QuotaSnapshot, now_ms: i64, cx: &App) -> AnyElement {
             continue;
         };
         let remaining = at - now_ms;
+        let text = countdown(remaining);
         line = line.child(
             h_flex()
                 .gap(px(4.))
@@ -297,8 +320,9 @@ fn reset_line(snapshot: &QuotaSnapshot, now_ms: i64, cx: &App) -> AnyElement {
                 ))
                 .child(
                     vt(16.)
+                        .pixel_mono(&text, 16., cx)
                         .text_color(due_color(remaining, Some(100.0 - window.used_percent), cx))
-                        .child(countdown(remaining)),
+                        .child(text),
                 ),
         );
     }
@@ -309,17 +333,33 @@ fn reset_line(snapshot: &QuotaSnapshot, now_ms: i64, cx: &App) -> AnyElement {
             .child(t!("dashboard.reset_credits"));
         match credits.reset_credits {
             Some(n) => {
-                let text = if n == 1 {
+                // 数字用 VT323，量词（「张」/「credits」）按语言决定字体：中文退回正文字体，
+                // 否则「张」会按 VT323 的大字号画。按 `%{count}` 切模板，中英文语序都能放。
+                let template = if n == 1 {
                     t!("dashboard.credits_one")
                 } else {
-                    t!("dashboard.credits_other", count = n)
+                    t!("dashboard.credits_other")
                 };
-                item = item.child(vt(16.).text_color(rgb(GREEN)).child(text));
+                let (before, after) = template
+                    .split_once("%{count}")
+                    .unwrap_or(("", template.as_ref()));
+                let unit = |text: &str| {
+                    let text = text.trim().to_string();
+                    vt(16.)
+                        .pixel_mono(&text, 16., cx)
+                        .text_color(rgb(GREEN))
+                        .child(text)
+                };
+                item = item
+                    .when(!before.trim().is_empty(), |item| item.child(unit(before)))
+                    .child(vt(16.).text_color(rgb(GREEN)).child(n.to_string()))
+                    .when(!after.trim().is_empty(), |item| item.child(unit(after)));
             }
             None if credits.unlimited => item = item.child(t!("dashboard.credits_unlimited")),
             None => item = item.child(t!("dashboard.credits_none")),
         }
         if let Some(expires) = credits.expires_at_ms {
+            let text = countdown(expires - now_ms);
             // 倒计时单独着色，按 `%{t}` 把文案切成前后两段，中英文语序都能放。
             let template = t!("dashboard.credits_expire");
             let (before, after) = template
@@ -331,8 +371,9 @@ fn reset_line(snapshot: &QuotaSnapshot, now_ms: i64, cx: &App) -> AnyElement {
                 })
                 .child(
                     vt(16.)
+                        .pixel_mono(&text, 16., cx)
                         .text_color(due_color(expires - now_ms, None, cx))
-                        .child(countdown(expires - now_ms)),
+                        .child(text),
                 )
                 .when(!after.trim().is_empty(), |item| {
                     item.child(after.trim().to_string())
@@ -349,7 +390,7 @@ fn due_color(remaining_ms: i64, quota_left: Option<f32>, cx: &App) -> Hsla {
     if remaining_ms < 3_600_000 {
         rgb(RED_TEXT).into()
     } else if remaining_ms < 6 * 3_600_000 || quota_left.is_some_and(|left| left < 25.0) {
-        rgb(AMBER).into()
+        amber_text(cx)
     } else {
         cx.theme().foreground
     }
@@ -410,14 +451,15 @@ impl DueCard {
                             .child(note),
                     ),
             )
-            .child(
+            .child({
+                let text = countdown(remaining);
                 div()
-                    .font_family(FONT_PIXEL_MONO)
-                    .text_size(px(22.))
+                    .flex_none()
+                    .pixel_mono(&text, 22., cx)
                     .line_height(px(22.))
                     .text_color(due_color(remaining, item.quota_left, cx))
-                    .child(countdown(remaining)),
-            )
+                    .child(text)
+            })
             .into_any_element()
     }
 }

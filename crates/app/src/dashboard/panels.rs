@@ -17,7 +17,8 @@ use super::fmt::{
 };
 use super::model::{DayPoint, TREND_DAYS};
 use super::{DashboardView, TrendMetric, segmented};
-use crate::format::{now_ms, relative_time, short_cost, short_tokens};
+use crate::assets::PixelMono as _;
+use crate::format::{now_ms, relative_time, short_cost, short_tokens, thousands};
 
 /// 页头周期的显示名。
 pub fn period_label(period: Period) -> SharedString {
@@ -197,7 +198,7 @@ impl DashboardView {
                             .gap(px(8.))
                             .child(
                                 super::cards::vt(30.)
-                                    .text_color(rgb(AMBER))
+                                    .text_color(super::fmt::amber_text(cx))
                                     .child(short_cost(tokens.all.cost_usd)),
                             )
                             .child({
@@ -217,11 +218,11 @@ impl DashboardView {
                 )
                 .child(stat(
                     t!("dashboard.sessions").into(),
-                    tokens.all.sessions.to_string(),
+                    thousands(tokens.all.sessions),
                 ))
                 .child(stat(
                     t!("dashboard.messages").into(),
-                    tokens.all.messages.to_string(),
+                    thousands(tokens.all.messages),
                 )),
         );
         let max_output = claude
@@ -488,15 +489,17 @@ impl DashboardView {
                                 )
                             }),
                     )
-                    .child(
+                    .child({
+                        // 「3 分钟前」是中文：含中文时退回正文字体。
+                        let ago = a
+                            .last_activity_ms
+                            .map(|t| relative_time(t, now))
+                            .unwrap_or_else(|| "--".to_string());
                         super::cards::vt(15.)
+                            .pixel_mono(&ago, 15., cx)
                             .text_color(cx.theme().muted_foreground)
-                            .child(
-                                a.last_activity_ms
-                                    .map(|t| relative_time(t, now))
-                                    .unwrap_or_else(|| "--".to_string()),
-                            ),
-                    )
+                            .child(ago)
+                    })
                     .into_any_element()
             })
             .collect();
@@ -520,7 +523,7 @@ impl DashboardView {
                 h_flex()
                     .gap(px(10.))
                     .child(
-                        Tile::new(t!("dashboard.sessions"), totals.sessions.to_string()).note(
+                        Tile::new(t!("dashboard.sessions"), thousands(totals.sessions)).note(
                             t!("dashboard.in_progress_count", count = active),
                             Some(GREEN),
                         ),
@@ -697,7 +700,7 @@ fn health_rows(health: &ProviderHealth) -> Vec<AnyElement> {
                     .flex_1()
                     .child(provider_name(&health.provider).to_string()),
             )
-            .child(super::cards::vt(18.).child(health.sessions.to_string()))
+            .child(super::cards::vt(18.).child(thousands(health.sessions)))
             .into_any_element(),
     ];
     let sub = |text: SharedString, count: u64, kind: TagKind| {
@@ -707,7 +710,7 @@ fn health_rows(health: &ProviderHealth) -> Vec<AnyElement> {
             .pl(px(28.))
             .text_size(px(12.5))
             .child(div().flex_1().text_color(rgb(MUTED)).child(text))
-            .child(Tag::new(count.to_string(), kind))
+            .child(Tag::new(thousands(count), kind))
             .into_any_element()
     };
     if health.archive_only > 0 {

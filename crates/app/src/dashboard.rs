@@ -24,6 +24,7 @@ use gpui_kit::{
 
 use crate::data::DataSource;
 use crate::habitat::HabitatView;
+use crate::live::LiveState;
 use model::{Overview, TokenTotals};
 use quota::{DueCard, QuotaState, ResidentsCard};
 
@@ -67,14 +68,16 @@ impl DashboardView {
     const TOKEN_PERIODS: [Period; 4] = [Period::Today, Period::Week, Period::Month, Period::All];
 
     /// `habitat` 是外壳持有、常驻左栏的栖息地；仪表盘不再重复渲染它，只读住户状态文案。
+    /// `live` 给出「是否接入」的唯一判定，与左栏、菜单栏一致。
     pub fn new(
         source: Arc<dyn DataSource>,
         habitat: Entity<HabitatView>,
+        live: Entity<LiveState>,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let quota = cx.new(QuotaState::new);
-        let residents = cx.new(|cx| ResidentsCard::new(quota.clone(), habitat.clone(), cx));
+        let residents = cx.new(|cx| ResidentsCard::new(quota.clone(), habitat.clone(), live, cx));
         let due = cx.new(|cx| DueCard::new(quota.clone(), cx));
         let mut this = Self {
             source,

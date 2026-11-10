@@ -16,6 +16,18 @@ pub const BLUE: u32 = 0x6FA9FF;
 /// 次要文字 #9AA6C0，主题里没有对应语义字段。
 pub const MUTED: u32 = 0x9AA6C0;
 pub const LINE: u32 = 0x26304A;
+/// 浅色主题白底上的琥珀字：#F5B556 / 主题 warning #D9931F 在白底对比度不足 3:1，文字改用更深的一档。
+pub const AMBER_TEXT_LIGHT: u32 = 0x9A6100;
+
+/// 琥珀色文字（倒计时、告警标签）：深色主题沿用设计令牌，浅色主题用加深的琥珀。
+pub fn amber_text(cx: &gpui_kit::App) -> gpui_kit::Hsla {
+    use gpui_kit::component::ActiveTheme as _;
+    if cx.theme().is_dark() {
+        gpui_kit::rgb(AMBER).into()
+    } else {
+        gpui_kit::rgb(AMBER_TEXT_LIGHT).into()
+    }
+}
 
 /// 住户色：Claude 赭陶、Codex 黑白、Gemini 蓝紫。
 pub fn provider_color(provider: &ProviderId) -> u32 {
