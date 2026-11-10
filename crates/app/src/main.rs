@@ -1,5 +1,11 @@
 //! AgentHome 桌面端入口：解析参数、装主题、开主窗口。
 
+#[macro_use]
+extern crate rust_i18n;
+
+// 界面文案在 `crates/app/locales/*.yml`（按模块拆文件，`_version: 2` 同一文件里放中英两份）。
+rust_i18n::i18n!("locales", fallback = "en");
+
 mod archive;
 mod assets;
 mod config;
@@ -36,7 +42,17 @@ const PIXEL_HABITAT_THEME: &str = include_str!("../assets/themes/pixel-habitat.j
 /// 红绿灯位置：垂直居中在左栏顶行（`workspace::TOP_ROW_HEIGHT` = 44，灯高约 12）。
 const TRAFFIC_LIGHT_POSITION: Point<Pixels> = point(px(16.), px(16.));
 
-const USAGE: &str = "用法：agenthome-app [--db PATH] [--mock] [--habitat-demo] [--appearance light|dark] [--page dashboard|archive|settings] [--search TEXT] [--session ID] [--capture PNG]\n  --db PATH            索引库路径，默认 ~/AgentHome/index/agenthome.db（不存在时启动后自动建库）\n  --mock               使用内存 mock 数据源\n  --habitat-demo       只开一个栖息地演示窗口\n  --appearance MODE    固定明 / 暗主题，不跟随系统（调试与截图用）\n  --page PAGE          启动后打开的页面\n  --search TEXT        启动后弹出 ⌘K 面板并搜索 TEXT\n  --session ID         启动后打开该会话\n  --capture PATH       等待后把窗口离屏渲染成 PNG 并退出（需 --features capture）\n  --capture-delay SEC  截图前等待秒数，默认 4";
+const USAGE: &str = "Usage: agenthome-app [--db PATH] [--mock] [--habitat-demo] [--appearance light|dark] [--lang zh-CN|en] [--page dashboard|archive|settings] [--search TEXT] [--session ID] [--capture PNG]
+  --db PATH            index database, default ~/AgentHome/index/agenthome.db (created on first launch)
+  --mock               use the in-memory demo data source
+  --habitat-demo       open only the habitat demo window
+  --appearance MODE    pin light / dark theme instead of following the system (debugging and screenshots)
+  --lang LANG          pin the UI language without saving it (screenshots)
+  --page PAGE          page to open on launch
+  --search TEXT        open the Cmd-K palette and search TEXT on launch
+  --session ID         open this session on launch
+  --capture PATH       render the window offscreen to PNG after a delay, then quit (needs --features capture)
+  --capture-delay SEC  seconds to wait before capturing, default 4";
 
 fn main() {
     let mut mock = false;
@@ -47,6 +63,7 @@ fn main() {
     let mut start_search: Option<String> = None;
     let mut start_session: Option<String> = None;
     let mut capture: Option<(PathBuf, u64)> = None;
+    let mut language: Option<config::Language> = None;
     let mut arguments = std::env::args().skip(1);
     while let Some(argument) = arguments.next() {
         match argument.as_str() {
@@ -56,14 +73,22 @@ fn main() {
                 Some("light") => appearance = Some(ThemeMode::Light),
                 Some("dark") => appearance = Some(ThemeMode::Dark),
                 _ => {
-                    eprintln!("--appearance 只接受 light 或 dark。\n{USAGE}");
+                    eprintln!("--appearance takes light or dark.\n{USAGE}");
+                    std::process::exit(2);
+                }
+            },
+            "--lang" => match arguments.next().as_deref() {
+                Some("zh-CN" | "zh") => language = Some(config::Language::ZhCn),
+                Some("en") => language = Some(config::Language::En),
+                _ => {
+                    eprintln!("--lang takes zh-CN or en.\n{USAGE}");
                     std::process::exit(2);
                 }
             },
             "--db" => match arguments.next() {
                 Some(path) => db = Some(PathBuf::from(path)),
                 None => {
-                    eprintln!("--db 需要一个路径。\n{USAGE}");
+                    eprintln!("--db needs a path.\n{USAGE}");
                     std::process::exit(2);
                 }
             },
@@ -72,21 +97,21 @@ fn main() {
                     start_page = Some(page.to_string())
                 }
                 _ => {
-                    eprintln!("--page 只接受 dashboard、archive 或 settings。\n{USAGE}");
+                    eprintln!("--page takes dashboard, archive or settings.\n{USAGE}");
                     std::process::exit(2);
                 }
             },
             "--session" => match arguments.next() {
                 Some(id) => start_session = Some(id),
                 None => {
-                    eprintln!("--session 需要会话 id。\n{USAGE}");
+                    eprintln!("--session needs a session id.\n{USAGE}");
                     std::process::exit(2);
                 }
             },
             "--search" => match arguments.next() {
                 Some(text) => start_search = Some(text),
                 None => {
-                    eprintln!("--search 需要一个关键词。\n{USAGE}");
+                    eprintln!("--search needs a query.\n{USAGE}");
                     std::process::exit(2);
                 }
             },
@@ -97,7 +122,7 @@ fn main() {
                     capture = Some((PathBuf::from(path), delay));
                 }
                 None => {
-                    eprintln!("--capture 需要一个输出路径。\n{USAGE}");
+                    eprintln!("--capture needs an output path.\n{USAGE}");
                     std::process::exit(2);
                 }
             },
@@ -107,7 +132,7 @@ fn main() {
                     capture = Some((path, delay));
                 }
                 None => {
-                    eprintln!("--capture-delay 需要秒数。\n{USAGE}");
+                    eprintln!("--capture-delay needs a number of seconds.\n{USAGE}");
                     std::process::exit(2);
                 }
             },
@@ -116,10 +141,21 @@ fn main() {
                 return;
             }
             other => {
-                eprintln!("未知参数：{other}\n{USAGE}");
+                eprintln!("Unknown argument: {other}\n{USAGE}");
                 std::process::exit(2);
             }
         }
+    }
+    // 语言最先定：之后建的数据源（包括 mock 文案）和窗口都按它渲染。命令行 --lang 不写偏好。
+    match language {
+        Some(language) => config::apply_language(language),
+        None => match config::load_language() {
+            Ok(saved) => config::apply_language(saved),
+            Err(error) => {
+                config::apply_language(config::Language::System);
+                eprintln!("{error:#}");
+            }
+        },
     }
     if habitat_demo {
         run_habitat_demo();
@@ -156,7 +192,9 @@ fn main() {
                 Some(mode) => Theme::change(mode, None, cx),
                 None => match config::load_appearance() {
                     Ok(saved) => config::apply_appearance(saved, None, cx),
-                    Err(error) => eprintln!("外观偏好读取失败，按跟随系统处理：{error:#}"),
+                    Err(error) => eprintln!(
+                        "Could not read the appearance preference, following the system: {error:#}"
+                    ),
                 },
             }
             let options = WindowOptions {
@@ -189,7 +227,7 @@ fn main() {
                 }
                 workspace
             })
-            .expect("打开主窗口失败");
+            .expect("failed to open the main window");
             cx.activate(true);
         });
 }
@@ -212,7 +250,7 @@ fn run_habitat_demo() {
                 view
             })
         })
-        .expect("打开栖息地演示窗口失败");
+        .expect("failed to open the habitat demo window");
         cx.activate(true);
     });
 }
@@ -223,7 +261,9 @@ fn register_fonts(cx: &mut App) {
         .iter()
         .map(|bytes| std::borrow::Cow::Borrowed(*bytes))
         .collect();
-    cx.text_system().add_fonts(fonts).expect("内置字体注册失败");
+    cx.text_system()
+        .add_fonts(fonts)
+        .expect("failed to register bundled fonts");
 }
 
 /// 把内置的 Pixel Habitat 注册进主题表，并设为当前明/暗模式的默认主题。
@@ -231,13 +271,13 @@ fn apply_pixel_habitat_theme(cx: &mut App) {
     let registry = ThemeRegistry::global_mut(cx);
     registry
         .load_themes_from_str(PIXEL_HABITAT_THEME)
-        .expect("内置 Pixel Habitat 主题解析失败");
+        .expect("failed to parse the bundled Pixel Habitat theme");
     let find = |name: &str| {
         registry
             .themes()
             .get(&SharedString::from(name.to_string()))
             .cloned()
-            .unwrap_or_else(|| panic!("内置主题缺少 {name}"))
+            .unwrap_or_else(|| panic!("bundled theme is missing {name}"))
     };
     let light = find("Pixel Habitat Light");
     let dark = find("Pixel Habitat Dark");
@@ -284,11 +324,11 @@ fn schedule_capture(path: PathBuf, delay: u64, window: &mut gpui_kit::Window, cx
             });
             match result {
                 Ok(Ok(image)) => match image.save(&path) {
-                    Ok(()) => eprintln!("已截图：{}", path.display()),
-                    Err(error) => eprintln!("截图保存失败：{error}"),
+                    Ok(()) => eprintln!("Captured: {}", path.display()),
+                    Err(error) => eprintln!("Failed to save the capture: {error}"),
                 },
-                Ok(Err(error)) => eprintln!("截图渲染失败：{error:#}"),
-                Err(error) => eprintln!("截图时窗口已关闭：{error:#}"),
+                Ok(Err(error)) => eprintln!("Failed to render the capture: {error:#}"),
+                Err(error) => eprintln!("The window closed before capture: {error:#}"),
             }
             cx.update(|_, cx| cx.quit()).ok();
         })
@@ -297,5 +337,5 @@ fn schedule_capture(path: PathBuf, delay: u64, window: &mut gpui_kit::Window, cx
 
 #[cfg(not(feature = "capture"))]
 fn schedule_capture(_: PathBuf, _: u64, _: &mut gpui_kit::Window, _: &mut App) {
-    eprintln!("--capture 需要用 `cargo build -p agenthome-app --features capture` 构建。");
+    eprintln!("--capture needs a build with `cargo build -p agenthome-app --features capture`.");
 }

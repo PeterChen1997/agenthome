@@ -33,7 +33,7 @@ use crate::habitat::{HabitatSize, HabitatView, ResidentId, ResidentState};
 use crate::live::{LiveFeed, LiveState, primary_window};
 use crate::message_row::{provider_avatar, secondary};
 use crate::search_palette::{PaletteEvent, SearchPalette};
-use crate::settings::SettingsView;
+use crate::settings::{SettingsEvent, SettingsView};
 use crate::sync::{SyncEngine, SyncState};
 
 actions!(agenthome, [OpenSearch]);
@@ -355,6 +355,18 @@ impl Workspace {
                                 cx,
                             )
                         });
+                        cx.notify();
+                    }
+                },
+            ),
+            cx.subscribe(
+                &settings,
+                |this, _, event: &SettingsEvent, cx| match event {
+                    SettingsEvent::LanguageChanged => {
+                        this.dashboard
+                            .update(cx, |dashboard, cx| dashboard.refresh_data(cx));
+                        this.archive
+                            .update(cx, |archive, cx| archive.refresh_data(cx));
                         cx.notify();
                     }
                 },

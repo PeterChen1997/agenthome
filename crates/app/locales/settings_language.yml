@@ -1,0 +1,19 @@
+_version: 2
+settings.follow_system:
+  en: System
+  zh-CN: 跟随系统
+settings.appearance_light:
+  en: Light
+  zh-CN: 浅色
+settings.appearance_dark:
+  en: Dark
+  zh-CN: 深色
+settings.language:
+  en: Language
+  zh-CN: 界面语言
+settings.language_hint:
+  en: Saved in ~/AgentHome/config/app.json
+  zh-CN: 保存在 ~/AgentHome/config/app.json
+settings.language_save_failed:
+  en: "Language switched, but saving the preference failed: %{error}"
+  zh-CN: "语言已切换，但保存偏好失败：%{error}"

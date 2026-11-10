@@ -1,0 +1,10 @@
+_version: 2
+config.read_failed:
+  en: "Failed to read %{path}: %{error}"
+  zh-CN: "读取 %{path} 失败：%{error}"
+config.invalid_json:
+  en: "%{path} is not valid JSON: %{error}"
+  zh-CN: "%{path} 不是合法 JSON：%{error}"
+config.unparsable:
+  en: "%{path} could not be parsed; nothing was saved"
+  zh-CN: "%{path} 内容无法解析，未保存"

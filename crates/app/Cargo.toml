@@ -14,7 +14,9 @@ anyhow.workspace = true
 chrono.workspace = true
 dirs.workspace = true
 gpui-kit.workspace = true
+rust-i18n = "4"
 serde_json.workspace = true
+sys-locale = "0.3"
 
 # 离屏截图（文档与端到端核对用，锁屏时也能出图）：`cargo build -p agenthome-app --features capture`
 # 打开 gpui 的 test-support，换来 `Window::render_to_image`；正式包不开。

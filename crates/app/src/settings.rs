@@ -17,13 +17,13 @@ use gpui_kit::component::tab::{Tab, TabBar};
 use gpui_kit::component::{ActiveTheme as _, Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AnyElement, AppContext as _, Context, Entity, FontWeight, InteractiveElement as _, IntoElement,
-    ParentElement as _, Render, SharedString, StatefulInteractiveElement as _, Styled as _,
-    Subscription, Task, Window, div, px,
+    AnyElement, AppContext as _, Context, Entity, EventEmitter, FontWeight,
+    InteractiveElement as _, IntoElement, ParentElement as _, Render, SharedString,
+    StatefulInteractiveElement as _, Styled as _, Subscription, Task, Window, div, px,
 };
 
 use crate::assets::FONT_PIXEL_SANS;
-use crate::config::{self, Appearance};
+use crate::config::{self, Appearance, Language};
 use crate::format::{now_ms, relative_time};
 use crate::live::LiveState;
 use crate::message_row::provider_avatar;
@@ -54,6 +54,7 @@ pub struct SettingsView {
     index_db: Option<PathBuf>,
     disk: DiskInfo,
     appearance: Appearance,
+    language: Language,
     notice: Option<Notice>,
     busy: bool,
     _disk_task: Task<()>,
@@ -99,6 +100,7 @@ impl SettingsView {
             index_db,
             disk: DiskInfo::default(),
             appearance: config::current_appearance(),
+            language: config::load_language().unwrap_or_default(),
             notice: None,
             busy: false,
             _disk_task: disk_task,
@@ -138,6 +140,30 @@ impl SettingsView {
                 text: format!("外观已切换，但保存偏好失败：{error:#}").into(),
             }),
         };
+        cx.notify();
+    }
+
+    fn set_language(&mut self, language: Language, window: &mut Window, cx: &mut Context<Self>) {
+        if self.language == language {
+            return;
+        }
+        self.language = language;
+        config::apply_language(language);
+        self.notice = match config::save_language(language) {
+            Ok(()) => None,
+            Err(error) => Some(Notice {
+                ok: false,
+                text: t!(
+                    "settings.language_save_failed",
+                    error = format!("{error:#}")
+                )
+                .to_string()
+                .into(),
+            }),
+        };
+        // 渲染时取的文案靠整窗重绘更新；各页缓存的文案（仪表盘模型、归档列表）由外壳重新加载。
+        cx.emit(SettingsEvent::LanguageChanged);
+        window.refresh();
         cx.notify();
     }
 
@@ -438,6 +464,33 @@ impl SettingsView {
             .into_any_element()
     }
 
+    fn render_language(&self, cx: &mut Context<Self>) -> AnyElement {
+        let selected = Language::ALL
+            .iter()
+            .position(|l| *l == self.language)
+            .unwrap_or(0);
+        section(
+            t!("settings.language").to_string(),
+            t!("settings.language_hint").to_string(),
+            cx,
+        )
+        .child(
+            h_flex().child(
+                TabBar::new("language")
+                    .segmented()
+                    .xsmall()
+                    .selected_index(selected)
+                    .on_click(cx.listener(|this, ix: &usize, window, cx| {
+                        if let Some(language) = Language::ALL.get(*ix) {
+                            this.set_language(*language, window, cx);
+                        }
+                    }))
+                    .children(Language::ALL.iter().map(|l| Tab::new().label(l.label()))),
+            ),
+        )
+        .into_any_element()
+    }
+
     fn render_about(&self, cx: &mut Context<Self>) -> AnyElement {
         section("合规与定价", "", cx)
             .child(muted(
@@ -460,6 +513,14 @@ impl SettingsView {
             .into_any_element()
     }
 }
+
+/// 设置页发给外壳的事件。
+pub enum SettingsEvent {
+    /// 界面语言变了：外壳让各页重新加载带文案的数据。
+    LanguageChanged,
+}
+
+impl EventEmitter<SettingsEvent> for SettingsView {}
 
 impl Render for SettingsView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -501,6 +562,7 @@ impl Render for SettingsView {
                     .child(self.render_quota(cx))
                     .child(self.render_storage(cx))
                     .child(self.render_appearance(cx))
+                    .child(self.render_language(cx))
                     .child(self.render_about(cx)),
             )
     }
@@ -662,7 +724,12 @@ fn human_bytes(bytes: u64) -> String {
 }
 
 /// 设置页区块：卡片 + Pixelify Sans 标题 + 次要说明。
-fn section(title: &'static str, sub: &'static str, cx: &Context<SettingsView>) -> gpui_kit::Div {
+fn section(
+    title: impl Into<SharedString>,
+    sub: impl Into<SharedString>,
+    cx: &Context<SettingsView>,
+) -> gpui_kit::Div {
+    let (title, sub): (SharedString, SharedString) = (title.into(), sub.into());
     v_flex()
         .gap(px(12.))
         .px(px(18.))

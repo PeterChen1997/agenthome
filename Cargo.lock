@@ -120,7 +120,9 @@ dependencies = [
  "gpui-kit",
  "gpui-pre-macos",
  "image",
+ "rust-i18n",
  "serde_json",
+ "sys-locale",
 ]
 
 [[package]]
