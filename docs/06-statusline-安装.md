@@ -38,7 +38,7 @@ agenthome statusline uninstall   # 还原
 1. 让脚本可执行：
 
    ```sh
-   chmod +x /Users/peterchen/code_hub/agenthome/script/agenthome-statusline.sh
+   chmod +x /path/to/agenthome/script/agenthome-statusline.sh
    ```
 
 2. 看一下 `~/.claude/settings.json` 里现在有没有 `statusLine`：
@@ -55,7 +55,7 @@ agenthome statusline uninstall   # 还原
      {
        "statusLine": {
          "type": "command",
-         "command": "/Users/peterchen/code_hub/agenthome/script/agenthome-statusline.sh"
+         "command": "/path/to/agenthome/script/agenthome-statusline.sh"
        }
      }
      ```
@@ -66,7 +66,7 @@ agenthome statusline uninstall   # 还原
      {
        "statusLine": {
          "type": "command",
-         "command": "AGENTHOME_ORIG_STATUSLINE='~/.claude/statusline.sh' /Users/peterchen/code_hub/agenthome/script/agenthome-statusline.sh"
+         "command": "AGENTHOME_ORIG_STATUSLINE='~/.claude/statusline.sh' /path/to/agenthome/script/agenthome-statusline.sh"
        }
      }
      ```
