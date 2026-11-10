@@ -754,10 +754,4 @@ impl Workspace {
             self.sync_engine.as_ref().map(SyncEngine::handle),
         )
     }
-
-    /// 菜单栏原生菜单用：实时信号与左栏栖息地（住户状态与左栏同源）。
-    pub fn live_link(&self, cx: &gpui_kit::App) -> (Entity<LiveState>, Entity<HabitatView>) {
-        let residents = self.residents.read(cx);
-        (residents.live.clone(), residents.habitat.clone())
-    }
 }

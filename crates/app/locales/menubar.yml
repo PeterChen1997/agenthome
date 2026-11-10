@@ -23,27 +23,12 @@ menubar.tile_output:
 menubar.tile_sessions:
   en: Sessions today
   zh-CN: 今日会话
-menubar.status_working:
-  en: Working
-  zh-CN: 工作中
-menubar.status_thinking:
-  en: Thinking
-  zh-CN: 思考中
-menubar.status_happy:
-  en: Just finished
-  zh-CN: 刚完成
-menubar.status_tired:
-  en: Low quota
-  zh-CN: 额度告急
-menubar.status_sleeping:
-  en: Idle
-  zh-CN: 空闲
 menubar.status_away:
   en: Not connected
   zh-CN: 未接入
 menubar.left:
-  en: left
-  zh-CN: 剩余
+  en: "%{percent} left"
+  zh-CN: "剩余 %{percent}"
 menubar.resets_in:
   en: "Resets in %{time}"
   zh-CN: "重置 %{time}"

@@ -22,9 +22,9 @@ use gpui_kit::{
 
 use crate::assets::{FONT_PIXEL_MONO, FONT_PIXEL_SANS};
 use crate::data::DataSource;
-use crate::format::{countdown, now_ms, relative_time, short_cost, short_tokens};
+use crate::format::{countdown, now_ms, relative_time, short_cost, short_tokens, thousands};
 use crate::habitat::{HabitatSize, HabitatView, ResidentId, ResidentState};
-use crate::live::{LiveFeed, LiveState, primary_window, resident_of};
+use crate::live::{LiveFeed, LiveState, primary_window, resident_of, shown_state};
 use crate::sync::{SyncHandle, SyncState};
 
 #[cfg(target_os = "macos")]
@@ -487,7 +487,7 @@ impl MenuBarPanel {
             ))
             .child(tile(
                 t!("menubar.tile_sessions").into(),
-                value(total.map(|t| t.sessions.to_string())),
+                value(total.map(|t| thousands(t.sessions))),
                 cx.theme().foreground,
                 cx,
             ))
@@ -496,14 +496,9 @@ impl MenuBarPanel {
 
     fn render_agent(&self, who: ResidentId, now: i64, cx: &mut Context<Self>) -> AnyElement {
         let state = self.habitat.read(cx).residents()[who.index()].state;
-        let detected = self
-            .live
-            .read(cx)
-            .activity
-            .iter()
-            .any(|a| resident_of(&a.provider) == Some(who) && a.detected);
-        // 栖息地状态要等第一轮信号；在那之前以活动信号判断是否接入。
-        let away = state == ResidentState::Away && !detected;
+        // 「是否接入」与主窗口左栏、仪表盘额度卡同一判定（`LiveState::connected`）。
+        let shown = shown_state(self.live.read(cx).connected(who), state);
+        let away = shown.is_none();
         let quota = if away {
             None
         } else {
@@ -516,20 +511,14 @@ impl MenuBarPanel {
             .overview
             .as_ref()
             .map(|overview| overview.agents[who.index()]);
-        let status: SharedString = match (away, state) {
-            (true, _) => t!("menubar.status_away"),
-            (false, ResidentState::Working) => t!("menubar.status_working"),
-            (false, ResidentState::Thinking) => t!("menubar.status_thinking"),
-            (false, ResidentState::Happy) => t!("menubar.status_happy"),
-            (false, ResidentState::Tired) => t!("menubar.status_tired"),
-            (false, ResidentState::Sleeping | ResidentState::Away) => {
-                t!("menubar.status_sleeping")
-            }
-        }
-        .into();
-        let status_color = match (away, state) {
-            (false, ResidentState::Working | ResidentState::Thinking) => cx.theme().success,
-            (false, ResidentState::Tired) => cx.theme().danger,
+        // 状态叫法与主窗口一致（`ResidentState::label`）。
+        let status: SharedString = match shown {
+            None => t!("menubar.status_away").into(),
+            Some(state) => state.label().into(),
+        };
+        let status_color = match shown {
+            Some(ResidentState::Working | ResidentState::Thinking) => cx.theme().success,
+            Some(ResidentState::Tired) => cx.theme().danger,
             _ => cx.theme().muted_foreground,
         };
         let used = quota.as_ref().map(|q| q.primary.used_percent);
@@ -647,25 +636,35 @@ impl MenuBarPanel {
                                     .child(status),
                             )
                             .when_some(used, |line, used| {
-                                // 「剩余」用正文字体：VT323 没有中文字形，混排会退回到大号系统字体。
+                                // 模板按 %{percent} 切开：英文「58% left」、中文「剩余 58%」。
+                                // 文字用正文字体（VT323 没有中文字形），数字用像素字体。
+                                let template = t!("menubar.left", percent = "\u{0}").to_string();
+                                let (before, after) =
+                                    template.split_once('\u{0}').unwrap_or(("", &template));
+                                let word = |text: &str| {
+                                    div()
+                                        .text_size(px(11.))
+                                        .text_color(cx.theme().muted_foreground)
+                                        .child(text.trim().to_string())
+                                };
                                 line.child(
                                     h_flex()
                                         .ml_auto()
                                         .items_baseline()
                                         .gap(px(4.))
-                                        .child(
-                                            div()
-                                                .text_size(px(11.))
-                                                .text_color(cx.theme().muted_foreground)
-                                                .child(t!("menubar.left")),
-                                        )
+                                        .when(!before.trim().is_empty(), |row| {
+                                            row.child(word(before))
+                                        })
                                         .child(
                                             div()
                                                 .font_family(FONT_PIXEL_MONO)
                                                 .text_size(px(17.))
                                                 .text_color(level_color(used, cx))
                                                 .child(format!("{}%", (100.0 - used).round())),
-                                        ),
+                                        )
+                                        .when(!after.trim().is_empty(), |row| {
+                                            row.child(word(after))
+                                        }),
                                 )
                             }),
                     )
