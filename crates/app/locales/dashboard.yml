@@ -243,7 +243,7 @@ dashboard.missing_quota_hint:
   zh-CN: "本地没有这个来源的额度快照，先在设置里确认来源已接入。"
 dashboard.compliant:
   en: "%{source}"
-  zh-CN: "合规 · %{source}"
+  zh-CN: "%{source}"
 dashboard.maybe_stale:
   en: "Stale? %{source}"
   zh-CN: "可能过期 · %{source}"

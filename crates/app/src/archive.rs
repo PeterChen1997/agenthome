@@ -1372,9 +1372,9 @@ fn render_session_row(
             count = crate::format::thousands(u64::from(session.message_count))
         )
     };
-    let meta = format!(
-        "{} · {} · {messages} · {}",
-        session.project_name,
+    // 项目名放前面、空间不够时只截它；时间、消息数和成本不截（英文更长，成本曾被挤成「$0...」）。
+    let meta_tail = format!(
+        "· {} · {messages} · {}",
         relative_time(session.updated_at_ms, now),
         session_cost_label(session)
     );
@@ -1423,7 +1423,19 @@ fn render_session_row(
                 .gap_2()
                 .text_xs()
                 .text_color(secondary(cx))
-                .child(div().flex_1().min_w_0().truncate().child(meta))
+                .child(
+                    h_flex()
+                        .flex_1()
+                        .min_w_0()
+                        .gap_1()
+                        .child(
+                            div()
+                                .min_w_0()
+                                .truncate()
+                                .child(session.project_name.clone()),
+                        )
+                        .child(div().flex_none().child(meta_tail)),
+                )
                 .when(subagents > 0, |row| {
                     let text = if subagents == 1 {
                         t!("archive.subagents_tag_one")
