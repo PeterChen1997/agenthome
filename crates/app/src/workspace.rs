@@ -14,12 +14,14 @@ use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, Icon, IconName, InteractiveElementExt as _, Sizable as _,
     StyledExt as _, WindowExt as _,
     button::{Button, ButtonVariants as _},
-    h_flex, v_flex,
+    h_flex,
+    kbd::Kbd,
+    v_flex,
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, AppContext as _, Context, Entity, FocusHandle, InteractiveElement as _,
-    IntoElement, KeyBinding, MouseButton, ParentElement as _, Render, SharedString,
+    IntoElement, KeyBinding, Keystroke, MouseButton, ParentElement as _, Render, SharedString,
     StatefulInteractiveElement as _, Styled as _, Subscription, Task, Window, actions, div, img,
     px,
 };
@@ -654,21 +656,12 @@ impl Workspace {
                             .text_sm()
                             .child(t!("workspace.search").to_string()),
                     )
-                    .child(
-                        div()
-                            .flex_none()
-                            .h(px(18.))
-                            .px(px(5.))
-                            .flex()
-                            .items_center()
-                            .rounded(px(2.))
-                            .border_1()
-                            .border_color(cx.theme().border)
-                            .bg(cx.theme().group_box)
-                            .font_family(FONT_PIXEL_MONO)
-                            .text_size(px(14.))
-                            .line_height(px(14.))
-                            .child("⌘K"),
+                    // 用 gpui-kit 的 Kbd：⌘ 与 K 同一种界面字体。像素字体 VT323 没有 ⌘ 字形，
+                    // 会回退到系统字体，两个字的基线对不齐。
+                    .children(
+                        Keystroke::parse("cmd-k")
+                            .ok()
+                            .map(|stroke| Kbd::new(stroke).outline().flex_none()),
                     )
                     .on_click(cx.listener(|this, _, window, cx| this.open_search(window, cx))),
             )
@@ -760,5 +753,11 @@ impl Workspace {
             self.sync.clone(),
             self.sync_engine.as_ref().map(SyncEngine::handle),
         )
+    }
+
+    /// 菜单栏原生菜单用：实时信号与左栏栖息地（住户状态与左栏同源）。
+    pub fn live_link(&self, cx: &gpui_kit::App) -> (Entity<LiveState>, Entity<HabitatView>) {
+        let residents = self.residents.read(cx);
+        (residents.live.clone(), residents.habitat.clone())
     }
 }
