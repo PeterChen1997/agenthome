@@ -1,0 +1,100 @@
+_version: 2
+menubar.tooltip:
+  en: AgentHome — usage summary
+  zh-CN: AgentHome · 使用概要
+menubar.synced_ago:
+  en: "Synced %{ago}"
+  zh-CN: "%{ago}同步"
+menubar.syncing:
+  en: "Syncing %{done}/%{total}"
+  zh-CN: "正在入库 %{done}/%{total}"
+menubar.not_synced:
+  en: Not synced yet
+  zh-CN: 尚未同步
+menubar.demo_data:
+  en: Demo data
+  zh-CN: 演示数据
+menubar.tile_cost:
+  en: Cost today
+  zh-CN: 今日成本
+menubar.tile_output:
+  en: Output today
+  zh-CN: 今日输出
+menubar.tile_sessions:
+  en: Sessions today
+  zh-CN: 今日会话
+menubar.status_working:
+  en: Working
+  zh-CN: 工作中
+menubar.status_thinking:
+  en: Thinking
+  zh-CN: 思考中
+menubar.status_happy:
+  en: Just finished
+  zh-CN: 刚完成
+menubar.status_tired:
+  en: Low quota
+  zh-CN: 额度告急
+menubar.status_sleeping:
+  en: Idle
+  zh-CN: 空闲
+menubar.status_away:
+  en: Not connected
+  zh-CN: 未接入
+menubar.left:
+  en: left
+  zh-CN: 剩余
+menubar.resets_in:
+  en: "Resets in %{time}"
+  zh-CN: "重置 %{time}"
+menubar.secondary_window:
+  en: "%{window} %{percent}% left · %{time}"
+  zh-CN: "%{window} 剩余 %{percent}% · %{time}"
+menubar.secondary_window_no_reset:
+  en: "%{window} %{percent}% left"
+  zh-CN: "%{window} 剩余 %{percent}%"
+menubar.credits:
+  en: "Credits %{balance}"
+  zh-CN: "信用 %{balance}"
+menubar.credits_unlimited:
+  en: Unlimited credits
+  zh-CN: 信用无限
+menubar.credits_expire:
+  en: "expires in %{time}"
+  zh-CN: "%{time} 后过期"
+menubar.no_quota_claude:
+  en: Waiting for /usage to read the quota
+  zh-CN: 等待 /usage 读取额度
+menubar.no_quota_codex:
+  en: Waiting for a rollout quota snapshot
+  zh-CN: 等待 rollout 额度快照
+menubar.no_quota_gemini:
+  en: Sessions only · no quota signal
+  zh-CN: 只统计会话 · 无额度信号
+menubar.not_connected_hint:
+  en: No local data found
+  zh-CN: 本机没有找到数据
+menubar.today_line:
+  en: "Today %{tokens} output · %{cost}"
+  zh-CN: "今天输出 %{tokens} · %{cost}"
+menubar.recent:
+  en: RECENT
+  zh-CN: 最近
+menubar.recent_empty:
+  en: No sessions yet
+  zh-CN: 还没有会话
+menubar.open_app:
+  en: Open AgentHome
+  zh-CN: 打开 AgentHome
+menubar.sync_now:
+  en: Sync now
+  zh-CN: 立即同步
+menubar.settings:
+  en: Settings…
+  zh-CN: 设置…
+menubar.quit:
+  en: Quit
+  zh-CN: 退出
+menubar.load_failed:
+  en: "Could not load today's stats: %{error}"
+  zh-CN: "读取今日统计失败：%{error}"

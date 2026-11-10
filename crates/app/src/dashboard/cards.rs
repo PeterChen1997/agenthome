@@ -301,7 +301,7 @@ impl RenderOnce for BarRow {
 }
 
 /// 图例：色块 + 文案。
-pub fn legend(items: &[(u32, &'static str)]) -> Div {
+pub fn legend(items: &[(u32, SharedString)]) -> Div {
     h_flex()
         .flex_wrap()
         .gap(px(14.))
@@ -312,7 +312,7 @@ pub fn legend(items: &[(u32, &'static str)]) -> Div {
                 .items_center()
                 .gap(px(5.))
                 .child(div().size(px(10.)).bg(rgb(*color)))
-                .child(*text)
+                .child(text.clone())
         }))
 }
 

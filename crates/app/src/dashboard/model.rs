@@ -161,9 +161,14 @@ pub fn due_items(snapshots: &[QuotaSnapshot]) -> Vec<DueItem> {
             let left = (100.0 - window.used_percent).clamp(0.0, 100.0);
             items.push(DueItem {
                 provider: snapshot.provider.clone(),
-                title: format!("{name} {} 窗口重置", window.label),
+                title: t!(
+                    "dashboard.due_window_reset",
+                    name = name,
+                    window = crate::format::quota_window_label(window)
+                )
+                .into_owned(),
                 note: if left < 25.0 {
-                    "剩余已不足 1/4".to_string()
+                    t!("dashboard.due_low_quota").into_owned()
                 } else {
                     String::new()
                 },
@@ -176,10 +181,10 @@ pub fn due_items(snapshots: &[QuotaSnapshot]) -> Vec<DueItem> {
         {
             items.push(DueItem {
                 provider: snapshot.provider.clone(),
-                title: format!("{name} 重置信用过期"),
+                title: t!("dashboard.due_credit_expiry", name = name).into_owned(),
                 note: credits
                     .reset_credits
-                    .map(|n| format!("{n} 张未用"))
+                    .map(|n| t!("dashboard.due_credits_unused", count = n).into_owned())
                     .unwrap_or_default(),
                 at_ms,
                 quota_left: None,
@@ -239,11 +244,19 @@ mod tests {
             .find(|i| i.quota_left.is_none())
             .expect("应有信用过期项");
         assert_eq!(credit.provider, ProviderId::Codex);
-        assert_eq!(credit.note, "3 张未用");
+        // 测试不切 locale（全局、并行），断言默认的英文。
+        assert_eq!(credit.note, "3 unused");
+        let seven_day = items
+            .iter()
+            .find(|i| {
+                i.provider == ProviderId::ClaudeCode && i.quota_left.is_some_and(|l| l < 25.0)
+            })
+            .expect("Claude 7 天窗口只剩 22%");
+        assert_eq!(seven_day.note, "Less than 1/4 left");
+        // core 给的窗口标签是中文，英文界面里不能漏出来。
         assert!(
-            items
-                .iter()
-                .any(|i| i.title == "Claude 7 天 窗口重置" && i.note == "剩余已不足 1/4")
+            seven_day.title.starts_with("Claude ") && seven_day.title.ends_with(" window reset")
         );
+        assert!(items.iter().all(|i| i.title.is_ascii()), "{items:?}");
     }
 }

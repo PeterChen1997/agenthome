@@ -1,7 +1,7 @@
 //! 仪表盘专用的格式化与设计令牌色；通用格式化见 `crate::format`。
 
 use agenthome_core::model::ProviderId;
-use chrono::{Datelike as _, Local, TimeZone as _};
+use chrono::{Datelike as _, Local, NaiveDate, TimeZone as _};
 
 /// 设计令牌（docs/design/canvas.json notes.tokens）。
 pub const CLAUDE: u32 = 0xE8824F;
@@ -57,26 +57,27 @@ pub fn countdown(remaining_ms: i64) -> String {
     }
 }
 
-/// 到期时刻：当天 `17:52`，一周内 `周日 09:00`，更远 `11-12 06:00`。
+/// 到期时刻：当天 `17:52`，一周内 `周日 09:00` / `Sun 09:00`，更远 `11-12 06:00` / `Nov 12 06:00`。
 pub fn due_time(ms: i64, now_ms: i64) -> String {
     let Some(t) = Local.timestamp_millis_opt(ms).single() else {
-        return "无效时间".to_string();
+        return t!("dashboard.invalid_time").into_owned();
     };
     let Some(now) = Local.timestamp_millis_opt(now_ms).single() else {
-        return t.format("%m-%d %H:%M").to_string();
+        return t.format(&t!("dashboard.fmt_month_day_time")).to_string();
     };
     let days = (t.date_naive() - now.date_naive()).num_days();
     if days == 0 {
         t.format("%H:%M").to_string()
     } else if (0..7).contains(&days) {
-        const WEEKDAYS: [&str; 7] = ["一", "二", "三", "四", "五", "六", "日"];
-        let weekday = WEEKDAYS
-            .get(t.weekday().num_days_from_monday() as usize)
-            .copied()
+        let weekdays = t!("dashboard.weekdays");
+        let weekday = weekdays
+            .split(',')
+            .nth(t.weekday().num_days_from_monday() as usize)
             .unwrap_or("");
-        format!("周{weekday} {}", t.format("%H:%M"))
+        t.format(&t!("dashboard.fmt_weekday_time", weekday = weekday))
+            .to_string()
     } else {
-        t.format("%m-%d %H:%M").to_string()
+        t.format(&t!("dashboard.fmt_month_day_time")).to_string()
     }
 }
 
@@ -89,15 +90,18 @@ pub fn percent_change(now: f64, before: f64) -> Option<String> {
     Some(format!("{delta:+.0}%"))
 }
 
-/// `YYYY-MM-DD` → `MM-DD`。
-pub fn day_label(day: &str) -> &str {
-    day.get(5..).unwrap_or(day)
+/// `YYYY-MM-DD` → `MM-DD`（英文 `Nov 12`）。
+pub fn day_label(day: &str) -> String {
+    match NaiveDate::parse_from_str(day, "%Y-%m-%d") {
+        Ok(date) => date.format(&t!("dashboard.fmt_month_day")).to_string(),
+        Err(_) => day.get(5..).unwrap_or(day).to_string(),
+    }
 }
 
-/// 本地 `MM-DD`。
+/// 本地 `MM-DD`（英文 `Nov 12`）。
 pub fn month_day(ms: i64) -> String {
     match Local.timestamp_millis_opt(ms).single() {
-        Some(t) => t.format("%m-%d").to_string(),
+        Some(t) => t.format(&t!("dashboard.fmt_month_day")).to_string(),
         None => "--".to_string(),
     }
 }
@@ -116,7 +120,7 @@ mod tests {
 
     #[test]
     fn countdown_switches_unit_at_one_day() {
-        assert_eq!(countdown(0), "已重置");
+        assert_eq!(countdown(0), crate::format::countdown(0));
         assert_eq!(countdown(2 * 3_600_000 + 10 * 60_000 + 33_000), "02:10:33");
         assert_eq!(countdown(2 * 86_400_000 + 17 * 3_600_000), "2d 17h");
     }
@@ -125,5 +129,11 @@ mod tests {
     fn percent_change_needs_a_baseline() {
         assert_eq!(percent_change(13.2, 10.0).as_deref(), Some("+32%"));
         assert_eq!(percent_change(5.0, 0.0), None);
+    }
+
+    #[test]
+    fn day_label_is_english_by_default() {
+        assert_eq!(day_label("2026-11-09"), "Nov 9");
+        assert_eq!(day_label("bad"), "bad");
     }
 }

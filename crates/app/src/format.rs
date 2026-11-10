@@ -25,13 +25,18 @@ pub fn short_tokens(n: u64) -> String {
 pub fn relative_time(ms: i64, now_ms: i64) -> String {
     let seconds = (now_ms - ms).max(0) / 1_000;
     if seconds < 60 {
-        "刚刚".to_string()
+        t!("format.just_now").into()
     } else if seconds < 3_600 {
-        format!("{} 分钟前", seconds / 60)
+        t!("format.minutes_ago", count = seconds / 60).into()
     } else if seconds < 86_400 {
-        format!("{} 小时前", seconds / 3_600)
+        t!("format.hours_ago", count = seconds / 3_600).into()
     } else if seconds < 30 * 86_400 {
-        format!("{} 天前", seconds / 86_400)
+        let days = seconds / 86_400;
+        if days == 1 {
+            t!("format.day_ago").into()
+        } else {
+            t!("format.days_ago", count = days).into()
+        }
     } else {
         absolute_date(ms)
     }
@@ -41,7 +46,7 @@ pub fn relative_time(ms: i64, now_ms: i64) -> String {
 pub fn absolute_date(ms: i64) -> String {
     match Local.timestamp_millis_opt(ms).single() {
         Some(t) => t.format("%Y-%m-%d").to_string(),
-        None => "无效时间".to_string(),
+        None => t!("format.invalid_time").into(),
     }
 }
 
@@ -49,7 +54,7 @@ pub fn absolute_date(ms: i64) -> String {
 pub fn absolute_time(ms: i64) -> String {
     match Local.timestamp_millis_opt(ms).single() {
         Some(t) => t.format("%Y-%m-%d %H:%M:%S").to_string(),
-        None => "无效时间".to_string(),
+        None => t!("format.invalid_time").into(),
     }
 }
 
@@ -85,7 +90,7 @@ pub fn short_cost(usd: f64) -> String {
 /// 倒计时 HH:MM:SS；已过期显示「已重置」。
 pub fn countdown(remaining_ms: i64) -> String {
     if remaining_ms <= 0 {
-        return "已重置".to_string();
+        return t!("format.reset").into();
     }
     let seconds = remaining_ms / 1_000;
     if seconds >= 86_400 {
@@ -111,7 +116,7 @@ pub fn clock_time(ms: i64) -> String {
 pub fn short_datetime(ms: i64) -> String {
     match Local.timestamp_millis_opt(ms).single() {
         Some(t) => t.format("%m-%d %H:%M").to_string(),
-        None => "无效时间".to_string(),
+        None => t!("format.invalid_time").into(),
     }
 }
 
@@ -131,6 +136,26 @@ pub fn short_duration(ms: i64) -> String {
     }
 }
 
+/// 额度窗口名（「5 小时」「7 天 (Opus)」）。core 给的 `label` 是中文，这里按窗口长度换成当前语言，
+/// 按模型的周窗口保留 label 末尾的「 (模型)」；不知道长度的窗口按 id 认，认不出就原样显示。
+pub fn quota_window_label(window: &agenthome_core::model::QuotaWindow) -> String {
+    let base: String = match window.window_minutes {
+        Some(m) if m > 0 && m.is_multiple_of(1440) => {
+            t!("format.window_days", count = m / 1440).into()
+        }
+        Some(m) if m > 0 && m.is_multiple_of(60) => {
+            t!("format.window_hours", count = m / 60).into()
+        }
+        Some(m) => t!("format.window_minutes", count = m).into(),
+        None if window.id == "spend_limit" => return t!("format.window_spend_limit").into(),
+        None => return window.label.clone(),
+    };
+    match window.label.find(" (") {
+        Some(at) => format!("{base}{}", &window.label[at..]),
+        None => base,
+    }
+}
+
 /// 会话列表的日期分组。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DayGroup {
@@ -141,12 +166,12 @@ pub enum DayGroup {
 }
 
 impl DayGroup {
-    pub fn label(self) -> &'static str {
+    pub fn label(self) -> String {
         match self {
-            DayGroup::Today => "今天",
-            DayGroup::Yesterday => "昨天",
-            DayGroup::ThisWeek => "本周",
-            DayGroup::Earlier => "更早",
+            DayGroup::Today => t!("format.today").into(),
+            DayGroup::Yesterday => t!("format.yesterday").into(),
+            DayGroup::ThisWeek => t!("format.this_week").into(),
+            DayGroup::Earlier => t!("format.earlier").into(),
         }
     }
 
@@ -201,7 +226,43 @@ mod tests {
     #[test]
     fn countdown_formats_hours() {
         assert_eq!(countdown(2 * 3_600_000 + 10 * 60_000 + 33_000), "02:10:33");
-        assert_eq!(countdown(-5), "已重置");
+        assert_eq!(countdown(-5), "Reset");
+    }
+
+    #[test]
+    fn quota_window_label_follows_language_not_core_text() {
+        // core 的窗口名写死中文；界面要按窗口长度重新取文案，按模型的后缀不能丢。
+        let window = |id: &str, label: &str, minutes| agenthome_core::model::QuotaWindow {
+            id: id.into(),
+            label: label.into(),
+            used_percent: 0.0,
+            resets_at_ms: None,
+            window_minutes: minutes,
+        };
+        assert_eq!(
+            quota_window_label(&window("five_hour", "5 小时", Some(300))),
+            "5h"
+        );
+        assert_eq!(
+            quota_window_label(&window("seven_day_opus", "7 天 (Opus)", Some(10_080))),
+            "7d (Opus)"
+        );
+        assert_eq!(
+            quota_window_label(&window("spend_limit", "消费上限", None)),
+            "Spend limit"
+        );
+        assert_eq!(quota_window_label(&window("other", "窗口", None)), "窗口");
+    }
+
+    #[test]
+    fn relative_time_has_no_plural_mistakes() {
+        let now = 100 * 86_400_000;
+        assert_eq!(relative_time(now - 86_400_000, now), "1 day ago");
+        assert_eq!(relative_time(now - 3 * 86_400_000, now), "3 days ago");
+        assert_eq!(
+            relative_time(now - 5 * 60_000, now),
+            t!("format.minutes_ago", count = 5, locale = "en")
+        );
     }
 
     #[test]

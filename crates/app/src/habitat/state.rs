@@ -64,14 +64,14 @@ pub enum ResidentState {
 }
 
 impl ResidentState {
-    pub fn label(self) -> &'static str {
+    pub fn label(self) -> String {
         match self {
-            ResidentState::Working => "工作中",
-            ResidentState::Thinking => "思考中",
-            ResidentState::Happy => "完成了",
-            ResidentState::Tired => "快没电",
-            ResidentState::Sleeping => "休息中",
-            ResidentState::Away => "外出",
+            ResidentState::Working => t!("habitat.state_working").into(),
+            ResidentState::Thinking => t!("habitat.state_thinking").into(),
+            ResidentState::Happy => t!("habitat.state_happy").into(),
+            ResidentState::Tired => t!("habitat.state_tired").into(),
+            ResidentState::Sleeping => t!("habitat.state_sleeping").into(),
+            ResidentState::Away => t!("habitat.state_away").into(),
         }
     }
 

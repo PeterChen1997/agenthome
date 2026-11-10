@@ -1,0 +1,61 @@
+_version: 2
+search.failed:
+  en: "Search failed: %{error}"
+  zh-CN: "搜索失败：%{error}"
+search.placeholder:
+  en: Search titles and messages in all sessions…
+  zh-CN: 搜索全部会话的标题与消息…
+search.empty_hint:
+  en: Type a keyword to search titles and messages in all sessions
+  zh-CN: 输入关键字，搜索全部会话的标题与消息
+search.no_results:
+  en: "No results for “%{query}”"
+  zh-CN: "没有找到 “%{query}”"
+search.key_select:
+  en: ↑↓ select
+  zh-CN: ↑↓ 选择
+search.key_open:
+  en: ↵ open
+  zh-CN: ↵ 打开
+search.key_close:
+  en: esc close
+  zh-CN: esc 关闭
+search.capped:
+  en: " (top matches only)"
+  zh-CN: （只列相关度最高的）
+search.hits_one:
+  en: "%{count} hit"
+  zh-CN: "%{count} 处命中"
+search.hits_other:
+  en: "%{count} hits"
+  zh-CN: "%{count} 处命中"
+search.sessions_one:
+  en: "%{count} session"
+  zh-CN: "%{count} 个会话"
+search.sessions_other:
+  en: "%{count} sessions"
+  zh-CN: "%{count} 个会话"
+search.summary:
+  en: "%{hits} · %{sessions}%{capped}"
+  zh-CN: "%{hits} · %{sessions}%{capped}"
+search.title_badge:
+  en: Title
+  zh-CN: 标题
+search.no_project:
+  en: (no project)
+  zh-CN: （无项目）
+search.more_hits:
+  en: "+%{count} more"
+  zh-CN: "+%{count} 处"
+search.role_user:
+  en: You
+  zh-CN: 你
+search.role_tool:
+  en: Tool
+  zh-CN: 工具
+search.role_system:
+  en: System
+  zh-CN: 系统
+search.role_message:
+  en: Message
+  zh-CN: 消息

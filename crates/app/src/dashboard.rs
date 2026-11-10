@@ -158,7 +158,8 @@ impl DashboardView {
                 match result {
                     Ok(overview) => this.overview = Some(Arc::new(overview)),
                     Err(error) => {
-                        this.overview_error = Some(format!("读取仪表盘数据失败：{error:#}").into())
+                        this.overview_error =
+                            Some(t!("dashboard.load_failed", error = format!("{error:#}")).into())
                     }
                 }
                 cx.notify();
@@ -183,7 +184,9 @@ impl DashboardView {
                 match result {
                     Ok(tokens) => this.tokens = Some(Arc::new(tokens)),
                     Err(error) => {
-                        this.overview_error = Some(format!("读取 token 汇总失败：{error:#}").into())
+                        this.overview_error = Some(
+                            t!("dashboard.tokens_load_failed", error = format!("{error:#}")).into(),
+                        )
                     }
                 }
                 cx.notify();
@@ -209,7 +212,11 @@ impl DashboardView {
                         state.snapshots = snapshots;
                         state.error = None;
                     }
-                    Err(error) => state.error = Some(format!("读取额度失败：{error:#}").into()),
+                    Err(error) => {
+                        state.error = Some(
+                            t!("dashboard.quota_load_failed", error = format!("{error:#}")).into(),
+                        )
+                    }
                 }
                 state.now_ms = crate::format::now_ms();
                 cx.notify();
@@ -236,7 +243,7 @@ impl DashboardView {
                     .outline()
                     .small()
                     .icon(IconName::RefreshCw)
-                    .label("刷新额度")
+                    .label(t!("dashboard.refresh_quota"))
                     .loading(loading)
                     .on_click(cx.listener(|this, _, _, cx| this.refresh_quota(cx))),
             )
@@ -246,7 +253,7 @@ impl DashboardView {
 /// 分段控件：设计稿里的 `.seg`，用 gpui-kit 的 segmented TabBar。
 fn segmented(
     id: &'static str,
-    labels: &[&'static str],
+    labels: Vec<SharedString>,
     selected: usize,
     on_click: impl Fn(&usize, &mut Window, &mut App) + 'static,
 ) -> TabBar {
@@ -255,7 +262,7 @@ fn segmented(
         .xsmall()
         .selected_index(selected)
         .on_click(on_click)
-        .children(labels.iter().map(|label| Tab::new().label(*label)))
+        .children(labels.into_iter().map(|label| Tab::new().label(label)))
 }
 
 impl Render for DashboardView {

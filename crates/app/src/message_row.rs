@@ -261,7 +261,7 @@ pub fn render_row(
                         div()
                             .font_semibold()
                             .text_color(cx.theme().foreground)
-                            .child("你"),
+                            .child(t!("message.you").to_string()),
                     )
                     .child(clock_time(message.timestamp_ms))
                     .into_any_element(),
@@ -324,10 +324,16 @@ pub fn render_row(
             ContentBlock::Thinking { text } => traces.push((
                 block_ix,
                 TraceRow {
-                    name: "思考过程".into(),
+                    name: t!("message.thinking").to_string().into(),
                     summary: first_line(text),
                     status: None,
-                    trailing: Some(format!("{} 字", short_tokens(text.chars().count() as u64))),
+                    trailing: Some(
+                        t!(
+                            "message.chars",
+                            count = short_tokens(text.chars().count() as u64)
+                        )
+                        .to_string(),
+                    ),
                     body: text.clone(),
                 },
             )),
@@ -348,7 +354,7 @@ pub fn render_row(
                 let mut body_text =
                     serde_json::to_string_pretty(input).unwrap_or_else(|_| input.to_string());
                 if let Some(output) = transcript.paired_output(tool_call_id) {
-                    body_text.push_str("\n\n── 结果 ──\n");
+                    body_text.push_str(&format!("\n\n{}\n", t!("message.result_divider")));
                     body_text.push_str(output);
                 }
                 traces.push((
@@ -377,7 +383,7 @@ pub fn render_row(
                 traces.push((
                     block_ix,
                     TraceRow {
-                        name: "工具结果".into(),
+                        name: t!("message.tool_result").to_string().into(),
                         summary: first_line(output),
                         status: Some(if *is_error {
                             ("ERR".into(), TagKind::Err)
@@ -392,17 +398,17 @@ pub fn render_row(
             ContentBlock::Image { media_type } => traces.push((
                 block_ix,
                 TraceRow {
-                    name: "图片".into(),
+                    name: t!("message.image").to_string().into(),
                     summary: media_type.clone(),
                     status: None,
                     trailing: None,
-                    body: format!("[图片 {media_type}]"),
+                    body: t!("message.image_body", media_type = media_type).to_string(),
                 },
             )),
             ContentBlock::Compaction { summary } => traces.push((
                 block_ix,
                 TraceRow {
-                    name: "压缩摘要".into(),
+                    name: t!("message.compaction").to_string().into(),
                     summary: first_line(summary),
                     status: Some(("COMPACT".into(), TagKind::Dim)),
                     trailing: None,
@@ -466,7 +472,7 @@ fn render_assistant_header(
         .get(ix + 1)
         .map(|next| next.timestamp_ms - message.timestamp_ms)
         .filter(|ms| *ms > 0);
-    let mut trailing = format!("+{} 输出", short_tokens(output));
+    let mut trailing = t!("message.output", tokens = short_tokens(output)).to_string();
     if let Some(ms) = elapsed {
         trailing.push_str(&format!(" · {}", short_duration(ms)));
     }
@@ -598,13 +604,13 @@ fn render_trace_group(
         .into_any_element()
 }
 
-fn role_label(role: Role, is_meta: bool) -> &'static str {
+fn role_label(role: Role, is_meta: bool) -> String {
     match (role, is_meta) {
-        (Role::User, true) => "元信息",
-        (Role::User, false) => "用户",
-        (Role::Assistant, _) => "助手",
-        (Role::System, _) => "系统",
-        (Role::Tool, _) => "工具",
+        (Role::User, true) => t!("message.role_meta").into(),
+        (Role::User, false) => t!("message.role_user").into(),
+        (Role::Assistant, _) => t!("message.role_assistant").into(),
+        (Role::System, _) => t!("message.role_system").into(),
+        (Role::Tool, _) => t!("message.role_tool").into(),
     }
 }
 

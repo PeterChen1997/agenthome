@@ -1,0 +1,19 @@
+_version: 2
+sync.open_index_failed:
+  en: "Can't open the index, sync stopped: %{error}"
+  zh-CN: "打开索引库失败，无法同步：%{error}"
+sync.watch_failed:
+  en: "File watching failed to start; relying on the hourly scan: %{error}"
+  zh-CN: "文件监听启动失败，只靠每小时兜底扫描：%{error}"
+sync.path_error:
+  en: "%{path}: %{error}"
+  zh-CN: "%{path}：%{error}"
+sync.claude_not_found:
+  en: Official claude command not found (~/.local/bin, /opt/homebrew/bin, /usr/local/bin)
+  zh-CN: 找不到官方 claude 命令（~/.local/bin、/opt/homebrew/bin、/usr/local/bin）
+sync.index_open_failed:
+  en: "Failed to open the index: %{path}"
+  zh-CN: "打开索引库失败：%{path}"
+sync.index_lock_poisoned:
+  en: Index lock is poisoned
+  zh-CN: 索引库锁已中毒

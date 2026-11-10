@@ -1,0 +1,329 @@
+_version: 2
+
+# 页头与加载错误
+dashboard.refresh_quota:
+  en: "Refresh quota"
+  zh-CN: "刷新额度"
+dashboard.load_failed:
+  en: "Failed to load dashboard data: %{error}"
+  zh-CN: "读取仪表盘数据失败：%{error}"
+dashboard.tokens_load_failed:
+  en: "Failed to load token totals: %{error}"
+  zh-CN: "读取 token 汇总失败：%{error}"
+dashboard.quota_load_failed:
+  en: "Failed to load quota: %{error}"
+  zh-CN: "读取额度失败：%{error}"
+
+# 周期
+dashboard.period_today:
+  en: "Today"
+  zh-CN: "今天"
+dashboard.period_week:
+  en: "This week"
+  zh-CN: "本周"
+dashboard.period_month:
+  en: "This month"
+  zh-CN: "本月"
+dashboard.period_90d:
+  en: "90 days"
+  zh-CN: "90 天"
+dashboard.period_30d:
+  en: "30 days"
+  zh-CN: "30 天"
+dashboard.period_all:
+  en: "All"
+  zh-CN: "全部"
+dashboard.period_since:
+  en: "%{period} · since %{date}"
+  zh-CN: "%{period} · %{date} 至今"
+dashboard.all_time:
+  en: "All time"
+  zh-CN: "全部时间"
+dashboard.tab_today:
+  en: "Today"
+  zh-CN: "今天"
+dashboard.tab_week:
+  en: "Week"
+  zh-CN: "本周"
+dashboard.tab_month:
+  en: "Month"
+  zh-CN: "本月"
+dashboard.tab_all:
+  en: "All"
+  zh-CN: "全部"
+dashboard.tab_30d:
+  en: "30d"
+  zh-CN: "30 天"
+dashboard.tab_90d:
+  en: "90d"
+  zh-CN: "90 天"
+dashboard.tab_tokens:
+  en: "Tokens"
+  zh-CN: "token"
+dashboard.tab_cost:
+  en: "Cost"
+  zh-CN: "成本"
+dashboard.tab_messages:
+  en: "Messages"
+  zh-CN: "消息"
+
+# 累计 token 卡
+dashboard.tokens_title:
+  en: "Total tokens"
+  zh-CN: "累计 token"
+dashboard.no_cache_hits:
+  en: "no cache hits"
+  zh-CN: "无缓存命中"
+dashboard.hit_rate:
+  en: "%{rate}% hit rate"
+  zh-CN: "命中率 %{rate}%"
+dashboard.input:
+  en: "Input"
+  zh-CN: "输入"
+dashboard.output:
+  en: "Output"
+  zh-CN: "输出"
+dashboard.cache_read:
+  en: "Cache read"
+  zh-CN: "缓存读"
+dashboard.cache_write:
+  en: "Cache write"
+  zh-CN: "缓存写"
+dashboard.cache_read_note:
+  en: "Re-read every turn · ~1/10 price"
+  zh-CN: "每轮重读上下文 · 约 1/10 价"
+dashboard.cache_explain:
+  en: "Why cache reads are so large: in a long session every request re-reads the whole conversation from cache and counts it as tokens, so the same context is counted again and again (%{hit_rate}). Cache reads are billed at about 1/10 of the input price, so token counts look huge while cost grows far more slowly. For actual spend, see “%{cost}” below."
+  zh-CN: "缓存读为什么这么大：长会话里每一轮请求都会把整段对话上下文从缓存重读一遍并计入 token，同一段上下文被反复计数（%{hit_rate}）。它按约 1/10 的输入单价计费，所以 token 数看着惊人、花费并不按比例增长——实际花费以下方「%{cost}」为准。"
+dashboard.recorded_cost:
+  en: "Recorded cost"
+  zh-CN: "记录成本"
+dashboard.estimated_cost:
+  en: "Estimated cost"
+  zh-CN: "估算成本"
+dashboard.cost:
+  en: "Cost"
+  zh-CN: "成本"
+dashboard.cost_unknown:
+  en: "Cost unknown"
+  zh-CN: "成本未知"
+dashboard.sessions:
+  en: "Sessions"
+  zh-CN: "会话"
+dashboard.messages:
+  en: "Messages"
+  zh-CN: "消息"
+dashboard.output_by_resident:
+  en: "Output tokens by resident"
+  zh-CN: "按住户 · 输出 token"
+
+# 趋势卡
+dashboard.trend_title:
+  en: "Token trend"
+  zh-CN: "token 量趋势"
+dashboard.trend_subtitle:
+  en: "Last %{days} days · %{metric}"
+  zh-CN: "最近 %{days} 天 · %{metric}"
+dashboard.metric_tokens:
+  en: "input / output / cache write stacked"
+  zh-CN: "输入 / 输出 / 缓存写分层"
+dashboard.metric_cost:
+  en: "estimated cost per day"
+  zh-CN: "按天估算成本"
+dashboard.metric_messages:
+  en: "messages per day"
+  zh-CN: "按天消息数"
+dashboard.legend_messages:
+  en: "Messages"
+  zh-CN: "消息数"
+dashboard.trend_cache_read_note:
+  en: "· cache reads shown separately (100× larger)"
+  zh-CN: "· 缓存读单独看，量级差两位"
+
+# 今天卡
+dashboard.today_title:
+  en: "Today"
+  zh-CN: "今天"
+dashboard.today_subtitle:
+  en: "%{date} · as of %{time}"
+  zh-CN: "%{date} · 截至 %{time}"
+dashboard.vs_yesterday:
+  en: "%{change} vs yesterday"
+  zh-CN: "较昨日 %{change}"
+dashboard.no_yesterday:
+  en: "No data yesterday"
+  zh-CN: "昨日无数据"
+dashboard.active_sessions_one:
+  en: "%{name} · 1 active session"
+  zh-CN: "%{name} · 1 个会话活跃"
+dashboard.active_sessions_other:
+  en: "%{name} · %{count} active sessions"
+  zh-CN: "%{name} · %{count} 个会话活跃"
+dashboard.output_tokens:
+  en: "Output tokens"
+  zh-CN: "输出 token"
+dashboard.in_progress_count:
+  en: "%{count} in progress"
+  zh-CN: "%{count} 个进行中"
+dashboard.cache_write_short:
+  en: "Write %{tokens}"
+  zh-CN: "写 %{tokens}"
+dashboard.in_progress:
+  en: "In progress"
+  zh-CN: "进行中"
+dashboard.no_active_sessions:
+  en: "No active sessions in the last 10 minutes"
+  zh-CN: "最近 10 分钟没有活跃会话"
+
+# 按模型 / 按项目 / 归档健康
+dashboard.model_title:
+  en: "By model"
+  zh-CN: "按模型"
+dashboard.model_subtitle:
+  en: "%{period} cost · follows token card"
+  zh-CN: "%{period}成本 · 跟随累计 token 周期"
+dashboard.model_empty:
+  en: "No priced usage in this period"
+  zh-CN: "这个周期没有可计价的用量"
+dashboard.project_title:
+  en: "By project"
+  zh-CN: "按项目"
+dashboard.project_subtitle:
+  en: "%{period} · top 5 · by resident"
+  zh-CN: "%{period} · Top 5 · 按住户分段"
+dashboard.project_empty:
+  en: "No project usage in this period"
+  zh-CN: "这个周期没有项目用量"
+dashboard.health_title:
+  en: "Archive health"
+  zh-CN: "归档健康"
+dashboard.health_subtitle:
+  en: "Source → archive"
+  zh-CN: "来源 → 仓库"
+dashboard.repo:
+  en: "Archive"
+  zh-CN: "仓库"
+dashboard.rebuild_index:
+  en: "Rebuild index"
+  zh-CN: "重建索引"
+dashboard.health_archive_only:
+  en: "Archive only (original deleted)"
+  zh-CN: "仅归档存在（原件已被清理）"
+dashboard.health_expiring:
+  en: "Cleaned up within 7 days"
+  zh-CN: "7 天内将被清理"
+dashboard.health_compressed:
+  en: "Compressed .zst (decompressed on read)"
+  zh-CN: "已压缩 .zst（解析时自动解压）"
+
+# 额度详情卡
+dashboard.quota_title:
+  en: "Quota detail"
+  zh-CN: "额度详情"
+dashboard.quota_subtitle:
+  en: "Bar = what's left in the window · resets and data source per window"
+  zh-CN: "体力条 = 窗口剩余 · 各窗口重置时间与数据来源"
+dashboard.status_away:
+  en: "Away"
+  zh-CN: "外出"
+dashboard.plan_connected:
+  en: "Connected"
+  zh-CN: "已接入"
+dashboard.plan_not_connected:
+  en: "Not connected"
+  zh-CN: "未接入"
+dashboard.no_quota_signal:
+  en: "No quota signal"
+  zh-CN: "无额度信号"
+dashboard.quota_not_connected:
+  en: "No quota source"
+  zh-CN: "未接入额度"
+dashboard.gemini_quota_hint:
+  en: "Gemini / Antigravity have no readable local quota signal; only sessions and tokens are counted."
+  zh-CN: "Gemini / Antigravity 没有可读的本地额度信号，只统计会话与 token。"
+dashboard.missing_quota_hint:
+  en: "No local quota snapshot for this source. Check in Settings that it is connected."
+  zh-CN: "本地没有这个来源的额度快照，先在设置里确认来源已接入。"
+dashboard.compliant:
+  en: "Compliant · %{source}"
+  zh-CN: "合规 · %{source}"
+dashboard.maybe_stale:
+  en: "Possibly stale · %{source}"
+  zh-CN: "可能过期 · %{source}"
+dashboard.source_usage:
+  en: "official /usage"
+  zh-CN: "官方 /usage"
+dashboard.source_rollout:
+  en: "rollout snapshot"
+  zh-CN: "rollout 快照"
+dashboard.source_local_file:
+  en: "local file"
+  zh-CN: "本地文件"
+dashboard.quota:
+  en: "Quota"
+  zh-CN: "配额"
+dashboard.window_reset:
+  en: "%{window} reset"
+  zh-CN: "%{window} 重置"
+dashboard.reset_credits:
+  en: "Reset credits"
+  zh-CN: "重置信用"
+dashboard.credits_one:
+  en: "1 credit"
+  zh-CN: "1 张"
+dashboard.credits_other:
+  en: "%{count} credits"
+  zh-CN: "%{count} 张"
+dashboard.credits_unlimited:
+  en: "Unlimited"
+  zh-CN: "无限"
+dashboard.credits_none:
+  en: "None"
+  zh-CN: "无"
+# %{t} 是倒计时，按它切开前后两段（倒计时单独着色），所以这里不要传参。
+dashboard.credits_expire:
+  en: "· expires in %{t}"
+  zh-CN: "· %{t} 后过期"
+
+# 到期与重置卡
+dashboard.due_title:
+  en: "Upcoming resets"
+  zh-CN: "到期与重置"
+dashboard.due_subtitle:
+  en: "Soonest first"
+  zh-CN: "按先后"
+dashboard.due_loading:
+  en: "Loading quota…"
+  zh-CN: "读取额度中…"
+dashboard.due_empty:
+  en: "No quota snapshots yet. Once a source is connected, resets and expiries are listed here in order."
+  zh-CN: "没有额度快照，接入后这里按先后列出重置与过期。"
+dashboard.due_window_reset:
+  en: "%{name} %{window} window reset"
+  zh-CN: "%{name} %{window} 窗口重置"
+dashboard.due_low_quota:
+  en: "Less than 1/4 left"
+  zh-CN: "剩余已不足 1/4"
+dashboard.due_credit_expiry:
+  en: "%{name} reset credits expire"
+  zh-CN: "%{name} 重置信用过期"
+dashboard.due_credits_unused:
+  en: "%{count} unused"
+  zh-CN: "%{count} 张未用"
+
+# 时间（chrono 格式串；英文月份由 chrono 给出）
+dashboard.invalid_time:
+  en: "Invalid time"
+  zh-CN: "无效时间"
+dashboard.fmt_month_day:
+  en: "%b %-d"
+  zh-CN: "%m-%d"
+dashboard.fmt_month_day_time:
+  en: "%b %-d %H:%M"
+  zh-CN: "%m-%d %H:%M"
+dashboard.fmt_weekday_time:
+  en: "%{weekday} %H:%M"
+  zh-CN: "周%{weekday} %H:%M"
+dashboard.weekdays:
+  en: "Mon,Tue,Wed,Thu,Fri,Sat,Sun"
+  zh-CN: "一,二,三,四,五,六,日"

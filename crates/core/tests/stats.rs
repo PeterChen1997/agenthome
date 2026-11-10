@@ -699,13 +699,13 @@ fn real_db_cost_totals() {
 fn worktree_sessions_belong_to_their_repository() {
     use agenthome_core::store::{project_name, project_root};
     assert_eq!(
-        project_root("/u/code/beatlock/.claude/worktrees/agent-a27"),
-        "/u/code/beatlock"
+        project_root("/u/code/metronome/.claude/worktrees/agent-a27"),
+        "/u/code/metronome"
     );
     assert_eq!(
-        project_name(Some("/u/code/beatlock/.claude/worktrees/agent-a27")),
-        "beatlock"
+        project_name(Some("/u/code/metronome/.claude/worktrees/agent-a27")),
+        "metronome"
     );
-    assert_eq!(project_name(Some("/u/code/beatlock/")), "beatlock");
+    assert_eq!(project_name(Some("/u/code/metronome/")), "metronome");
     assert_eq!(project_name(None), "");
 }

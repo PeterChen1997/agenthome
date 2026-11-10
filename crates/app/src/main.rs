@@ -14,6 +14,7 @@ mod data;
 mod format;
 mod habitat;
 mod live;
+mod menubar;
 mod message_row;
 mod search_palette;
 mod settings;
@@ -42,7 +43,7 @@ const PIXEL_HABITAT_THEME: &str = include_str!("../assets/themes/pixel-habitat.j
 /// 红绿灯位置：垂直居中在左栏顶行（`workspace::TOP_ROW_HEIGHT` = 44，灯高约 12）。
 const TRAFFIC_LIGHT_POSITION: Point<Pixels> = point(px(16.), px(16.));
 
-const USAGE: &str = "Usage: agenthome-app [--db PATH] [--mock] [--habitat-demo] [--appearance light|dark] [--lang zh-CN|en] [--page dashboard|archive|settings] [--search TEXT] [--session ID] [--capture PNG]
+const USAGE: &str = "Usage: agenthome-app [--db PATH] [--mock] [--habitat-demo] [--appearance light|dark] [--lang zh-CN|en] [--page dashboard|archive|settings] [--search TEXT] [--session ID] [--menubar-popup] [--capture PNG]
   --db PATH            index database, default ~/AgentHome/index/agenthome.db (created on first launch)
   --mock               use the in-memory demo data source
   --habitat-demo       open only the habitat demo window
@@ -51,12 +52,14 @@ const USAGE: &str = "Usage: agenthome-app [--db PATH] [--mock] [--habitat-demo] 
   --page PAGE          page to open on launch
   --search TEXT        open the Cmd-K palette and search TEXT on launch
   --session ID         open this session on launch
+  --menubar-popup      open only the menu bar popup as a normal window (screenshots)
   --capture PATH       render the window offscreen to PNG after a delay, then quit (needs --features capture)
   --capture-delay SEC  seconds to wait before capturing, default 4";
 
 fn main() {
     let mut mock = false;
     let mut habitat_demo = false;
+    let mut menubar_popup = false;
     let mut appearance: Option<ThemeMode> = None;
     let mut db: Option<PathBuf> = None;
     let mut start_page: Option<String> = None;
@@ -69,6 +72,7 @@ fn main() {
         match argument.as_str() {
             "--mock" => mock = true,
             "--habitat-demo" => habitat_demo = true,
+            "--menubar-popup" => menubar_popup = true,
             "--appearance" => match arguments.next().as_deref() {
                 Some("light") => appearance = Some(ThemeMode::Light),
                 Some("dark") => appearance = Some(ThemeMode::Dark),
@@ -181,55 +185,109 @@ fn main() {
         }
     };
 
-    gpui_kit::application()
-        .with_assets(AppAssets)
-        .run(move |cx| {
-            gpui_kit::init(cx);
-            register_fonts(cx);
-            apply_pixel_habitat_theme(cx);
-            // 命令行 --appearance 优先（截图用，不写偏好）；否则用设置页保存的偏好。
-            match appearance {
-                Some(mode) => Theme::change(mode, None, cx),
-                None => match config::load_appearance() {
-                    Ok(saved) => config::apply_appearance(saved, None, cx),
-                    Err(error) => eprintln!(
-                        "Could not read the appearance preference, following the system: {error:#}"
-                    ),
-                },
-            }
-            let options = WindowOptions {
-                window_bounds: Some(WindowBounds::centered(size(px(1400.), px(860.)), cx)),
-                app_id: Some("agenthome".into()),
-                titlebar: Some(TitlebarOptions {
-                    traffic_light_position: Some(TRAFFIC_LIGHT_POSITION),
-                    ..TitleBar::title_bar_options()
-                }),
-                ..TitleBar::window_options()
-            };
-            gpui_kit::open_window(options, cx, |window, cx| {
-                if appearance.is_none() {
-                    follow_system_appearance(window);
-                }
-                let workspace = cx.new(|cx| Workspace::new(source, demo, sync_db, window, cx));
-                if start_page.is_some() || start_search.is_some() || start_session.is_some() {
-                    let workspace = workspace.clone();
-                    let page = start_page.clone();
-                    let search = start_search.clone();
-                    let session = start_session.clone();
-                    window.defer(cx, move |window, cx| {
-                        workspace.update(cx, |workspace, cx| {
-                            workspace.apply_startup(page.as_deref(), search, session, window, cx)
-                        });
-                    });
-                }
-                if let Some((path, delay)) = capture.clone() {
-                    schedule_capture(path, delay, window, cx);
-                }
-                workspace
-            })
-            .expect("failed to open the main window");
+    let application = gpui_kit::application().with_assets(AppAssets);
+    // 主窗口关闭只是隐藏（见 `menubar::keep_running_on_close`）；点 Dock 图标时把它带回来。
+    #[cfg(target_os = "macos")]
+    application.on_reopen(menubar::reopen);
+    application.run(move |cx| {
+        gpui_kit::init(cx);
+        register_fonts(cx);
+        apply_pixel_habitat_theme(cx);
+        // 命令行 --appearance 优先（截图用，不写偏好）；否则用设置页保存的偏好。
+        match appearance {
+            Some(mode) => Theme::change(mode, None, cx),
+            None => match config::load_appearance() {
+                Ok(saved) => config::apply_appearance(saved, None, cx),
+                Err(error) => eprintln!(
+                    "Could not read the appearance preference, following the system: {error:#}"
+                ),
+            },
+        }
+        if menubar_popup {
+            open_menubar_popup(source, demo, appearance.is_none(), capture.clone(), cx);
             cx.activate(true);
-        });
+            return;
+        }
+        // 截图模式不装菜单栏，也不拦关闭。
+        let menubar = capture.is_none();
+        #[cfg(target_os = "macos")]
+        let menubar_source = source.clone();
+        let options = WindowOptions {
+            window_bounds: Some(WindowBounds::centered(size(px(1400.), px(860.)), cx)),
+            app_id: Some("agenthome".into()),
+            titlebar: Some(TitlebarOptions {
+                traffic_light_position: Some(TRAFFIC_LIGHT_POSITION),
+                ..TitleBar::title_bar_options()
+            }),
+            ..TitleBar::window_options()
+        };
+        let (main_window, workspace) = gpui_kit::open_window(options, cx, |window, cx| {
+            if appearance.is_none() {
+                follow_system_appearance(window);
+            }
+            #[cfg(target_os = "macos")]
+            if menubar {
+                menubar::keep_running_on_close(window, cx);
+            }
+            let workspace = cx.new(|cx| Workspace::new(source, demo, sync_db, window, cx));
+            if start_page.is_some() || start_search.is_some() || start_session.is_some() {
+                let workspace = workspace.clone();
+                let page = start_page.clone();
+                let search = start_search.clone();
+                let session = start_session.clone();
+                window.defer(cx, move |window, cx| {
+                    workspace.update(cx, |workspace, cx| {
+                        workspace.apply_startup(page.as_deref(), search, session, window, cx)
+                    });
+                });
+            }
+            if let Some((path, delay)) = capture.clone() {
+                schedule_capture(path, delay, window, cx);
+            }
+            workspace
+        })
+        .expect("failed to open the main window");
+        #[cfg(target_os = "macos")]
+        if menubar {
+            menubar::install(menubar_source, demo, main_window, workspace, cx);
+        }
+        #[cfg(not(target_os = "macos"))]
+        let _ = (menubar, main_window, workspace);
+        cx.activate(true);
+    });
+}
+
+/// `--menubar-popup`：把菜单栏弹窗的内容开成普通窗口（截图、核对用，不装状态栏图标）。
+fn open_menubar_popup(
+    source: Arc<dyn DataSource>,
+    demo: bool,
+    follow_system: bool,
+    capture: Option<(PathBuf, u64)>,
+    cx: &mut App,
+) {
+    let options = WindowOptions {
+        window_bounds: Some(WindowBounds::centered(
+            size(px(menubar::POPUP_WIDTH), px(menubar::POPUP_HEIGHT)),
+            cx,
+        )),
+        app_id: Some("agenthome".into()),
+        ..Default::default()
+    };
+    gpui_kit::open_window(options, cx, |window, cx| {
+        window.set_window_title("AgentHome");
+        if follow_system {
+            follow_system_appearance(window);
+        }
+        if let Some((path, delay)) = capture {
+            schedule_capture(path, delay, window, cx);
+        }
+        cx.new(|cx| {
+            let mut panel = menubar::MenuBarPanel::new(source, demo, cx);
+            panel.set_visible(true, cx);
+            panel
+        })
+    })
+    .expect("failed to open the menu bar popup window");
 }
 
 /// 栖息地演示窗口：720×372，只放一个 Hero 尺寸的 `HabitatView` 跑剧本。

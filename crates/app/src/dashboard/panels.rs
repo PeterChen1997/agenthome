@@ -6,7 +6,8 @@ use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AnyElement, Context, Div, IntoElement, ParentElement as _, Styled as _, div, px, relative, rgb,
+    AnyElement, Context, Div, IntoElement, ParentElement as _, SharedString, Styled as _, div, px,
+    relative, rgb,
 };
 
 use super::cards::{BarRow, Tag, TagKind, Tile, avatar, card, card_title, legend, skeleton_rows};
@@ -18,23 +19,29 @@ use super::model::{DayPoint, TREND_DAYS};
 use super::{DashboardView, TrendMetric, segmented};
 use crate::format::{now_ms, relative_time, short_cost, short_tokens};
 
-/// 页头周期的中文名。
-pub fn period_label(period: Period) -> &'static str {
+/// 页头周期的显示名。
+pub fn period_label(period: Period) -> SharedString {
     match period {
-        Period::Today => "今天",
-        Period::Week => "本周",
-        Period::Month => "本月",
-        Period::Days(90) => "90 天",
-        Period::Days(_) => "30 天",
-        Period::All => "全部",
+        Period::Today => t!("dashboard.period_today"),
+        Period::Week => t!("dashboard.period_week"),
+        Period::Month => t!("dashboard.period_month"),
+        Period::Days(90) => t!("dashboard.period_90d"),
+        Period::Days(_) => t!("dashboard.period_30d"),
+        Period::All => t!("dashboard.period_all"),
     }
+    .into()
 }
 
 /// 周期副标题：`本月 · 11-01 至今` / `全部时间`。
 fn period_subtitle(period: Period) -> String {
     match period.since_ms() {
-        Some(since) => format!("{} · {} 至今", period_label(period), month_day(since)),
-        None => "全部时间".to_string(),
+        Some(since) => t!(
+            "dashboard.period_since",
+            period = period_label(period),
+            date = month_day(since)
+        )
+        .into_owned(),
+        None => t!("dashboard.all_time").into_owned(),
     }
 }
 
@@ -49,10 +56,18 @@ impl DashboardView {
             .flex_wrap()
             .items_center()
             .gap(px(10.))
-            .child(card_title("累计 token", period_subtitle(self.token_period)))
+            .child(card_title(
+                t!("dashboard.tokens_title"),
+                period_subtitle(self.token_period),
+            ))
             .child(div().ml_auto().child(segmented(
                 "token-period",
-                &["今天", "本周", "本月", "全部"],
+                vec![
+                    t!("dashboard.tab_today").into(),
+                    t!("dashboard.tab_week").into(),
+                    t!("dashboard.tab_month").into(),
+                    t!("dashboard.tab_all").into(),
+                ],
                 selected,
                 cx.listener(|this, ix: &usize, _, cx| {
                     if let Some(period) = Self::TOKEN_PERIODS.get(*ix) {
@@ -84,12 +99,10 @@ impl DashboardView {
         let hit_rate = {
             let denominator = all.cache_read_tokens + all.input_tokens;
             if denominator == 0 {
-                "无缓存命中".to_string()
+                t!("dashboard.no_cache_hits").into_owned()
             } else {
-                format!(
-                    "命中率 {:.0}%",
-                    all.cache_read_tokens as f64 / denominator as f64 * 100.0
-                )
+                let rate = all.cache_read_tokens as f64 / denominator as f64 * 100.0;
+                t!("dashboard.hit_rate", rate = format!("{rate:.0}")).into_owned()
             }
         };
         panel = panel.child(
@@ -97,25 +110,36 @@ impl DashboardView {
                 .gap(px(10.))
                 // 来源拆分换行时四个格子仍等高、顶边对齐。
                 .items_stretch()
-                .child(Tile::new("输入", short_tokens(all.input_tokens)).note(
-                    split(claude.input_tokens, codex.input_tokens, gemini.input_tokens),
-                    Some(GREEN),
-                ))
-                .child(Tile::new("输出", short_tokens(all.output_tokens)).note(
-                    split(
-                        claude.output_tokens,
-                        codex.output_tokens,
-                        gemini.output_tokens,
-                    ),
-                    Some(GREEN),
-                ))
-                // 缓存读是数字最大、最容易被误读的一项：每轮请求都把整段上下文从缓存重读一遍计数。
                 .child(
-                    Tile::new("缓存读", short_tokens(all.cache_read_tokens))
-                        .note("每轮重读上下文 · 约 1/10 价", None),
+                    Tile::new(t!("dashboard.input"), short_tokens(all.input_tokens)).note(
+                        split(claude.input_tokens, codex.input_tokens, gemini.input_tokens),
+                        Some(GREEN),
+                    ),
                 )
                 .child(
-                    Tile::new("缓存写", short_tokens(all.cache_write_tokens)).note(
+                    Tile::new(t!("dashboard.output"), short_tokens(all.output_tokens)).note(
+                        split(
+                            claude.output_tokens,
+                            codex.output_tokens,
+                            gemini.output_tokens,
+                        ),
+                        Some(GREEN),
+                    ),
+                )
+                // 缓存读是数字最大、最容易被误读的一项：每轮请求都把整段上下文从缓存重读一遍计数。
+                .child(
+                    Tile::new(
+                        t!("dashboard.cache_read"),
+                        short_tokens(all.cache_read_tokens),
+                    )
+                    .note(t!("dashboard.cache_read_note"), None),
+                )
+                .child(
+                    Tile::new(
+                        t!("dashboard.cache_write"),
+                        short_tokens(all.cache_write_tokens),
+                    )
+                    .note(
                         format!(
                             "5m {} · 1h {}",
                             short_tokens(all.cache_write_5m_tokens),
@@ -130,24 +154,25 @@ impl DashboardView {
                 .text_size(px(11.))
                 .line_height(px(16.))
                 .text_color(cx.theme().muted_foreground)
-                .child(format!(
-                    "缓存读为什么这么大：长会话里每一轮请求都会把整段对话上下文从缓存重读一遍并计入 token，\
-                     同一段上下文被反复计数（{hit_rate}）。它按约 1/10 的输入单价计费，\
-                     所以 token 数看着惊人、花费并不按比例增长——实际花费以下方「{}」为准。",
-                    match tokens.all.cost_source {
-                        CostSource::Recorded => "记录成本",
-                        CostSource::Unknown => "成本",
-                        CostSource::Estimated | CostSource::Mixed => "估算成本",
+                .child(t!(
+                    "dashboard.cache_explain",
+                    hit_rate = hit_rate,
+                    cost = match tokens.all.cost_source {
+                        CostSource::Recorded => t!("dashboard.recorded_cost"),
+                        CostSource::Unknown => t!("dashboard.cost"),
+                        CostSource::Estimated | CostSource::Mixed => {
+                            t!("dashboard.estimated_cost")
+                        }
                     }
                 )),
         );
         let cost_label = match tokens.all.cost_source {
-            CostSource::Recorded => "记录成本",
-            CostSource::Unknown => "成本未知",
-            CostSource::Estimated | CostSource::Mixed => "估算成本",
+            CostSource::Recorded => t!("dashboard.recorded_cost"),
+            CostSource::Unknown => t!("dashboard.cost_unknown"),
+            CostSource::Estimated | CostSource::Mixed => t!("dashboard.estimated_cost"),
         };
         let foreground = cx.theme().foreground;
-        let stat = |label: &'static str, value: String| {
+        let stat = |label: SharedString, value: String| {
             h_flex()
                 .items_baseline()
                 .gap(px(6.))
@@ -190,8 +215,14 @@ impl DashboardView {
                             }),
                     ),
                 )
-                .child(stat("会话", tokens.all.sessions.to_string()))
-                .child(stat("消息", tokens.all.messages.to_string())),
+                .child(stat(
+                    t!("dashboard.sessions").into(),
+                    tokens.all.sessions.to_string(),
+                ))
+                .child(stat(
+                    t!("dashboard.messages").into(),
+                    tokens.all.messages.to_string(),
+                )),
         );
         let max_output = claude
             .output_tokens
@@ -209,7 +240,7 @@ impl DashboardView {
                     div()
                         .font_family(crate::assets::FONT_PIXEL_SANS)
                         .text_size(px(12.))
-                        .child("按住户 · 输出 token"),
+                        .child(t!("dashboard.output_by_resident")),
                 )
                 .child(
                     BarRow::new("Claude", short_tokens(claude.output_tokens))
@@ -232,9 +263,13 @@ impl DashboardView {
                     )
                 })
                 .child(if show_gemini {
-                    legend(&[(CLAUDE, "Claude"), (CODEX, "Codex"), (GEMINI, "Gemini")])
+                    legend(&[
+                        (CLAUDE, "Claude".into()),
+                        (CODEX, "Codex".into()),
+                        (GEMINI, "Gemini".into()),
+                    ])
                 } else {
-                    legend(&[(CLAUDE, "Claude"), (CODEX, "Codex")])
+                    legend(&[(CLAUDE, "Claude".into()), (CODEX, "Codex".into())])
                 }),
         )
     }
@@ -253,8 +288,12 @@ impl DashboardView {
             .items_center()
             .gap(px(10.))
             .child(card_title(
-                "token 量趋势",
-                format!("最近 {days} 天 · {}", metric.subtitle()),
+                t!("dashboard.trend_title"),
+                t!(
+                    "dashboard.trend_subtitle",
+                    days = days,
+                    metric = metric.subtitle()
+                ),
             ))
             .child(
                 h_flex()
@@ -262,7 +301,10 @@ impl DashboardView {
                     .gap(px(8.))
                     .child(segmented(
                         "trend-days",
-                        &["30 天", "90 天"],
+                        vec![
+                            t!("dashboard.tab_30d").into(),
+                            t!("dashboard.tab_90d").into(),
+                        ],
                         days_ix,
                         cx.listener(|this, ix: &usize, _, cx| {
                             if let Some(days) = TREND_DAYS.get(*ix) {
@@ -272,7 +314,11 @@ impl DashboardView {
                     ))
                     .child(segmented(
                         "trend-metric",
-                        &["token", "成本", "消息"],
+                        vec![
+                            t!("dashboard.tab_tokens").into(),
+                            t!("dashboard.tab_cost").into(),
+                            t!("dashboard.tab_messages").into(),
+                        ],
                         selected,
                         cx.listener(|this, ix: &usize, _, cx| {
                             if let Some(metric) = TrendMetric::ALL.get(*ix) {
@@ -327,13 +373,17 @@ impl DashboardView {
                     return None;
                 }
                 let ix = if k == 4 { n - 1 } else { k * (n - 1) / 4 };
-                points.get(ix).map(|p| day_label(&p.day).to_string())
+                points.get(ix).map(|p| day_label(&p.day))
             })
             .collect::<Vec<_>>();
-        let legend_items: &[(u32, &'static str)] = match metric {
-            TrendMetric::Tokens => &[(AMBER, "输入"), (BLUE, "输出"), (LINE, "缓存写")],
-            TrendMetric::Cost => &[(AMBER, "估算成本")],
-            TrendMetric::Messages => &[(BLUE, "消息数")],
+        let legend_items: Vec<(u32, SharedString)> = match metric {
+            TrendMetric::Tokens => vec![
+                (AMBER, t!("dashboard.input").into()),
+                (BLUE, t!("dashboard.output").into()),
+                (LINE, t!("dashboard.cache_write").into()),
+            ],
+            TrendMetric::Cost => vec![(AMBER, t!("dashboard.estimated_cost").into())],
+            TrendMetric::Messages => vec![(BLUE, t!("dashboard.legend_messages").into())],
         };
         panel
             .child(
@@ -353,11 +403,11 @@ impl DashboardView {
                     .items_center()
                     .gap(px(8.))
                     .child(
-                        legend(legend_items).when(metric == TrendMetric::Tokens, |l| {
+                        legend(&legend_items).when(metric == TrendMetric::Tokens, |l| {
                             l.child(
                                 div()
                                     .text_color(cx.theme().muted_foreground)
-                                    .child("· 缓存读单独看，量级差两位"),
+                                    .child(t!("dashboard.trend_cache_read_note")),
                             )
                         }),
                     )
@@ -377,8 +427,12 @@ impl DashboardView {
     pub(super) fn render_today_card(&self, cx: &mut Context<Self>) -> Div {
         let now = now_ms();
         let panel = card(cx).child(card_title(
-            "今天",
-            format!("{} · 截至 {}", month_day(now), hour_minute(now)),
+            t!("dashboard.today_title"),
+            t!(
+                "dashboard.today_subtitle",
+                date = month_day(now),
+                time = hour_minute(now)
+            ),
         ));
         let Some(overview) = self.overview.as_deref() else {
             return panel.child(skeleton_rows(4));
@@ -393,14 +447,14 @@ impl DashboardView {
         );
         let change_note = |change: Option<String>, up_color: u32| match change {
             Some(text) => (
-                format!("较昨日 {text}"),
+                t!("dashboard.vs_yesterday", change = text.as_str()).into_owned(),
                 Some(if text.starts_with('-') {
                     MUTED
                 } else {
                     up_color
                 }),
             ),
-            None => ("昨日无数据".to_string(), None),
+            None => (t!("dashboard.no_yesterday").into_owned(), None),
         };
         let (cost_note, cost_color) = change_note(cost_change, AMBER);
         let (output_note, output_color) = change_note(output_change, GREEN);
@@ -421,11 +475,18 @@ impl DashboardView {
                             .whitespace_nowrap()
                             .overflow_hidden()
                             .text_ellipsis()
-                            .child(format!(
-                                "{} · {} 个会话活跃",
-                                provider_name(&a.provider),
-                                a.active_sessions
-                            )),
+                            .child(if a.active_sessions == 1 {
+                                t!(
+                                    "dashboard.active_sessions_one",
+                                    name = provider_name(&a.provider)
+                                )
+                            } else {
+                                t!(
+                                    "dashboard.active_sessions_other",
+                                    name = provider_name(&a.provider),
+                                    count = a.active_sessions
+                                )
+                            }),
                     )
                     .child(
                         super::cards::vt(15.)
@@ -444,24 +505,36 @@ impl DashboardView {
                 h_flex()
                     .gap(px(10.))
                     .child(
-                        Tile::new("估算成本", short_cost(totals.cost_usd))
+                        Tile::new(t!("dashboard.estimated_cost"), short_cost(totals.cost_usd))
                             .note(cost_note, cost_color),
                     )
                     .child(
-                        Tile::new("输出 token", short_tokens(totals.usage.output_tokens))
-                            .note(output_note, output_color),
+                        Tile::new(
+                            t!("dashboard.output_tokens"),
+                            short_tokens(totals.usage.output_tokens),
+                        )
+                        .note(output_note, output_color),
                     ),
             )
             .child(
                 h_flex()
                     .gap(px(10.))
                     .child(
-                        Tile::new("会话", totals.sessions.to_string())
-                            .note(format!("{active} 个进行中"), Some(GREEN)),
+                        Tile::new(t!("dashboard.sessions"), totals.sessions.to_string()).note(
+                            t!("dashboard.in_progress_count", count = active),
+                            Some(GREEN),
+                        ),
                     )
                     .child(
-                        Tile::new("缓存读", short_tokens(totals.usage.cache_read_tokens)).note(
-                            format!("写 {}", short_tokens(totals.usage.cache_write_tokens)),
+                        Tile::new(
+                            t!("dashboard.cache_read"),
+                            short_tokens(totals.usage.cache_read_tokens),
+                        )
+                        .note(
+                            t!(
+                                "dashboard.cache_write_short",
+                                tokens = short_tokens(totals.usage.cache_write_tokens)
+                            ),
                             None,
                         ),
                     ),
@@ -476,14 +549,14 @@ impl DashboardView {
                         div()
                             .font_family(crate::assets::FONT_PIXEL_SANS)
                             .text_size(px(12.))
-                            .child("进行中"),
+                            .child(t!("dashboard.in_progress")),
                     )
                     .when(ongoing.is_empty(), |list| {
                         list.child(
                             div()
                                 .text_size(px(12.))
                                 .text_color(cx.theme().muted_foreground)
-                                .child("最近 10 分钟没有活跃会话"),
+                                .child(t!("dashboard.no_active_sessions")),
                         )
                     })
                     .children(ongoing),
@@ -493,10 +566,10 @@ impl DashboardView {
     /// 「按模型」卡：成本横条。
     pub(super) fn render_model_card(&self, cx: &mut Context<Self>) -> Div {
         let panel = card(cx).child(card_title(
-            "按模型",
-            format!(
-                "{}成本 · 跟随累计 token 周期",
-                period_label(self.token_period)
+            t!("dashboard.model_title"),
+            t!(
+                "dashboard.model_subtitle",
+                period = period_label(self.token_period)
             ),
         ));
         let Some(overview) = self.overview.as_deref() else {
@@ -511,7 +584,7 @@ impl DashboardView {
             .max(f64::EPSILON);
         panel
             .when(rows.is_empty(), |p| {
-                p.child(empty_hint("这个周期没有可计价的用量", cx))
+                p.child(empty_hint(t!("dashboard.model_empty").into(), cx))
             })
             .children(rows.iter().map(|row| {
                 BarRow::new(row.key.clone(), short_cost(row.cost_usd))
@@ -522,8 +595,11 @@ impl DashboardView {
     /// 「按项目」卡：Top 5，同一项目按来源分段。
     pub(super) fn render_project_card(&self, cx: &mut Context<Self>) -> Div {
         let panel = card(cx).child(card_title(
-            "按项目",
-            format!("{} · Top 5 · 按住户分段", period_label(self.token_period)),
+            t!("dashboard.project_title"),
+            t!(
+                "dashboard.project_subtitle",
+                period = period_label(self.token_period)
+            ),
         ));
         let Some(overview) = self.overview.as_deref() else {
             return panel.child(skeleton_rows(5));
@@ -536,7 +612,7 @@ impl DashboardView {
             .max(f64::EPSILON);
         panel
             .when(overview.projects.is_empty(), |p| {
-                p.child(empty_hint("这个周期没有项目用量", cx))
+                p.child(empty_hint(t!("dashboard.project_empty").into(), cx))
             })
             .children(overview.projects.iter().map(|project| {
                 project.parts.iter().fold(
@@ -546,12 +622,15 @@ impl DashboardView {
                     },
                 )
             }))
-            .child(legend(&[(CLAUDE, "Claude"), (CODEX, "Codex")]).mt(px(4.)))
+            .child(legend(&[(CLAUDE, "Claude".into()), (CODEX, "Codex".into())]).mt(px(4.)))
     }
 
     /// 「归档健康」卡。
     pub(super) fn render_health_card(&self, cx: &mut Context<Self>) -> Div {
-        let panel = card(cx).child(card_title("归档健康", "来源 → 仓库"));
+        let panel = card(cx).child(card_title(
+            t!("dashboard.health_title"),
+            t!("dashboard.health_subtitle"),
+        ));
         let Some(overview) = self.overview.as_deref() else {
             return panel.child(skeleton_rows(5));
         };
@@ -571,7 +650,7 @@ impl DashboardView {
                             .gap(px(4.))
                             .text_size(px(12.))
                             .text_color(cx.theme().muted_foreground)
-                            .child("仓库")
+                            .child(t!("dashboard.repo"))
                             .child(
                                 div()
                                     .font_family(cx.theme().mono_font_family.clone())
@@ -584,7 +663,7 @@ impl DashboardView {
                         Button::new("rebuild-index")
                             .link()
                             .xsmall()
-                            .label("重建索引"),
+                            .label(t!("dashboard.rebuild_index")),
                     ),
             )
     }
@@ -598,7 +677,7 @@ fn bar(fraction: f32, color: u32) -> Div {
         .bg(rgb(color))
 }
 
-fn empty_hint(text: &'static str, cx: &mut Context<DashboardView>) -> Div {
+fn empty_hint(text: SharedString, cx: &mut Context<DashboardView>) -> Div {
     div()
         .text_size(px(12.))
         .text_color(cx.theme().muted_foreground)
@@ -621,7 +700,7 @@ fn health_rows(health: &ProviderHealth) -> Vec<AnyElement> {
             .child(super::cards::vt(18.).child(health.sessions.to_string()))
             .into_any_element(),
     ];
-    let sub = |text: &'static str, count: u64, kind: TagKind| {
+    let sub = |text: SharedString, count: u64, kind: TagKind| {
         h_flex()
             .items_center()
             .gap(px(10.))
@@ -633,21 +712,21 @@ fn health_rows(health: &ProviderHealth) -> Vec<AnyElement> {
     };
     if health.archive_only > 0 {
         rows.push(sub(
-            "仅归档存在（原件已被清理）",
+            t!("dashboard.health_archive_only").into(),
             health.archive_only,
             TagKind::Warn,
         ));
     }
     if health.expiring_within_7d > 0 {
         rows.push(sub(
-            "7 天内将被清理",
+            t!("dashboard.health_expiring").into(),
             health.expiring_within_7d,
             TagKind::Err,
         ));
     }
     if health.compressed > 0 {
         rows.push(sub(
-            "已压缩 .zst（解析时自动解压）",
+            t!("dashboard.health_compressed").into(),
             health.compressed,
             TagKind::Dim,
         ));
@@ -674,11 +753,12 @@ impl TrendMetric {
         }
     }
 
-    fn subtitle(self) -> &'static str {
+    fn subtitle(self) -> SharedString {
         match self {
-            TrendMetric::Tokens => "输入 / 输出 / 缓存写分层",
-            TrendMetric::Cost => "按天估算成本",
-            TrendMetric::Messages => "按天消息数",
+            TrendMetric::Tokens => t!("dashboard.metric_tokens"),
+            TrendMetric::Cost => t!("dashboard.metric_cost"),
+            TrendMetric::Messages => t!("dashboard.metric_messages"),
         }
+        .into()
     }
 }

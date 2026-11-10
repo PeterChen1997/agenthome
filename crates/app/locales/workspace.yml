@@ -1,0 +1,70 @@
+_version: 2
+workspace.page_dashboard:
+  en: Dashboard
+  zh-CN: 仪表盘
+workspace.page_archive:
+  en: Archive
+  zh-CN: 归档
+workspace.page_settings:
+  en: Settings
+  zh-CN: 设置
+workspace.plan_not_connected:
+  en: Not connected
+  zh-CN: 未接入
+workspace.plan_subscription:
+  en: Subscription
+  zh-CN: 订阅
+workspace.plan_no_quota:
+  en: No quota yet
+  zh-CN: 未接入额度
+workspace.plan_connected:
+  en: Connected
+  zh-CN: 已接入
+workspace.connect_in_settings:
+  en: Connect in Settings
+  zh-CN: 在设置里接入
+workspace.waiting_claude:
+  en: Waiting for /usage
+  zh-CN: 等待 /usage 读取额度
+workspace.waiting_codex:
+  en: Waiting for rollout snapshot
+  zh-CN: 等待 rollout 额度快照
+workspace.gemini_no_quota:
+  en: Sessions only · no quota signal
+  zh-CN: 只统计会话 · 无额度信号
+workspace.window_resets:
+  en: "%{window} resets in"
+  zh-CN: "%{window} 重置"
+workspace.residents_caption:
+  en: "%{online} online · %{away} away"
+  zh-CN: "%{online} 位在线 · %{away} 外出"
+workspace.ingesting:
+  en: "Ingesting %{provider} %{done}/%{total}"
+  zh-CN: "正在入库 %{provider} %{done}/%{total}"
+workspace.watching_one:
+  en: "Synced %{time} · %{count} source"
+  zh-CN: "监听中 · %{count} 个来源 · %{time}同步"
+workspace.watching_other:
+  en: "Synced %{time} · %{count} sources"
+  zh-CN: "监听中 · %{count} 个来源 · %{time}同步"
+workspace.sync_starting:
+  en: Starting sync…
+  zh-CN: 正在启动同步…
+workspace.demo_one:
+  en: "Demo · %{count} source · %{time}"
+  zh-CN: "演示数据 · %{count} 个来源 · %{time}"
+workspace.demo_other:
+  en: "Demo · %{count} sources · %{time}"
+  zh-CN: "演示数据 · %{count} 个来源 · %{time}"
+workspace.connecting:
+  en: Connecting signals…
+  zh-CN: 正在接入信号…
+workspace.sync_now:
+  en: Sync all sources now
+  zh-CN: 立即同步全部来源
+workspace.sync_demo:
+  en: No sync with demo data
+  zh-CN: 演示数据没有同步
+workspace.search:
+  en: Search
+  zh-CN: 搜索

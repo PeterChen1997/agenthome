@@ -1,0 +1,238 @@
+_version: 2
+settings.appearance_save_failed:
+  en: "Appearance switched, but saving the preference failed: %{error}"
+  zh-CN: "外观已切换，但保存偏好失败：%{error}"
+settings.uninstall_failed:
+  en: "Uninstall failed; no files were changed: %{error}"
+  zh-CN: "卸载失败，未改动任何文件：%{error}"
+settings.ingesting:
+  en: "Ingesting %{provider} %{done}/%{total}"
+  zh-CN: "正在入库 %{provider} %{done}/%{total}"
+settings.sync_live:
+  en: "Ingesting live from file changes; last full scan %{time}, then hourly as a safety net"
+  zh-CN: "文件监听实时入库；最近一次全量扫描 %{time}，之后每小时兜底一次"
+settings.sync_demo:
+  en: Demo data; local folders are not scanned
+  zh-CN: 演示数据，不扫描本机目录
+settings.sync_starting:
+  en: Initial scan in progress…
+  zh-CN: 启动扫描进行中…
+settings.sources_title:
+  en: Sources
+  zh-CN: 数据来源
+settings.sources_hint:
+  en: Reads each agent's local session files; never modifies them
+  zh-CN: 只读各 agent 的本机会话文件，从不修改原目录
+settings.scan_now:
+  en: Scan now
+  zh-CN: 立即扫描
+settings.source_not_found:
+  en: Not found
+  zh-CN: 未检测到
+settings.source_watching:
+  en: Watching
+  zh-CN: 监听中
+settings.source_scheduled:
+  en: Scheduled only
+  zh-CN: 仅定时扫描
+settings.source_files_one:
+  en: "%{count} session file"
+  zh-CN: "%{count} 个会话文件"
+settings.source_files_other:
+  en: "%{count} session files"
+  zh-CN: "%{count} 个会话文件"
+settings.source_detail:
+  en: "%{files} · scanned %{time} · ingested %{parsed} · failed %{failed} · warnings %{warnings}"
+  zh-CN: "%{files} · 最近扫描 %{time} · 本次入库 %{parsed} · 失败 %{failed} · 警告 %{warnings}"
+settings.source_waiting:
+  en: Waiting for the first scan
+  zh-CN: 等待首次扫描
+settings.source_missing:
+  en: "Folder not found: this agent isn't installed or has never run"
+  zh-CN: 目录不存在：该 agent 未安装或从未运行
+settings.watch_off:
+  en: "not watching: %{note}"
+  zh-CN: "监听未启用：%{note}"
+settings.last_failure:
+  en: "Last failure: %{failure}"
+  zh-CN: "最近失败：%{failure}"
+settings.snapshot:
+  en: "Last snapshot %{time} (%{freshness})"
+  zh-CN: "最近快照 %{time}（%{freshness}）"
+settings.no_snapshot:
+  en: No snapshot yet
+  zh-CN: 暂无快照
+settings.quota_title:
+  en: Quota sources
+  zh-CN: 额度来源
+settings.quota_hint:
+  en: Official tools and local files only; no account credentials are read
+  zh-CN: 只用官方程序与本机文件，不读取任何账号凭据
+settings.claude_usage_title:
+  en: Claude Code · official /usage (background)
+  zh-CN: Claude Code · 官方 /usage（后台）
+settings.claude_usage_desc:
+  en: "Claude quota comes from the official /usage, read in the background every 15 minutes by running the official claude command once (about 10 seconds). It sends no conversation, uses no tokens and reads no credentials, so desktop-app users see their subscription quota too. No statusline needed."
+  zh-CN: "Claude 额度来自官方 /usage，每 15 分钟后台读取：启动一次官方 claude 命令（约 10 秒），不发对话、不耗 token、不读凭据，桌面版用户也能看到订阅额度。不需要再装 statusline。"
+settings.refresh_now:
+  en: Refresh now
+  zh-CN: 立即刷新
+settings.legacy_statusline:
+  en: "Found the old statusline wrapper script; you can uninstall it (%{detail}). Uninstalling restores statusLine in ~/.claude/settings.json and backs the file up first."
+  zh-CN: "检测到旧的 statusline 包装脚本，可卸载（%{detail}）。卸载会把 ~/.claude/settings.json 的 statusLine 还原，改前先备份。"
+settings.uninstall:
+  en: Uninstall
+  zh-CN: 卸载
+settings.codex_rollout_title:
+  en: Codex · rollout snapshot
+  zh-CN: Codex · rollout 快照
+settings.no_setup_needed:
+  en: No setup needed
+  zh-CN: 无需安装
+settings.codex_rollout_desc:
+  en: "Reads rate_limits from the newest session file in ~/.codex/sessions; Codex in the ChatGPT desktop app writes there too."
+  zh-CN: "读取 ~/.codex/sessions 最新会话文件里的 rate_limits；ChatGPT 桌面版里的 Codex 也写在这里。"
+settings.calculating:
+  en: calculating
+  zh-CN: 计算中
+settings.demo_no_index:
+  en: Demo data; no index
+  zh-CN: 演示数据，无索引库
+settings.storage_title:
+  en: Archive location
+  zh-CN: 归档位置
+settings.storage_hint:
+  en: The raw layer keeps byte-for-byte originals that survive agent cleanup; the index can be rebuilt from scratch at any time
+  zh-CN: raw 层逐字节保存原件，agent 自己清理了也还在；index 层可随时从头重建
+settings.archive_dir:
+  en: Archive folder
+  zh-CN: 归档目录
+settings.index_db:
+  en: Index
+  zh-CN: 索引库
+settings.raw_layer:
+  en: Originals (raw)
+  zh-CN: 原件（raw 层）
+settings.raw_last_error:
+  en: "Last archive error: %{failure}"
+  zh-CN: "最近的归档错误：%{failure}"
+settings.appearance:
+  en: Appearance
+  zh-CN: 外观
+settings.appearance_hint:
+  en: Saved in ~/AgentHome/config/app.json
+  zh-CN: 保存在 ~/AgentHome/config/app.json
+settings.about_title:
+  en: Compliance & pricing
+  zh-CN: 合规与定价
+settings.about_quota:
+  en: "· Quota comes only from official tools and local files: Claude from the official claude command's /usage, Codex from session rollouts. AgentHome reads no credentials and does not use high-risk sources that need account credentials, such as the Claude OAuth usage endpoint or the Codex wham endpoint."
+  zh-CN: "· 额度只走官方程序与本机文件：Claude 由官方 claude 命令的 /usage 提供，Codex 走会话 rollout。AgentHome 不读取凭据，不提供 Claude OAuth usage 端点、Codex wham 端点等需要账号凭据的高风险来源。"
+settings.about_credentials:
+  en: "· No login credentials are read or stored. Only session files are read: originals are copied into ~/AgentHome/raw and parsed into the index; agent folders are never modified."
+  zh-CN: "· 不读取、不保存任何登录凭据；只读取会话文件：原件拷贝进 ~/AgentHome/raw、解析进索引，不改动 agent 原目录。"
+settings.pricing_table:
+  en: Price table
+  zh-CN: 定价表
+settings.pricing_value:
+  en: "%{version} (bundled snapshot; costs are estimates, and Claude's official cost wins when available)"
+  zh-CN: "%{version}（内嵌快照，成本为估算；Claude 有官方成本时以官方为准）"
+settings.legacy_wraps:
+  en: "it wraps the original command %{command}"
+  zh-CN: "它包装着原命令 %{command}"
+settings.legacy_no_previous:
+  en: there was no statusline before it was installed
+  zh-CN: 安装前没有 statusline
+settings.legacy_elsewhere:
+  en: "%{path}, %{detail}"
+  zh-CN: "%{path}，%{detail}"
+settings.probe_demo:
+  en: Demo
+  zh-CN: 演示数据
+settings.probe_demo_text:
+  en: Background refresh doesn't run in demo mode
+  zh-CN: mock 模式不运行后台刷新
+settings.probe_running:
+  en: Refreshing
+  zh-CN: 刷新中
+settings.probe_running_text:
+  en: Running the official claude /usage in the background…
+  zh-CN: 正在后台运行官方 claude /usage…
+settings.probe_failed:
+  en: Failed
+  zh-CN: 失败
+settings.probe_failed_text:
+  en: "Last refresh failed: %{error}"
+  zh-CN: "上次刷新失败：%{error}"
+settings.probe_ok:
+  en: OK
+  zh-CN: 正常
+settings.probe_ok_text:
+  en: "Read %{time} (%{path})"
+  zh-CN: "%{time} 成功读取（%{path}）"
+settings.probe_waiting:
+  en: Waiting
+  zh-CN: 等待中
+settings.probe_waiting_text:
+  en: First run starts right after launch
+  zh-CN: 启动后马上运行第一次
+settings.uninstall_noop:
+  en: Nothing was installed; no files were changed.
+  zh-CN: 本来就没有安装，未改动任何文件。
+settings.uninstall_restored:
+  en: "statusLine restored to %{command}. "
+  zh-CN: "statusLine 已还原为 %{command}。"
+settings.uninstall_removed:
+  en: "Removed the statusLine entry (there was none before). "
+  zh-CN: 已删除 statusLine 一项（安装前没有）。
+settings.uninstall_backup:
+  en: "The original file is backed up at %{path}. "
+  zh-CN: "改动前的文件备份在 %{path}。"
+settings.uninstall_done:
+  en: "Uninstalled. %{restored}%{backup}Quota data already collected stays in ~/AgentHome/signals."
+  zh-CN: "已卸载：%{restored}%{backup}已收集的额度数据保留在 ~/AgentHome/signals。"
+settings.provider_other:
+  en: Other
+  zh-CN: 其他
+settings.freshness_live:
+  en: live
+  zh-CN: 实时
+settings.freshness_cached:
+  en: cached
+  zh-CN: 缓存
+settings.freshness_stale:
+  en: stale
+  zh-CN: 已过期
+settings.raw_demo:
+  en: Demo data; not archived
+  zh-CN: 演示数据，不归档
+settings.raw_open_failed:
+  en: "Can't open; indexing only, not archiving: %{error}"
+  zh-CN: "打不开，只入索引、不归档：%{error}"
+settings.raw_first_run:
+  en: Archiving originals for the first time…
+  zh-CN: 正在首次归档原件…
+settings.raw_originals_one:
+  en: "%{count} original"
+  zh-CN: "%{count} 个原件"
+settings.raw_originals_other:
+  en: "%{count} originals"
+  zh-CN: "%{count} 个原件"
+settings.raw_versions_one:
+  en: "%{count} version"
+  zh-CN: "%{count} 个版本"
+settings.raw_versions_other:
+  en: "%{count} versions"
+  zh-CN: "%{count} 个版本"
+settings.raw_sizes:
+  en: "content %{content} · on disk %{stored}"
+  zh-CN: "内容 %{content} · 占用 %{stored}"
+settings.raw_failed:
+  en: "%{count} failed to archive in the last scan"
+  zh-CN: "最近一次扫描 %{count} 个归档失败"
+settings.raw_unreadable_one:
+  en: "%{count} unreadable manifest"
+  zh-CN: "%{count} 个清单读不懂"
+settings.raw_unreadable_other:
+  en: "%{count} unreadable manifests"
+  zh-CN: "%{count} 个清单读不懂"

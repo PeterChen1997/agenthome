@@ -258,7 +258,8 @@ fn run_worker(
         Ok(store) => store,
         Err(error) => {
             update(&shared, |s| {
-                s.error = Some(format!("打开索引库失败，无法同步：{error:#}"));
+                s.error =
+                    Some(t!("sync.open_index_failed", error = format!("{error:#}")).to_string());
             });
             return;
         }
@@ -318,7 +319,7 @@ fn run_worker(
             }
         }),
         Err(error) => update(&shared, |s| {
-            s.error = Some(format!("文件监听启动失败，只靠每小时兜底扫描：{error:#}"));
+            s.error = Some(t!("sync.watch_failed", error = format!("{error:#}")).to_string());
         }),
     }
 
@@ -481,11 +482,9 @@ fn scan(
                 s.raw.stats = Some(stats);
             }
             s.raw.failed = report.raw.failed.len();
-            s.raw.last_failure = report
-                .raw
-                .failed
-                .last()
-                .map(|(path, error)| format!("{}：{error}", path.display()));
+            s.raw.last_failure = report.raw.failed.last().map(|(path, error)| {
+                t!("sync.path_error", path = path.display(), error = error).to_string()
+            });
         }
         s.scanning = None;
         s.last_sync_ms = Some(now);
@@ -517,10 +516,9 @@ fn apply_report(p: &mut ProviderSync, report: &Report, now: i64, full: bool) {
     p.parsed = report.parsed;
     p.failed = report.failed.len();
     p.warnings = report.warnings;
-    p.last_failure = report
-        .failed
-        .last()
-        .map(|(path, error)| format!("{}：{error}", path.display()));
+    p.last_failure = report.failed.last().map(|(path, error)| {
+        t!("sync.path_error", path = path.display(), error = error).to_string()
+    });
 }
 
 /// Claude 额度线程：启动即跑一次，之后每 [`CLAUDE_PROBE_INTERVAL`] 一次；`true` 指令强制立即跑。
@@ -532,10 +530,7 @@ fn run_claude_probe(shared: Arc<Mutex<SyncState>>, receiver: mpsc::Receiver<bool
         match &binary {
             None => update(&shared, |s| {
                 s.claude_probe.binary = None;
-                s.claude_probe.last_error = Some(
-                    "找不到官方 claude 命令（~/.local/bin、/opt/homebrew/bin、/usr/local/bin）"
-                        .into(),
-                );
+                s.claude_probe.last_error = Some(t!("sync.claude_not_found").to_string());
             }),
             Some(bin) => {
                 update(&shared, |s| {

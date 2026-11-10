@@ -56,6 +56,7 @@ pub enum HabitatSize {
 struct Beat {
     tod: TimeOfDay,
     residents: [(ResidentState, u8); 3],
+    /// 文案 key（`habitat.demo_*`），播放时按当前语言取文案。
     toast: Option<&'static str>,
 }
 
@@ -72,7 +73,7 @@ const DEMO_SCRIPT: [Beat; 10] = {
         Beat {
             tod: Night,
             residents: [(Thinking, 57), (Working, 81), (Sleeping, 0)],
-            toast: Some("Codex 开始执行工具 cargo test"),
+            toast: Some("habitat.demo_tool"),
         },
         Beat {
             tod: Night,
@@ -82,17 +83,17 @@ const DEMO_SCRIPT: [Beat; 10] = {
         Beat {
             tod: Night,
             residents: [(Happy, 54), (Working, 79), (Sleeping, 0)],
-            toast: Some("Claude 完成了一个会话 · $3.21"),
+            toast: Some("habitat.demo_session_done"),
         },
         Beat {
             tod: Evening,
             residents: [(Working, 40), (Tired, 18), (Sleeping, 0)],
-            toast: Some("Codex 5h 窗口只剩 18%"),
+            toast: Some("habitat.demo_low"),
         },
         Beat {
             tod: Evening,
             residents: [(Working, 38), (Sleeping, 0), (Sleeping, 0)],
-            toast: Some("Codex 额度用尽，03:41 后重置"),
+            toast: Some("habitat.demo_exhausted"),
         },
         Beat {
             tod: Day,
@@ -102,12 +103,12 @@ const DEMO_SCRIPT: [Beat; 10] = {
         Beat {
             tod: Day,
             residents: [(Sleeping, 0), (Happy, 100), (Away, 0)],
-            toast: Some("Codex 窗口已重置，体力全满"),
+            toast: Some("habitat.demo_codex_reset"),
         },
         Beat {
             tod: Day,
             residents: [(Happy, 100), (Working, 97), (Away, 0)],
-            toast: Some("Claude 5h 窗口已重置"),
+            toast: Some("habitat.demo_claude_reset"),
         },
         Beat {
             tod: Night,
@@ -247,8 +248,8 @@ impl HabitatView {
                 self.state.reduce(HabitatEvent::Activity { who, kind }, now);
             }
         }
-        if let Some(text) = beat.toast {
-            self.apply(HabitatEvent::Toast(text.to_string()), cx);
+        if let Some(key) = beat.toast {
+            self.apply(HabitatEvent::Toast(t!(key).to_string()), cx);
         }
     }
 
@@ -366,7 +367,11 @@ impl HabitatView {
             parts.push(
                 slot_box(left, SLOT_BOTTOM + SLOT_HEIGHT * 0.34, SLOT_HEIGHT)
                     .items_start()
-                    .child(chip(em * 1.9).text_color(rgb(TEXT_DIM)).child("外出"))
+                    .child(
+                        chip(em * 1.9)
+                            .text_color(rgb(TEXT_DIM))
+                            .child(t!("habitat.state_away").to_string()),
+                    )
                     .into_any_element(),
             );
         } else {

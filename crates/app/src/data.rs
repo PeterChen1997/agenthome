@@ -111,31 +111,33 @@ const PROJECTS: [&str; 8] = [
     "blog",
 ];
 
+/// 会话标题的翻译 key（`locales/mock.yml`）。mock 会话的 `title` 存 key，取数时按当前语言翻译，
+/// 这样切换界面语言后仪表盘 / 归档重新取数就是新语言。
 const TITLES: [&str; 24] = [
-    "修复登录页在 iOS 27 上的启动崩溃",
-    "把会话列表改成虚拟化渲染",
-    "重构 SQLite 存储层并补测试",
-    "排查 Metro 端口冲突",
-    "为仪表盘加按天用量统计",
-    "整理 Provider 解析器的错误处理",
-    "调研 GPUI 的中文输入法支持",
-    "编写 README 与发布说明",
-    "优化 10 万条消息的滚动性能",
-    "迁移 CI 到 GitHub Actions",
-    "给 Watch App 换浅色图标",
-    "清理未使用的依赖",
-    "给设置页加外观切换",
-    "排查 WebSocket 断线重连",
-    "把图片上传改成分片续传",
-    "写一个 CSV 导入的命令行工具",
-    "定位首页白屏的竞态",
-    "补齐暗色主题的对比度",
-    "把定时任务迁到队列",
-    "梳理 API 错误码文档",
-    "实现离线草稿自动保存",
-    "调研本地向量检索方案",
-    "压测同步接口并出报告",
-    "重写打包脚本并接公证",
+    "mock.title.0",
+    "mock.title.1",
+    "mock.title.2",
+    "mock.title.3",
+    "mock.title.4",
+    "mock.title.5",
+    "mock.title.6",
+    "mock.title.7",
+    "mock.title.8",
+    "mock.title.9",
+    "mock.title.10",
+    "mock.title.11",
+    "mock.title.12",
+    "mock.title.13",
+    "mock.title.14",
+    "mock.title.15",
+    "mock.title.16",
+    "mock.title.17",
+    "mock.title.18",
+    "mock.title.19",
+    "mock.title.20",
+    "mock.title.21",
+    "mock.title.22",
+    "mock.title.23",
 ];
 
 // 都要在内置价表里，否则演示数据的成本显示「未知」。
@@ -147,24 +149,21 @@ const MODELS: [&str; 4] = [
 ];
 
 const USER_TEXTS: [&str; 5] = [
-    "帮我看看这个函数为什么在空列表上会 panic，顺便把测试补上。",
-    "把这段逻辑抽成独立模块，注意不要改公开接口。",
-    "现在编译有三个 warning，全部清掉，不要加 allow。",
-    "解释一下这个 trait 的作用，然后给出一个最小示例。",
-    "列表滚动到底部时会抖一下，帮我定位原因。",
+    "mock.user.0",
+    "mock.user.1",
+    "mock.user.2",
+    "mock.user.3",
+    "mock.user.4",
 ];
 
-const ASSISTANT_MARKDOWN: [&str; 3] = [
-    "## 结论\n\n问题出在 `items.first()` 之后直接 `unwrap()`，空列表时必然 panic。\n\n修改建议：\n\n1. 用 `let Some(first) = items.first() else { return Ok(()) };` 提前返回；\n2. 给空输入补一个回归测试。\n\n```rust\nfn head(items: &[u32]) -> Option<u32> {\n    items.first().copied()\n}\n```\n\n改完后 `cargo test` 全绿。",
-    "这个 trait 把**数据访问**和**界面**解耦：界面只依赖 `DataSource`，不关心背后是 SQLite 还是内存。\n\n- 查询在后台线程跑；\n- 结果回到前台再写入实体；\n- UI 线程不做 IO。\n\n> 注意：实现必须是 `Send + Sync`，否则不能跨线程调用。",
-    "我已经把三处 warning 处理完了：\n\n| 位置 | 原因 | 处理 |\n|---|---|---|\n| `data.rs:42` | 未使用的变量 | 删除 |\n| `format.rs:10` | 可用 `?` 简化 | 改写 |\n| `main.rs:5` | 多余的 `mut` | 删除 |\n\n`cargo clippy` 现在零 warning。",
-];
+const ASSISTANT_MARKDOWN: [&str; 3] = ["mock.assistant.0", "mock.assistant.1", "mock.assistant.2"];
 
-const SUBAGENT_TITLES: [&str; 3] = [
-    "子代理：搜索相关调用点",
-    "子代理：跑测试并汇总失败",
-    "子代理：审阅改动",
-];
+const SUBAGENT_TITLES: [&str; 3] = ["mock.subagent.0", "mock.subagent.1", "mock.subagent.2"];
+
+/// 按指定语言翻译 mock 文案；显式传 locale，测试不用改全局语言。
+fn tr(key: &str, locale: &str) -> String {
+    t!(key, locale = locale).into_owned()
+}
 
 /// mock 会话的原料；`mock_summary` 据此补齐原件路径与会话级成本。
 struct MockSession {
@@ -248,7 +247,7 @@ impl MockDataSource {
             let project_ix = usize::try_from(rng.below(PROJECTS.len() as u64)).unwrap_or(0);
             let project_name = PROJECTS.get(project_ix).copied().unwrap_or("agenthome");
             let title_ix = i % TITLES.len();
-            let title = TITLES.get(title_ix).copied().unwrap_or("未命名会话");
+            let title = TITLES.get(title_ix).copied().unwrap_or("mock.untitled");
             let age_ms = i64::try_from(rng.below(40 * 86_400_000)).unwrap_or(0) + 60_000;
             let updated_at_ms = now_ms - age_ms;
             let duration_ms = i64::try_from(rng.below(5 * 3_600_000)).unwrap_or(0) + 120_000;
@@ -294,7 +293,7 @@ impl MockDataSource {
                 provider: provider.clone(),
                 kind: SessionKind::Main,
                 title: if i == 0 {
-                    "超长会话：一万条消息压力测试".to_string()
+                    "mock.stress_title".to_string()
                 } else {
                     title.to_string()
                 },
@@ -323,7 +322,7 @@ impl MockDataSource {
                         title: SUBAGENT_TITLES
                             .get(usize::try_from(k).unwrap_or(0) % SUBAGENT_TITLES.len())
                             .copied()
-                            .unwrap_or("子代理")
+                            .unwrap_or("mock.subagent_fallback")
                             .to_string(),
                         cwd: cwd.clone(),
                         project_name,
@@ -357,7 +356,7 @@ impl MockDataSource {
             id: "claude-code:mock-machine:0999/agent-0".to_string(),
             provider: ProviderId::ClaudeCode,
             kind: SessionKind::Subagent,
-            title: "子代理：核对 Codex 成本口径".to_string(),
+            title: "mock.subagent_codex_cost".to_string(),
             cwd: "/Users/peter/code_hub/agenthome".to_string(),
             project_name: "agenthome",
             started_at_ms: now_ms - 2 * 3_600_000,
@@ -372,7 +371,7 @@ impl MockDataSource {
             id: "claude-code:mock-machine:legacy/agent-7".to_string(),
             provider: ProviderId::ClaudeCode,
             kind: SessionKind::Subagent,
-            title: "子代理：整理旧脚本".to_string(),
+            title: "mock.subagent_legacy_scripts".to_string(),
             cwd: "/Users/peter/code_hub/infra-scripts/legacy".to_string(),
             project_name: "legacy",
             started_at_ms: now_ms - 12 * 86_400_000,
@@ -400,7 +399,108 @@ impl MockDataSource {
         Self { projects, sessions }
     }
 
-    fn build_messages(summary: &SessionSummary) -> Vec<Message> {
+    // 下面三个按显式 locale 取数，`DataSource` 实现传当前界面语言；每次调用都重新翻译，
+    // 切换语言后再取一次即为新语言。
+    fn search_in(&self, query: &str, limit: usize, locale: &str) -> anyhow::Result<Vec<SearchHit>> {
+        let needle = query.trim();
+        let mut hits = Vec::new();
+        if needle.is_empty() {
+            return Ok(hits);
+        }
+        let mut sessions: Vec<SessionSummary> = self
+            .sessions
+            .iter()
+            .map(|s| Self::localized(s, locale))
+            .collect();
+        sessions.sort_by_key(|s| std::cmp::Reverse(s.updated_at_ms));
+        for session in &sessions {
+            if hits.len() >= limit {
+                break;
+            }
+            let hit = |message_id: Option<String>, role, timestamp_ms, snippet| SearchHit {
+                session_id: session.id.clone(),
+                message_id,
+                session_title: session.title.clone(),
+                provider: session.provider.clone(),
+                project_name: session.project_name.to_string(),
+                role,
+                timestamp_ms,
+                snippet,
+            };
+            if let Some(snippet) = mark_snippet(&session.title, needle) {
+                hits.push(hit(None, None, session.updated_at_ms, snippet));
+            }
+            let mut found = 0;
+            for message in Self::build_messages(session, locale)
+                .into_iter()
+                .take(MOCK_SEARCH_MESSAGES)
+            {
+                if found >= MOCK_HITS_PER_SESSION || hits.len() >= limit {
+                    break;
+                }
+                if let Some(snippet) = mark_snippet(&message.text(), needle) {
+                    found += 1;
+                    hits.push(hit(
+                        Some(message.id.clone()),
+                        Some(message.role),
+                        message.timestamp_ms,
+                        snippet,
+                    ));
+                }
+            }
+        }
+        hits.truncate(limit);
+        Ok(hits)
+    }
+
+    fn sessions_in(&self, q: &SessionQuery, locale: &str) -> anyhow::Result<Vec<SessionSummary>> {
+        let needle = q
+            .text
+            .as_deref()
+            .map(str::trim)
+            .filter(|t| !t.is_empty())
+            .map(str::to_lowercase);
+        let rows = self
+            .sessions
+            .iter()
+            .map(|s| Self::localized(s, locale))
+            .filter(|s| q.cwd.as_ref().is_none_or(|cwd| s.cwd.as_ref() == Some(cwd)))
+            .filter(|s| q.provider.as_ref().is_none_or(|p| &s.provider == p))
+            .filter(|s| {
+                needle.as_ref().is_none_or(|n| {
+                    s.title.to_lowercase().contains(n) || s.project_name.to_lowercase().contains(n)
+                })
+            })
+            .skip(q.offset)
+            // limit 为 0 时视为不限制。
+            .take(if q.limit == 0 { usize::MAX } else { q.limit })
+            .collect();
+        Ok(rows)
+    }
+
+    fn messages_in(&self, session_id: &str, locale: &str) -> anyhow::Result<Vec<Message>> {
+        let summary = self
+            .sessions
+            .iter()
+            .find(|s| s.id == session_id)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "{}",
+                    t!("mock.session_not_found", locale = locale, id = session_id)
+                )
+            })?;
+        Ok(Self::build_messages(summary, locale))
+    }
+
+    /// 把存成 key 的标题翻成 `locale` 下的文案。
+    fn localized(summary: &SessionSummary, locale: &str) -> SessionSummary {
+        SessionSummary {
+            title: tr(&summary.title, locale),
+            ..summary.clone()
+        }
+    }
+
+    fn build_messages(summary: &SessionSummary, locale: &str) -> Vec<Message> {
         let mut rng = Lcg(summary.updated_at_ms.unsigned_abs());
         let count = usize::try_from(summary.message_count).unwrap_or(0);
         let step_ms = if count > 1 {
@@ -419,13 +519,19 @@ impl MockDataSource {
             let timestamp_ms = summary.started_at_ms + step_ms * k as i64;
             let pick = |items: &[&str], rng: &mut Lcg| -> String {
                 let ix = usize::try_from(rng.below(items.len() as u64)).unwrap_or(0);
-                items.get(ix).map(|s| (*s).to_string()).unwrap_or_default()
+                items.get(ix).map(|key| tr(key, locale)).unwrap_or_default()
             };
             let (role, blocks, usage) = match k % 6 {
                 0 => (
                     Role::User,
                     vec![ContentBlock::Text {
-                        text: format!("第 {} 轮：{}", k / 6 + 1, pick(&USER_TEXTS, &mut rng)),
+                        text: t!(
+                            "mock.turn",
+                            locale = locale,
+                            n = k / 6 + 1,
+                            text = pick(&USER_TEXTS, &mut rng)
+                        )
+                        .into_owned(),
                     }],
                     None,
                 ),
@@ -445,16 +551,24 @@ impl MockDataSource {
                 2 => {
                     let tool = pick(&["Read", "Bash", "Edit", "Grep"], &mut rng);
                     let input = match tool.as_str() {
-                        "Read" => serde_json::json!({ "file_path": "/Users/peter/code_hub/agenthome/crates/app/src/main.rs" }),
-                        "Bash" => serde_json::json!({ "command": "cargo clippy -p agenthome-app", "description": "跑 clippy 检查" }),
-                        "Edit" => serde_json::json!({ "file_path": "crates/app/src/data.rs", "old_string": "items[0]", "new_string": "items.first()" }),
-                        _ => serde_json::json!({ "pattern": "fn render", "path": "crates/app/src" }),
+                        "Read" => {
+                            serde_json::json!({ "file_path": "/Users/peter/code_hub/agenthome/crates/app/src/main.rs" })
+                        }
+                        "Bash" => {
+                            serde_json::json!({ "command": "cargo clippy -p agenthome-app", "description": tr("mock.bash_description", locale) })
+                        }
+                        "Edit" => {
+                            serde_json::json!({ "file_path": "crates/app/src/data.rs", "old_string": "items[0]", "new_string": "items.first()" })
+                        }
+                        _ => {
+                            serde_json::json!({ "pattern": "fn render", "path": "crates/app/src" })
+                        }
                     };
                     (
                         Role::Assistant,
                         vec![
                             ContentBlock::Text {
-                                text: "先看一下相关代码。".to_string(),
+                                text: tr("mock.look_first", locale),
                             },
                             ContentBlock::ToolCall {
                                 tool_call_id: format!("call_{k:05}"),
@@ -477,7 +591,7 @@ impl MockDataSource {
                         output: format!(
                             "warning: unused variable: `ix`\n  --> crates/app/src/data.rs:{}:9\n   |\n   = note: `#[warn(unused_variables)]` on by default\n\n{}",
                             rng.below(300) + 1,
-                            "这是一段较长的工具输出，用来验证折叠态只显示前 200 个字符。".repeat(6)
+                            tr("mock.tool_output_tail", locale)
                         ),
                         is_error: rng.below(7) == 0,
                     }],
@@ -487,10 +601,10 @@ impl MockDataSource {
                     Role::Assistant,
                     vec![
                         ContentBlock::Thinking {
-                            text: "用户要的是最小改动。先确认调用方只有两处，再决定是否要改签名。\n\n结论：不改签名，只在内部处理空输入。".to_string(),
+                            text: tr("mock.thinking", locale),
                         },
                         ContentBlock::Text {
-                            text: "我倾向于不改公开签名，只在函数内部处理空输入，这样调用方不用动。".to_string(),
+                            text: tr("mock.keep_signature", locale),
                         },
                     ],
                     Some(Usage {
@@ -505,7 +619,7 @@ impl MockDataSource {
                     Role::Assistant,
                     vec![
                         ContentBlock::Text {
-                            text: "补充两点：\n\n- 这个改动不影响序列化格式；\n- 旧数据无需迁移。".to_string(),
+                            text: tr("mock.follow_up", locale),
                         },
                         ContentBlock::Unknown {
                             native_type: "server_tool_use".to_string(),
@@ -550,85 +664,15 @@ impl DataSource for MockDataSource {
     }
 
     fn search(&self, query: &str, limit: usize) -> anyhow::Result<Vec<SearchHit>> {
-        let needle = query.trim();
-        let mut hits = Vec::new();
-        if needle.is_empty() {
-            return Ok(hits);
-        }
-        let mut sessions: Vec<&SessionSummary> = self.sessions.iter().collect();
-        sessions.sort_by_key(|s| std::cmp::Reverse(s.updated_at_ms));
-        for session in sessions {
-            if hits.len() >= limit {
-                break;
-            }
-            let hit = |message_id: Option<String>, role, timestamp_ms, snippet| SearchHit {
-                session_id: session.id.clone(),
-                message_id,
-                session_title: session.title.clone(),
-                provider: session.provider.clone(),
-                project_name: session.project_name.to_string(),
-                role,
-                timestamp_ms,
-                snippet,
-            };
-            if let Some(snippet) = mark_snippet(&session.title, needle) {
-                hits.push(hit(None, None, session.updated_at_ms, snippet));
-            }
-            let mut found = 0;
-            for message in Self::build_messages(session)
-                .into_iter()
-                .take(MOCK_SEARCH_MESSAGES)
-            {
-                if found >= MOCK_HITS_PER_SESSION || hits.len() >= limit {
-                    break;
-                }
-                if let Some(snippet) = mark_snippet(&message.text(), needle) {
-                    found += 1;
-                    hits.push(hit(
-                        Some(message.id.clone()),
-                        Some(message.role),
-                        message.timestamp_ms,
-                        snippet,
-                    ));
-                }
-            }
-        }
-        hits.truncate(limit);
-        Ok(hits)
+        self.search_in(query, limit, &rust_i18n::locale())
     }
 
     fn sessions(&self, q: &SessionQuery) -> anyhow::Result<Vec<SessionSummary>> {
-        let needle = q
-            .text
-            .as_deref()
-            .map(str::trim)
-            .filter(|t| !t.is_empty())
-            .map(str::to_lowercase);
-        let rows = self
-            .sessions
-            .iter()
-            .filter(|s| q.cwd.as_ref().is_none_or(|cwd| s.cwd.as_ref() == Some(cwd)))
-            .filter(|s| q.provider.as_ref().is_none_or(|p| &s.provider == p))
-            .filter(|s| {
-                needle.as_ref().is_none_or(|n| {
-                    s.title.to_lowercase().contains(n) || s.project_name.to_lowercase().contains(n)
-                })
-            })
-            .skip(q.offset)
-            // limit 为 0 时视为不限制。
-            .take(if q.limit == 0 { usize::MAX } else { q.limit })
-            .cloned()
-            .collect();
-        Ok(rows)
+        self.sessions_in(q, &rust_i18n::locale())
     }
 
     fn messages(&self, session_id: &str) -> anyhow::Result<Vec<Message>> {
-        let summary = self
-            .sessions
-            .iter()
-            .find(|s| s.id == session_id)
-            .ok_or_else(|| anyhow::anyhow!("会话不存在：{session_id}"))?;
-        Ok(Self::build_messages(summary))
+        self.messages_in(session_id, &rust_i18n::locale())
     }
 
     fn daily(&self, days: u32) -> anyhow::Result<Vec<DailyUsage>> {
@@ -801,6 +845,7 @@ impl DataSource for MockDataSource {
 
     fn quota(&self) -> anyhow::Result<Vec<QuotaSnapshot>> {
         let now = crate::format::now_ms();
+        let locale = rust_i18n::locale();
         Ok(vec![
             QuotaSnapshot {
                 provider: ProviderId::ClaudeCode,
@@ -808,14 +853,14 @@ impl DataSource for MockDataSource {
                 windows: vec![
                     QuotaWindow {
                         id: "five_hour".to_string(),
-                        label: "5 小时".to_string(),
+                        label: tr("mock.quota_5h", &locale),
                         used_percent: 42.0,
                         resets_at_ms: Some(now + 2 * 3_600_000 + 10 * 60_000),
                         window_minutes: Some(300),
                     },
                     QuotaWindow {
                         id: "seven_day".to_string(),
-                        label: "7 天".to_string(),
+                        label: tr("mock.quota_7d", &locale),
                         used_percent: 78.0,
                         resets_at_ms: Some(now + 2 * 86_400_000 + 17 * 3_600_000),
                         window_minutes: Some(10_080),
@@ -832,14 +877,14 @@ impl DataSource for MockDataSource {
                 windows: vec![
                     QuotaWindow {
                         id: "primary".to_string(),
-                        label: "5 小时".to_string(),
+                        label: tr("mock.quota_5h", &locale),
                         used_percent: 18.0,
                         resets_at_ms: Some(now + 3 * 3_600_000 + 41 * 60_000),
                         window_minutes: Some(300),
                     },
                     QuotaWindow {
                         id: "secondary".to_string(),
-                        label: "每周".to_string(),
+                        label: tr("mock.quota_weekly", &locale),
                         used_percent: 37.0,
                         resets_at_ms: Some(now + 4 * 86_400_000 + 2 * 3_600_000),
                         window_minutes: Some(10_080),
@@ -878,12 +923,65 @@ mod tests {
     #[test]
     fn mock_search_finds_titles_and_messages() {
         let source = MockDataSource::new();
-        let hits = source.search("panic", 20).unwrap();
+        let hits = source.search_in("panic", 20, "en").unwrap();
         assert!(!hits.is_empty() && hits.len() <= 20);
         assert!(hits.iter().all(|h| h.message_id.is_some()));
         // 消息命中多，标题命中的会话可能排在 50 条之后；放宽上限只为确认标题命中会被返回。
-        let titles = source.search("SQLite", 500).unwrap();
+        let titles = source.search_in("SQLite", 500, "en").unwrap();
         assert!(titles.iter().any(|h| h.message_id.is_none()));
-        assert!(source.search("  ", 20).unwrap().is_empty());
+        assert!(source.search_in("  ", 20, "en").unwrap().is_empty());
+    }
+
+    fn has_cjk(text: &str) -> bool {
+        text.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c))
+    }
+
+    /// 演示数据要跟着界面语言走：README / 落地页的英文截图里不能冒出中文，
+    /// 中文界面也不能露出没翻译的 key。显式传 locale，不碰全局语言。
+    #[test]
+    fn mock_text_follows_the_requested_locale() {
+        let source = MockDataSource::new();
+        let all = SessionQuery {
+            limit: 0,
+            ..SessionQuery::default()
+        };
+        for locale in ["en", "zh-CN"] {
+            let sessions = source.sessions_in(&all, locale).unwrap();
+            assert!(sessions.len() > 60);
+            for session in &sessions {
+                assert!(
+                    !session.title.starts_with("mock."),
+                    "{locale}: {}",
+                    session.title
+                );
+                assert_eq!(
+                    has_cjk(&session.title),
+                    locale == "zh-CN",
+                    "{}",
+                    session.title
+                );
+            }
+            let first = sessions.iter().find(|s| s.message_count < 100).unwrap();
+            for message in source.messages_in(&first.id, locale).unwrap() {
+                // 序列化整条消息的块，正文、思考、工具输入与输出一并检查。
+                let text = serde_json::to_string(&message.blocks).unwrap();
+                assert!(!text.contains("mock."), "{locale}: {text}");
+                if locale == "en" {
+                    assert!(!has_cjk(&text), "{text}");
+                }
+            }
+        }
+        // 切换语言后再取一次就是新语言（仪表盘 / 归档靠重新调用拿新文案）。
+        let id = &source.sessions.first().unwrap().id;
+        let pick = |locale| {
+            source
+                .sessions_in(&all, locale)
+                .unwrap()
+                .into_iter()
+                .find(|s| &s.id == id)
+                .unwrap()
+                .title
+        };
+        assert_ne!(pick("en"), pick("zh-CN"));
     }
 }

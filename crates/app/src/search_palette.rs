@@ -173,7 +173,7 @@ impl SearchPalette {
             query: String::new(),
             groups: Arc::default(),
             recent: Arc::default(),
-            recent_label: "最近打开".into(),
+            recent_label: SharedString::default(),
             targets: Arc::default(),
             error: None,
             now_ms: now_ms(),
@@ -186,7 +186,7 @@ impl SearchPalette {
     pub fn show(
         &mut self,
         recent: Vec<SessionSummary>,
-        recent_label: &'static str,
+        recent_label: impl Into<SharedString>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -248,7 +248,7 @@ impl SearchPalette {
     pub fn show_with_query(
         &mut self,
         recent: Vec<SessionSummary>,
-        recent_label: &'static str,
+        recent_label: impl Into<SharedString>,
         query: &str,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -298,7 +298,11 @@ impl SearchPalette {
                     }
                     Err(error) => {
                         this.groups = Arc::default();
-                        this.error = Some(format!("搜索失败：{error:#}").into());
+                        this.error = Some(
+                            t!("search.failed", error = format!("{error:#}"))
+                                .to_string()
+                                .into(),
+                        );
                     }
                 }
                 this.now_ms = now_ms();
@@ -365,7 +369,7 @@ impl SearchPalette {
         let mut command = Command::new(&self.state)
             .bordered(false)
             .filterable(false)
-            .placeholder("搜索全部会话的标题与消息…")
+            .placeholder(t!("search.placeholder").to_string())
             .min_h(px(LIST_HEIGHT))
             .max_h(px(LIST_HEIGHT))
             .on_query(move |query, window, cx| {
@@ -379,10 +383,10 @@ impl SearchPalette {
                     if has_recent {
                         "".into()
                     } else {
-                        "输入关键字，搜索全部会话的标题与消息".into()
+                        t!("search.empty_hint").to_string().into()
                     }
                 } else {
-                    format!("没有找到 “{query}”").into()
+                    t!("search.no_results", query = query).to_string().into()
                 };
                 v_flex()
                     .w_full()
@@ -406,9 +410,9 @@ impl SearchPalette {
                         .border_color(cx.theme().border)
                         .text_xs()
                         .text_color(cx.theme().muted_foreground)
-                        .child("↑↓ 选择")
-                        .child("↵ 打开")
-                        .child("esc 关闭")
+                        .child(t!("search.key_select").to_string())
+                        .child(t!("search.key_open").to_string())
+                        .child(t!("search.key_close").to_string())
                         .child(div().flex_1())
                         .map(|row| match &error {
                             Some(error) => row.child(
@@ -473,11 +477,29 @@ impl SearchPalette {
             return "".into();
         }
         let capped = if hits >= SEARCH_LIMIT {
-            "（只列相关度最高的）"
+            t!("search.capped")
         } else {
-            ""
+            "".into()
         };
-        format!("{hits} 处命中 · {} 个会话{capped}", self.groups.len()).into()
+        let sessions = self.groups.len();
+        let hits = if hits == 1 {
+            t!("search.hits_one", count = hits)
+        } else {
+            t!("search.hits_other", count = hits)
+        };
+        let sessions = if sessions == 1 {
+            t!("search.sessions_one", count = sessions)
+        } else {
+            t!("search.sessions_other", count = sessions)
+        };
+        t!(
+            "search.summary",
+            hits = hits,
+            sessions = sessions,
+            capped = capped
+        )
+        .to_string()
+        .into()
     }
 }
 
@@ -531,7 +553,7 @@ fn session_header(group: &HitGroup, now: i64, cx: &App) -> AnyElement {
                 .child(title_el),
         )
         .when(title_snippet.is_some(), |row| {
-            row.child(badge("标题", cx.theme().primary, cx))
+            row.child(badge(&t!("search.title_badge"), cx.theme().primary, cx))
         })
         .child(
             div()
@@ -541,9 +563,9 @@ fn session_header(group: &HitGroup, now: i64, cx: &App) -> AnyElement {
                 .child(format!(
                     "{} · {}",
                     if project.is_empty() {
-                        "（无项目）"
+                        t!("search.no_project")
                     } else {
-                        project
+                        project.as_str().into()
                     },
                     relative_time(at_ms, now)
                 )),
@@ -555,7 +577,7 @@ fn session_header(group: &HitGroup, now: i64, cx: &App) -> AnyElement {
                     .font_family(FONT_PIXEL_MONO)
                     .text_size(px(14.))
                     .text_color(cx.theme().muted_foreground)
-                    .child(format!("+{more} 处")),
+                    .child(t!("search.more_hits", count = more).to_string()),
             )
         })
         .into_any_element()
@@ -564,11 +586,11 @@ fn session_header(group: &HitGroup, now: i64, cx: &App) -> AnyElement {
 /// 组内一条消息命中：缩进到标题下，角色徽标 + 最多两行的高亮片段。
 fn hit_row(hit: &SearchHit, cx: &App) -> AnyElement {
     let role = match hit.role {
-        Some(Role::User) => "你",
-        Some(Role::Assistant) => provider_short_name(&hit.provider),
-        Some(Role::Tool) => "工具",
-        Some(Role::System) => "系统",
-        None => "消息",
+        Some(Role::User) => t!("search.role_user"),
+        Some(Role::Assistant) => provider_short_name(&hit.provider).to_string().into(),
+        Some(Role::Tool) => t!("search.role_tool"),
+        Some(Role::System) => t!("search.role_system"),
+        None => t!("search.role_message"),
     };
     let color = match hit.role {
         Some(Role::User) => cx.theme().foreground,
@@ -580,7 +602,7 @@ fn hit_row(hit: &SearchHit, cx: &App) -> AnyElement {
         .pl(px(28.))
         .gap_2()
         .items_start()
-        .child(div().flex_none().pt(px(1.)).child(badge(role, color, cx)))
+        .child(div().flex_none().pt(px(1.)).child(badge(&role, color, cx)))
         .child(
             div()
                 .flex_1()

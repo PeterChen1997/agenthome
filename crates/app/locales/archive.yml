@@ -1,0 +1,214 @@
+_version: 2
+
+# 左栏视图与项目
+archive.view_all:
+  en: "All sessions"
+  zh-CN: "全部会话"
+archive.view_starred:
+  en: "Starred"
+  zh-CN: "星标"
+archive.view_archive_only:
+  en: "Archive only"
+  zh-CN: "仅归档存在"
+archive.view_expiring:
+  en: "Cleaned up in 7 days"
+  zh-CN: "7 天内将清理"
+archive.side_views:
+  en: "Views"
+  zh-CN: "视图"
+archive.side_projects:
+  en: "Projects"
+  zh-CN: "项目"
+archive.more_projects_one:
+  en: "1 more project…"
+  zh-CN: "还有 1 个项目…"
+archive.more_projects_other:
+  en: "%{count} more projects…"
+  zh-CN: "还有 %{count} 个项目…"
+
+# ⌘K 空查询时的分组标题
+archive.recently_updated:
+  en: "Recently updated"
+  zh-CN: "最近更新"
+archive.recently_opened:
+  en: "Recently opened"
+  zh-CN: "最近打开"
+
+# 错误与通知
+archive.session_not_found:
+  en: "Session %{id} not found; it may have been removed from the index"
+  zh-CN: "找不到会话 %{id}，可能已被移出索引"
+archive.load_session_failed:
+  en: "Failed to load session: %{error}"
+  zh-CN: "读取会话失败：%{error}"
+archive.load_projects_failed:
+  en: "Failed to load projects: %{error}"
+  zh-CN: "读取项目列表失败：%{error}"
+archive.load_health_failed:
+  en: "Failed to load archive health: %{error}"
+  zh-CN: "读取归档健康失败：%{error}"
+archive.load_sessions_failed:
+  en: "Failed to load sessions: %{error}"
+  zh-CN: "读取会话列表失败：%{error}"
+archive.load_messages_failed:
+  en: "Failed to load messages: %{error}"
+  zh-CN: "读取消息失败：%{error}"
+archive.refresh_messages_failed:
+  en: "Failed to refresh messages: %{error}"
+  zh-CN: "刷新消息失败：%{error}"
+archive.copied:
+  en: "Copied to clipboard: %{command}"
+  zh-CN: "已复制到剪贴板：%{command}"
+archive.no_resume_command:
+  en: "This source has no command for resuming a session"
+  zh-CN: "这个来源没有可恢复会话的命令行"
+archive.export_not_ready:
+  en: "Messages are still loading. Try exporting again in a moment."
+  zh-CN: "消息还没读完，稍后再导出"
+archive.no_home:
+  en: "HOME directory not found"
+  zh-CN: "找不到 HOME 目录"
+archive.exported:
+  en: "Exported to %{path}"
+  zh-CN: "已导出到 %{path}"
+archive.export_failed:
+  en: "Export failed: %{error}"
+  zh-CN: "导出失败：%{error}"
+
+# 会话列表
+archive.count_with_subagents:
+  en: "%{shown} · %{total} incl. sub-agents"
+  zh-CN: "%{shown} · 含子代理共 %{total}"
+archive.archive_filter_pending:
+  en: "Filtering by archive status needs per-session original status from core (not yet available)"
+  zh-CN: "按归档状态筛选待 core 提供每会话原件状态"
+archive.no_sessions:
+  en: "No matching sessions"
+  zh-CN: "没有匹配的会话"
+archive.row_messages_one:
+  en: "1 msg"
+  zh-CN: "1 条"
+archive.row_messages_other:
+  en: "%{count} msgs"
+  zh-CN: "%{count} 条"
+archive.subagents_tag_one:
+  en: "+1 sub-agent"
+  zh-CN: "+1 子代理"
+archive.subagents_tag_other:
+  en: "+%{count} sub-agents"
+  zh-CN: "+%{count} 子代理"
+archive.active:
+  en: "Active"
+  zh-CN: "进行中"
+
+# 会话详情
+archive.select_session:
+  en: "Select a session from the list"
+  zh-CN: "从中间列表选择一个会话"
+archive.select_session_hint:
+  en: "Its title, stats and messages grouped by turn will appear here."
+  zh-CN: "右侧会显示标题、指标与按轮次组织的消息流。"
+archive.reveal_tip:
+  en: "Select the original session file in Finder"
+  zh-CN: "在 Finder 中定位会话原件"
+archive.reveal_missing:
+  en: "The original file is no longer on disk"
+  zh-CN: "原件已不在磁盘上"
+archive.reveal_no_path:
+  en: "No original file path"
+  zh-CN: "没有原件路径"
+archive.no_cwd:
+  en: "(no working directory)"
+  zh-CN: "（无工作目录）"
+archive.unknown_model:
+  en: "Unknown"
+  zh-CN: "未知"
+archive.tool_failures:
+  en: "· %{count} failed"
+  zh-CN: "· %{count} 失败"
+archive.star:
+  en: "Star"
+  zh-CN: "星标"
+archive.unstar:
+  en: "Unstar"
+  zh-CN: "取消星标"
+archive.reveal:
+  en: "Reveal in Finder"
+  zh-CN: "在 Finder 显示"
+archive.export:
+  en: "Export Markdown"
+  zh-CN: "导出 Markdown"
+archive.resume:
+  en: "Continue in %{provider}"
+  zh-CN: "用 %{provider} 继续"
+archive.stat_model:
+  en: "Model"
+  zh-CN: "模型"
+archive.stat_messages:
+  en: "Messages"
+  zh-CN: "消息"
+archive.stat_input:
+  en: "Input"
+  zh-CN: "输入"
+archive.stat_output:
+  en: "Output"
+  zh-CN: "输出"
+archive.stat_cache:
+  en: "Cache read / write"
+  zh-CN: "缓存读 / 写"
+archive.stat_cost:
+  en: "Cost"
+  zh-CN: "成本"
+archive.stat_estimated_cost:
+  en: "Est. cost"
+  zh-CN: "估算成本"
+archive.stat_tool_calls:
+  en: "Tool calls"
+  zh-CN: "工具调用"
+archive.stat_subagents:
+  en: "Sub-agents"
+  zh-CN: "子代理"
+archive.loading_messages:
+  en: "Loading messages…"
+  zh-CN: "读取消息…"
+archive.jump_to_latest:
+  en: "Jump to latest"
+  zh-CN: "跳到最新"
+
+# 导出的 Markdown
+archive.export_meta:
+  en: "- Source: %{provider}\n- Directory: %{cwd}\n- Time: %{start} → %{end}\n- Messages: %{count}\n"
+  zh-CN: "- 来源：%{provider}\n- 目录：%{cwd}\n- 时间：%{start} → %{end}\n- 消息：%{count}\n"
+archive.export_no_cwd:
+  en: "(none)"
+  zh-CN: "（无）"
+archive.role_user:
+  en: "User"
+  zh-CN: "用户"
+archive.role_assistant:
+  en: "Assistant"
+  zh-CN: "助手"
+archive.role_system:
+  en: "System"
+  zh-CN: "系统"
+archive.role_tool:
+  en: "Tool"
+  zh-CN: "工具"
+archive.export_thinking:
+  en: "Thinking: "
+  zh-CN: "思考："
+archive.export_call:
+  en: "call"
+  zh-CN: "调用"
+archive.export_result:
+  en: "result"
+  zh-CN: "结果"
+archive.export_result_error:
+  en: "result (error)"
+  zh-CN: "结果（错误）"
+archive.export_image:
+  en: "Image"
+  zh-CN: "图片"
+archive.export_compaction:
+  en: "Compaction summary: "
+  zh-CN: "压缩摘要："

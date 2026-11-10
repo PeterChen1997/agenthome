@@ -15,7 +15,7 @@ use super::cards::{Tag, TagKind, avatar, card, card_title, hp_bar, hp_tier, vt};
 use super::fmt::{self, AMBER, GREEN, MUTED, RED_TEXT, countdown};
 use super::model::{DueItem, due_items};
 use crate::assets::FONT_PIXEL_MONO;
-use crate::format::now_ms;
+use crate::format::{now_ms, quota_window_label};
 use crate::habitat::{HabitatView, ResidentId};
 
 /// 额度快照与倒计时时钟。
@@ -90,7 +90,7 @@ impl ResidentsCard {
     fn render_resident(
         &self,
         who: ResidentId,
-        status: &'static str,
+        status: SharedString,
         snapshots: &[QuotaSnapshot],
         now_ms: i64,
         cx: &mut Context<Self>,
@@ -101,8 +101,8 @@ impl ResidentsCard {
             .and_then(|s| s.plan.clone())
             .unwrap_or_else(|| match who {
                 // Gemini 没有本地额度信号，但会话与 token 已接入。
-                ResidentId::Gemini => "已接入".to_string(),
-                _ => "未接入".to_string(),
+                ResidentId::Gemini => t!("dashboard.plan_connected").into_owned(),
+                _ => t!("dashboard.plan_not_connected").into_owned(),
             })
             .into();
         let header = h_flex()
@@ -123,9 +123,9 @@ impl ResidentsCard {
                 Some(s) => compliance_tag(s),
                 None => Tag::new(
                     if who == ResidentId::Gemini {
-                        "无额度信号"
+                        t!("dashboard.no_quota_signal")
                     } else {
-                        "未接入额度"
+                        t!("dashboard.quota_not_connected")
                     },
                     TagKind::Dim,
                 ),
@@ -143,10 +143,8 @@ impl ResidentsCard {
                         .text_size(px(11.5))
                         .text_color(cx.theme().muted_foreground)
                         .child(match who {
-                            ResidentId::Gemini => {
-                                "Gemini / Antigravity 没有可读的本地额度信号，只统计会话与 token。"
-                            }
-                            _ => "本地没有这个来源的额度快照，先在设置里确认来源已接入。",
+                            ResidentId::Gemini => t!("dashboard.gemini_quota_hint"),
+                            _ => t!("dashboard.missing_quota_hint"),
                         }),
                 );
             }
@@ -182,17 +180,17 @@ impl Render for ResidentsCard {
         let rows: Vec<AnyElement> = ResidentId::ALL
             .into_iter()
             .map(|who| {
-                let status = residents
+                let status: SharedString = residents
                     .get(who.index())
-                    .map(|r| r.state.label())
-                    .unwrap_or("外出");
+                    .map(|r| r.state.label().to_string().into())
+                    .unwrap_or_else(|| t!("dashboard.status_away").into());
                 self.render_resident(who, status, &snapshots, now_ms, cx)
             })
             .collect();
         card(cx)
             .gap_0()
             .child(
-                card_title("额度详情", "体力条 = 窗口剩余 · 各窗口重置时间与数据来源").pb(px(10.)),
+                card_title(t!("dashboard.quota_title"), t!("dashboard.quota_subtitle")).pb(px(10.)),
             )
             .child(h_flex().items_stretch().children(rows))
             .when_some(error, |card, error| {
@@ -211,15 +209,24 @@ impl Render for ResidentsCard {
 fn compliance_tag(snapshot: &QuotaSnapshot) -> Tag {
     match snapshot.freshness {
         Freshness::Live => Tag::new(
-            format!("合规 · {}", source_label(&snapshot.source)),
+            t!(
+                "dashboard.compliant",
+                source = source_label(&snapshot.source)
+            ),
             TagKind::Ok,
         ),
         Freshness::Cached => Tag::new(
-            format!("合规 · {}", source_label(&snapshot.source)),
+            t!(
+                "dashboard.compliant",
+                source = source_label(&snapshot.source)
+            ),
             TagKind::Dim,
         ),
         Freshness::Stale => Tag::new(
-            format!("可能过期 · {}", source_label(&snapshot.source)),
+            t!(
+                "dashboard.maybe_stale",
+                source = source_label(&snapshot.source)
+            ),
             TagKind::Warn,
         ),
     }
@@ -237,7 +244,7 @@ fn window_row(window: &QuotaWindow, cx: &mut Context<ResidentsCard>) -> AnyEleme
                 .items_baseline()
                 .text_size(px(12.))
                 .text_color(cx.theme().muted_foreground)
-                .child(window.label.clone())
+                .child(quota_window_label(window))
                 .child(
                     vt(22.)
                         .text_color(if tier == GREEN {
@@ -261,7 +268,7 @@ fn window_row_empty(cx: &mut Context<ResidentsCard>) -> AnyElement {
                 .items_baseline()
                 .text_size(px(12.))
                 .text_color(cx.theme().muted_foreground)
-                .child("配额")
+                .child(t!("dashboard.quota"))
                 .child(vt(22.).text_color(cx.theme().muted_foreground).child("--")),
         )
         .child(hp_bar(None))
@@ -284,7 +291,10 @@ fn reset_line(snapshot: &QuotaSnapshot, now_ms: i64, cx: &App) -> AnyElement {
             h_flex()
                 .gap(px(4.))
                 .items_baseline()
-                .child(format!("{} 重置", window.label))
+                .child(t!(
+                    "dashboard.window_reset",
+                    window = quota_window_label(window)
+                ))
                 .child(
                     vt(16.)
                         .text_color(due_color(remaining, Some(100.0 - window.used_percent), cx))
@@ -293,21 +303,40 @@ fn reset_line(snapshot: &QuotaSnapshot, now_ms: i64, cx: &App) -> AnyElement {
         );
     }
     if let Some(credits) = &snapshot.credits {
-        let mut item = h_flex().gap(px(4.)).items_baseline().child("重置信用");
+        let mut item = h_flex()
+            .gap(px(4.))
+            .items_baseline()
+            .child(t!("dashboard.reset_credits"));
         match credits.reset_credits {
-            Some(n) => item = item.child(vt(16.).text_color(rgb(GREEN)).child(format!("{n} 张"))),
-            None if credits.unlimited => item = item.child("无限"),
-            None => item = item.child("无"),
+            Some(n) => {
+                let text = if n == 1 {
+                    t!("dashboard.credits_one")
+                } else {
+                    t!("dashboard.credits_other", count = n)
+                };
+                item = item.child(vt(16.).text_color(rgb(GREEN)).child(text));
+            }
+            None if credits.unlimited => item = item.child(t!("dashboard.credits_unlimited")),
+            None => item = item.child(t!("dashboard.credits_none")),
         }
         if let Some(expires) = credits.expires_at_ms {
+            // 倒计时单独着色，按 `%{t}` 把文案切成前后两段，中英文语序都能放。
+            let template = t!("dashboard.credits_expire");
+            let (before, after) = template
+                .split_once("%{t}")
+                .unwrap_or((template.as_ref(), ""));
             item = item
-                .child("·")
+                .when(!before.trim().is_empty(), |item| {
+                    item.child(before.trim().to_string())
+                })
                 .child(
                     vt(16.)
                         .text_color(due_color(expires - now_ms, None, cx))
                         .child(countdown(expires - now_ms)),
                 )
-                .child("后过期");
+                .when(!after.trim().is_empty(), |item| {
+                    item.child(after.trim().to_string())
+                });
         }
         line = line.child(item);
     }
@@ -403,9 +432,9 @@ impl Render for DueCard {
                 .text_size(px(12.))
                 .text_color(cx.theme().muted_foreground)
                 .child(if quota.loading {
-                    "读取额度中…"
+                    t!("dashboard.due_loading")
                 } else {
-                    "没有额度快照，接入后这里按先后列出重置与过期。"
+                    t!("dashboard.due_empty")
                 })
                 .into_any_element()
         } else {
@@ -421,20 +450,23 @@ impl Render for DueCard {
         card(cx)
             .flex_1()
             .min_w_0()
-            .child(card_title("到期与重置", "按先后"))
+            .child(card_title(
+                t!("dashboard.due_title"),
+                t!("dashboard.due_subtitle"),
+            ))
             .child(body)
     }
 }
 
 /// 快照 `source` 是文件路径，界面只显示来源种类。
-fn source_label(source: &str) -> &'static str {
+fn source_label(source: &str) -> SharedString {
     if source.contains("/usage") {
-        "官方 /usage"
+        t!("dashboard.source_usage").into()
     } else if source.contains("rollout") {
-        "rollout 快照"
+        t!("dashboard.source_rollout").into()
     } else if source.contains("statusline") {
-        "statusline"
+        "statusline".into()
     } else {
-        "本地文件"
+        t!("dashboard.source_local_file").into()
     }
 }

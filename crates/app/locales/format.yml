@@ -1,0 +1,46 @@
+_version: 2
+format.just_now:
+  en: just now
+  zh-CN: 刚刚
+format.minutes_ago:
+  en: "%{count} min ago"
+  zh-CN: "%{count} 分钟前"
+format.hours_ago:
+  en: "%{count}h ago"
+  zh-CN: "%{count} 小时前"
+format.day_ago:
+  en: 1 day ago
+  zh-CN: 1 天前
+format.days_ago:
+  en: "%{count} days ago"
+  zh-CN: "%{count} 天前"
+format.invalid_time:
+  en: Invalid time
+  zh-CN: 无效时间
+format.reset:
+  en: Reset
+  zh-CN: 已重置
+format.today:
+  en: Today
+  zh-CN: 今天
+format.yesterday:
+  en: Yesterday
+  zh-CN: 昨天
+format.this_week:
+  en: This week
+  zh-CN: 本周
+format.earlier:
+  en: Earlier
+  zh-CN: 更早
+format.window_hours:
+  en: "%{count}h"
+  zh-CN: "%{count} 小时"
+format.window_days:
+  en: "%{count}d"
+  zh-CN: "%{count} 天"
+format.window_minutes:
+  en: "%{count}m"
+  zh-CN: "%{count} 分钟"
+format.window_spend_limit:
+  en: Spend limit
+  zh-CN: 消费上限

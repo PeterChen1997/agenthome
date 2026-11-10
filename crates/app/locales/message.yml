@@ -1,0 +1,43 @@
+_version: 2
+message.you:
+  en: You
+  zh-CN: 你
+message.thinking:
+  en: Thinking
+  zh-CN: 思考过程
+message.chars:
+  en: "%{count} chars"
+  zh-CN: "%{count} 字"
+message.result_divider:
+  en: "── Result ──"
+  zh-CN: ── 结果 ──
+message.tool_result:
+  en: Tool result
+  zh-CN: 工具结果
+message.image:
+  en: Image
+  zh-CN: 图片
+message.image_body:
+  en: "[Image %{media_type}]"
+  zh-CN: "[图片 %{media_type}]"
+message.compaction:
+  en: Compaction summary
+  zh-CN: 压缩摘要
+message.output:
+  en: "+%{tokens} out"
+  zh-CN: "+%{tokens} 输出"
+message.role_meta:
+  en: Meta
+  zh-CN: 元信息
+message.role_user:
+  en: User
+  zh-CN: 用户
+message.role_assistant:
+  en: Assistant
+  zh-CN: 助手
+message.role_system:
+  en: System
+  zh-CN: 系统
+message.role_tool:
+  en: Tool
+  zh-CN: 工具

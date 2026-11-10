@@ -1,0 +1,37 @@
+_version: 2
+habitat.state_working:
+  en: Working
+  zh-CN: 工作中
+habitat.state_thinking:
+  en: Thinking
+  zh-CN: 思考中
+habitat.state_happy:
+  en: Done!
+  zh-CN: 完成了
+habitat.state_tired:
+  en: Low battery
+  zh-CN: 快没电
+habitat.state_sleeping:
+  en: Resting
+  zh-CN: 休息中
+habitat.state_away:
+  en: Away
+  zh-CN: 外出
+habitat.demo_tool:
+  en: "Codex is running a tool: cargo test"
+  zh-CN: Codex 开始执行工具 cargo test
+habitat.demo_session_done:
+  en: Claude finished a session · $3.21
+  zh-CN: Claude 完成了一个会话 · $3.21
+habitat.demo_low:
+  en: Codex 5h window down to 18%
+  zh-CN: Codex 5h 窗口只剩 18%
+habitat.demo_exhausted:
+  en: Codex is out of quota; resets in 03:41
+  zh-CN: Codex 额度用尽，03:41 后重置
+habitat.demo_codex_reset:
+  en: Codex window reset, back to full energy
+  zh-CN: Codex 窗口已重置，体力全满
+habitat.demo_claude_reset:
+  en: Claude 5h window reset
+  zh-CN: Claude 5h 窗口已重置

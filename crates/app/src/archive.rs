@@ -71,13 +71,14 @@ impl ViewFilter {
         ViewFilter::Expiring,
     ];
 
-    fn label(self) -> &'static str {
+    fn label(self) -> SharedString {
         match self {
-            ViewFilter::All => "全部会话",
-            ViewFilter::Starred => "星标",
-            ViewFilter::ArchiveOnly => "仅归档存在",
-            ViewFilter::Expiring => "7 天内将清理",
+            ViewFilter::All => t!("archive.view_all"),
+            ViewFilter::Starred => t!("archive.view_starred"),
+            ViewFilter::ArchiveOnly => t!("archive.view_archive_only"),
+            ViewFilter::Expiring => t!("archive.view_expiring"),
         }
+        .into()
     }
 }
 
@@ -184,21 +185,25 @@ fn export_markdown(session: &SessionSummary, transcript: &Transcript) -> String 
     use agenthome_core::model::{ContentBlock, Role};
     use std::fmt::Write as _;
     let mut out = format!("# {}\n\n", session.title);
+    let no_cwd = t!("archive.export_no_cwd");
     let _ = writeln!(
         out,
-        "- 来源：{}\n- 目录：{}\n- 时间：{} → {}\n- 消息：{}\n",
-        provider_display_name(&session.provider),
-        session.cwd.as_deref().unwrap_or("（无）"),
-        short_datetime(session.started_at_ms),
-        short_datetime(session.updated_at_ms),
-        session.message_count
+        "{}",
+        t!(
+            "archive.export_meta",
+            provider = provider_display_name(&session.provider),
+            cwd = session.cwd.as_deref().unwrap_or(&no_cwd),
+            start = short_datetime(session.started_at_ms),
+            end = short_datetime(session.updated_at_ms),
+            count = session.message_count
+        )
     );
     for message in transcript.messages.iter() {
         let role = match message.role {
-            Role::User => "用户",
-            Role::Assistant => "助手",
-            Role::System => "系统",
-            Role::Tool => "工具",
+            Role::User => t!("archive.role_user"),
+            Role::Assistant => t!("archive.role_assistant"),
+            Role::System => t!("archive.role_system"),
+            Role::Tool => t!("archive.role_tool"),
         };
         let _ = writeln!(
             out,
@@ -211,26 +216,34 @@ fn export_markdown(session: &SessionSummary, transcript: &Transcript) -> String 
                     let _ = writeln!(out, "{text}\n");
                 }
                 ContentBlock::Thinking { text } => {
-                    let _ = writeln!(out, "> 思考：{}\n", text.replace('\n', "\n> "));
+                    let _ = writeln!(
+                        out,
+                        "> {}{}\n",
+                        t!("archive.export_thinking"),
+                        text.replace('\n', "\n> ")
+                    );
                 }
                 ContentBlock::ToolCall { name, input, .. } => {
-                    let _ = writeln!(out, "```json\n// 调用 {name}\n{input}\n```\n");
+                    let call = t!("archive.export_call");
+                    let _ = writeln!(out, "```json\n// {call} {name}\n{input}\n```\n");
                 }
                 ContentBlock::ToolResult {
                     output, is_error, ..
                 } => {
                     let label = if *is_error {
-                        "结果（错误）"
+                        t!("archive.export_result_error")
                     } else {
-                        "结果"
+                        t!("archive.export_result")
                     };
                     let _ = writeln!(out, "```text\n// {label}\n{output}\n```\n");
                 }
                 ContentBlock::Image { media_type } => {
-                    let _ = writeln!(out, "[图片 {media_type}]\n");
+                    let image = t!("archive.export_image");
+                    let _ = writeln!(out, "[{image} {media_type}]\n");
                 }
                 ContentBlock::Compaction { summary } => {
-                    let _ = writeln!(out, "> 压缩摘要：{summary}\n");
+                    let label = t!("archive.export_compaction");
+                    let _ = writeln!(out, "> {label}{summary}\n");
                 }
                 ContentBlock::Unknown { native_type, raw } => {
                     let _ = writeln!(out, "```json\n// {native_type}\n{raw}\n```\n");
@@ -339,12 +352,12 @@ impl ArchiveView {
     }
 
     /// ⌘K 面板空查询时列出的会话：最近打开的；还没打开过就退回最近更新的。
-    pub fn recent_for_palette(&self) -> (Vec<SessionSummary>, &'static str) {
+    pub fn recent_for_palette(&self) -> (Vec<SessionSummary>, SharedString) {
         if self.recent.is_empty() {
             let latest = self.sessions.iter().take(RECENT_KEPT).cloned().collect();
-            (latest, "最近更新")
+            (latest, t!("archive.recently_updated").into())
         } else {
-            (self.recent.clone(), "最近打开")
+            (self.recent.clone(), t!("archive.recently_opened").into())
         }
     }
 
@@ -377,11 +390,16 @@ impl ArchiveView {
             let _ = this.update_in(cx, |this, window, cx| match found {
                 Ok(Some(summary)) => this.open_summary(summary, message_id, cx),
                 Ok(None) => window.push_notification(
-                    Notification::warning(format!("找不到会话 {session_id}，可能已被移出索引")),
+                    Notification::warning(t!("archive.session_not_found", id = session_id)),
                     cx,
                 ),
-                Err(error) => window
-                    .push_notification(Notification::error(format!("读取会话失败：{error:#}")), cx),
+                Err(error) => window.push_notification(
+                    Notification::error(t!(
+                        "archive.load_session_failed",
+                        error = format!("{error:#}")
+                    )),
+                    cx,
+                ),
             });
         })
         .detach();
@@ -398,13 +416,19 @@ impl ArchiveView {
                 match result.0 {
                     Ok(rows) => this.projects = Arc::new(rows),
                     Err(error) => {
-                        this.sessions_error = Some(format!("读取项目列表失败：{error:#}"))
+                        this.sessions_error = Some(
+                            t!("archive.load_projects_failed", error = format!("{error:#}"))
+                                .into_owned(),
+                        )
                     }
                 }
                 match result.1 {
                     Ok(health) => this.health = health,
                     Err(error) => {
-                        this.sessions_error = Some(format!("读取归档健康失败：{error:#}"))
+                        this.sessions_error = Some(
+                            t!("archive.load_health_failed", error = format!("{error:#}"))
+                                .into_owned(),
+                        )
                     }
                 }
                 cx.notify();
@@ -478,7 +502,10 @@ impl ArchiveView {
                         }
                     }
                     Err(error) => {
-                        this.sessions_error = Some(format!("读取会话列表失败：{error:#}"))
+                        this.sessions_error = Some(
+                            t!("archive.load_sessions_failed", error = format!("{error:#}"))
+                                .into_owned(),
+                        )
                     }
                 }
                 cx.notify();
@@ -572,7 +599,12 @@ impl ArchiveView {
                             this.scroll_to_message(target, cx);
                         }
                     }
-                    Err(error) => this.messages_error = Some(format!("读取消息失败：{error:#}")),
+                    Err(error) => {
+                        this.messages_error = Some(
+                            t!("archive.load_messages_failed", error = format!("{error:#}"))
+                                .into_owned(),
+                        )
+                    }
                 }
                 cx.notify();
             });
@@ -623,7 +655,13 @@ impl ArchiveView {
                 let transcript = match result {
                     Ok(transcript) => transcript,
                     Err(error) => {
-                        this.messages_error = Some(format!("刷新消息失败：{error:#}"));
+                        this.messages_error = Some(
+                            t!(
+                                "archive.refresh_messages_failed",
+                                error = format!("{error:#}")
+                            )
+                            .into_owned(),
+                        );
                         cx.notify();
                         return;
                     }
@@ -696,22 +734,23 @@ impl ArchiveView {
             Some(command) => {
                 cx.write_to_clipboard(ClipboardItem::new_string(command.clone()));
                 window.push_notification(
-                    Notification::success(format!("已复制到剪贴板：{command}")),
+                    Notification::success(t!("archive.copied", command = command)),
                     cx,
                 );
             }
-            None => window
-                .push_notification(Notification::warning("这个来源没有可恢复会话的命令行"), cx),
+            None => {
+                window.push_notification(Notification::warning(t!("archive.no_resume_command")), cx)
+            }
         }
     }
 
     fn export(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let (Some(session), Some(transcript)) = (&self.selected_session, &self.transcript) else {
-            window.push_notification(Notification::warning("消息还没读完，稍后再导出"), cx);
+            window.push_notification(Notification::warning(t!("archive.export_not_ready")), cx);
             return;
         };
         let Some(path) = export_path(session) else {
-            window.push_notification(Notification::error("找不到 HOME 目录"), cx);
+            window.push_notification(Notification::error(t!("archive.no_home")), cx);
             return;
         };
         let session = session.clone();
@@ -724,8 +763,8 @@ impl ArchiveView {
                 })
                 .await;
             let note = match result {
-                Ok(()) => Notification::success(format!("已导出到 {shown}")),
-                Err(error) => Notification::error(format!("导出失败：{error}")),
+                Ok(()) => Notification::success(t!("archive.exported", path = shown)),
+                Err(error) => Notification::error(t!("archive.export_failed", error = error)),
             };
             let _ = cx.update(|window, cx| window.push_notification(note, cx));
         })
@@ -762,7 +801,7 @@ impl ArchiveView {
         let hidden = self.projects.len().saturating_sub(shown);
         v_flex()
             .w_full()
-            .child(side_head("视图", cx))
+            .child(side_head(t!("archive.side_views").into(), cx))
             .children(ViewFilter::ALL.map(|view| {
                 let (count, alert) = view_count(view);
                 side_item(
@@ -775,7 +814,7 @@ impl ArchiveView {
                     cx,
                 )
             }))
-            .child(side_head("项目", cx))
+            .child(side_head(t!("archive.side_projects").into(), cx))
             .children(self.projects.iter().take(shown).map(|project| {
                 let row = project.clone();
                 side_item(
@@ -806,7 +845,11 @@ impl ArchiveView {
                         .text_color(cx.theme().muted_foreground)
                         .hover(|style| style.bg(cx.theme().secondary))
                         .cursor_pointer()
-                        .child(format!("还有 {hidden} 个项目…"))
+                        .child(if hidden == 1 {
+                            t!("archive.more_projects_one")
+                        } else {
+                            t!("archive.more_projects_other", count = hidden)
+                        })
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.projects_expanded = true;
                             cx.notify();
@@ -852,7 +895,8 @@ impl ArchiveView {
                         let total: u32 = self.projects.iter().map(|p| p.session_count).sum();
                         let shown = sessions.len();
                         if self.view == ViewFilter::All && total as usize > shown {
-                            format!("{shown} · 含子代理共 {total}")
+                            t!("archive.count_with_subagents", shown = shown, total = total)
+                                .into_owned()
                         } else {
                             shown.to_string()
                         }
@@ -867,7 +911,7 @@ impl ArchiveView {
                 .into_any_element()
         } else if matches!(self.view, ViewFilter::ArchiveOnly | ViewFilter::Expiring) {
             // TODO: `SessionSummary` 暂无原件状态，按归档状态筛选待 core 支持。
-            empty_hint("按归档状态筛选待 core 提供每会话原件状态", cx)
+            empty_hint(t!("archive.archive_filter_pending").into(), cx)
         } else if self.loading_sessions && sessions.is_empty() {
             v_flex()
                 .size_full()
@@ -876,7 +920,7 @@ impl ArchiveView {
                 .child(Spinner::new())
                 .into_any_element()
         } else if sessions.is_empty() {
-            empty_hint("没有匹配的会话", cx)
+            empty_hint(t!("archive.no_sessions").into(), cx)
         } else {
             div()
                 .relative()
@@ -940,12 +984,12 @@ impl ArchiveView {
                 .items_center()
                 .justify_center()
                 .gap_2()
-                .child("从中间列表选择一个会话")
+                .child(t!("archive.select_session"))
                 .child(
                     div()
                         .text_sm()
                         .text_color(cx.theme().muted_foreground)
-                        .child("右侧会显示标题、指标与按轮次组织的消息流。"),
+                        .child(t!("archive.select_session_hint")),
                 )
                 .into_any_element();
         };
@@ -958,11 +1002,11 @@ impl ArchiveView {
             .clone()
             .filter(|path| std::path::Path::new(path).exists());
         let reveal_tip = if source_path.is_some() {
-            "在 Finder 中定位会话原件"
+            t!("archive.reveal_tip")
         } else if session.source_path.is_some() {
-            "原件已不在磁盘上"
+            t!("archive.reveal_missing")
         } else {
-            "没有原件路径"
+            t!("archive.reveal_no_path")
         };
         let subagents = self.subagents.get(&session.id).copied().unwrap_or(0);
         let usage = session.usage;
@@ -972,14 +1016,14 @@ impl ArchiveView {
                 .cwd
                 .as_deref()
                 .map(|cwd| crate::format::tilde(std::path::Path::new(cwd)))
-                .unwrap_or_else(|| "（无工作目录）".to_string()),
+                .unwrap_or_else(|| t!("archive.no_cwd").into_owned()),
             provider_display_name(&session.provider),
             short_datetime(session.started_at_ms),
             short_datetime(session.updated_at_ms)
         );
         // TODO: 原件是否仍在磁盘上需要 core 在 `SessionSummary` 里给出。
         let model_label = match session.models.as_slice() {
-            [] => "未知".to_string(),
+            [] => t!("archive.unknown_model").into_owned(),
             [one] => one.clone(),
             [first, rest @ ..] => format!("{first} +{}", rest.len()),
         };
@@ -1002,7 +1046,7 @@ impl ArchiveView {
                     div()
                         .text_size(px(16.))
                         .text_color(cx.theme().muted_foreground)
-                        .child(format!("· {tool_failures} 失败")),
+                        .child(t!("archive.tool_failures", count = tool_failures)),
                 )
                 .into_any_element()
         } else {
@@ -1021,14 +1065,18 @@ impl ArchiveView {
                     } else {
                         IconName::Star
                     })
-                    .tooltip(if starred { "取消星标" } else { "星标" })
+                    .tooltip(if starred {
+                        t!("archive.unstar")
+                    } else {
+                        t!("archive.star")
+                    })
                     .on_click(cx.listener(|this, _, _, cx| this.toggle_star(cx))),
             )
             .child(
                 Button::new("reveal")
                     .outline()
                     .small()
-                    .label("在 Finder 显示")
+                    .label(t!("archive.reveal"))
                     .disabled(source_path.is_none())
                     .tooltip(reveal_tip)
                     .on_click(move |_, _, _| {
@@ -1048,7 +1096,7 @@ impl ArchiveView {
                 Button::new("export")
                     .outline()
                     .small()
-                    .label("导出 Markdown")
+                    .label(t!("archive.export"))
                     .disabled(transcript.is_none())
                     .on_click(cx.listener(|this, _, window, cx| this.export(window, cx))),
             )
@@ -1056,9 +1104,9 @@ impl ArchiveView {
                 Button::new("resume")
                     .primary()
                     .small()
-                    .label(format!(
-                        "用 {} 继续",
-                        provider_display_name(&session.provider)
+                    .label(t!(
+                        "archive.resume",
+                        provider = provider_display_name(&session.provider)
                     ))
                     .on_click(
                         cx.listener(|this, _, window, cx| this.copy_resume_command(window, cx)),
@@ -1114,7 +1162,7 @@ impl ArchiveView {
                     .items_end()
                     .gap(px(22.))
                     .child(stat(
-                        "模型",
+                        t!("archive.stat_model").into(),
                         div()
                             .font_family(cx.theme().mono_font_family.clone())
                             .text_sm()
@@ -1123,25 +1171,25 @@ impl ArchiveView {
                         cx,
                     ))
                     .child(stat_text(
-                        "消息",
+                        t!("archive.stat_messages").into(),
                         session.message_count.to_string(),
                         None,
                         cx,
                     ))
                     .child(stat_text(
-                        "输入",
+                        t!("archive.stat_input").into(),
                         short_tokens(usage.input_tokens),
                         None,
                         cx,
                     ))
                     .child(stat_text(
-                        "输出",
+                        t!("archive.stat_output").into(),
                         short_tokens(usage.output_tokens),
                         None,
                         cx,
                     ))
                     .child(stat_text(
-                        "缓存读 / 写",
+                        t!("archive.stat_cache").into(),
                         format!(
                             "{} / {}",
                             short_tokens(usage.cache_read_tokens),
@@ -1152,16 +1200,21 @@ impl ArchiveView {
                     ))
                     .child(stat_text(
                         if session.cost_source == CostSource::Recorded {
-                            "成本"
+                            t!("archive.stat_cost").into()
                         } else {
-                            "估算成本"
+                            t!("archive.stat_estimated_cost").into()
                         },
                         cost_label,
                         Some(cx.theme().primary),
                         cx,
                     ))
-                    .child(stat("工具调用", tools_value, cx))
-                    .child(stat_text("子代理", subagents.to_string(), None, cx)),
+                    .child(stat(t!("archive.stat_tool_calls").into(), tools_value, cx))
+                    .child(stat_text(
+                        t!("archive.stat_subagents").into(),
+                        subagents.to_string(),
+                        None,
+                        cx,
+                    )),
             );
 
         let body = if let Some(error) = &self.messages_error {
@@ -1178,7 +1231,7 @@ impl ArchiveView {
                 .justify_center()
                 .gap_3()
                 .child(Spinner::new())
-                .child("读取消息…")
+                .child(t!("archive.loading_messages"))
                 .into_any_element()
         } else if let Some(transcript) = transcript {
             let expanded = self.expanded_blocks.clone();
@@ -1192,7 +1245,7 @@ impl ArchiveView {
                         flash.is_some() && rows.messages.get(ix).map(|m| &m.id) == flash.as_ref();
                     render_row(ix, &rows, &provider, &expanded, highlighted, &owner, cx)
                 })
-                .with_jump_button_label("跳到最新");
+                .with_jump_button_label(t!("archive.jump_to_latest"));
             h_flex()
                 .items_stretch()
                 .size_full()
@@ -1298,11 +1351,15 @@ fn render_session_row(
     let id = session.id.clone();
     let active = now - session.updated_at_ms <= ACTIVE_WITHIN_MS;
     // TODO: 「仅归档」「N 天后清理」标签需要 `SessionSummary` 带原件状态。
+    let messages = if session.message_count == 1 {
+        t!("archive.row_messages_one")
+    } else {
+        t!("archive.row_messages_other", count = session.message_count)
+    };
     let meta = format!(
-        "{} · {} · {} 条 · {}",
+        "{} · {} · {messages} · {}",
         session.project_name,
         relative_time(session.updated_at_ms, now),
-        session.message_count,
         session_cost_label(session)
     );
     v_flex()
@@ -1350,19 +1407,20 @@ fn render_session_row(
                 .text_color(secondary(cx))
                 .child(div().flex_1().min_w_0().truncate().child(meta))
                 .when(subagents > 0, |row| {
-                    row.child(
-                        Tag::secondary()
-                            .small()
-                            .font_family(FONT_PIXEL_MONO)
-                            .child(format!("+{subagents} 子代理")),
-                    )
+                    row.child(Tag::secondary().small().font_family(FONT_PIXEL_MONO).child(
+                        if subagents == 1 {
+                            t!("archive.subagents_tag_one")
+                        } else {
+                            t!("archive.subagents_tag_other", count = subagents)
+                        },
+                    ))
                 })
                 .when(active, |row| {
                     row.child(
                         Tag::success()
                             .small()
                             .font_family(FONT_PIXEL_MONO)
-                            .child("进行中"),
+                            .child(t!("archive.active")),
                     )
                 }),
         )
@@ -1373,7 +1431,7 @@ fn render_session_row(
 }
 
 /// 左栏区块标题（Pixelify Sans 小字）。
-fn side_head(text: &'static str, cx: &App) -> AnyElement {
+fn side_head(text: SharedString, cx: &App) -> AnyElement {
     div()
         .px_4()
         .pt(px(14.))
@@ -1431,7 +1489,7 @@ pub(crate) fn side_item(
         .into_any_element()
 }
 
-fn empty_hint(text: &'static str, cx: &App) -> AnyElement {
+fn empty_hint(text: SharedString, cx: &App) -> AnyElement {
     v_flex()
         .size_full()
         .items_center()
@@ -1444,7 +1502,7 @@ fn empty_hint(text: &'static str, cx: &App) -> AnyElement {
 }
 
 /// 指标块：小标题 + VT323 大数字。
-fn stat(label: &'static str, value: impl IntoElement, cx: &App) -> AnyElement {
+fn stat(label: SharedString, value: impl IntoElement, cx: &App) -> AnyElement {
     v_flex()
         .min_w(px(88.))
         .gap(px(2.))
@@ -1465,7 +1523,7 @@ fn stat(label: &'static str, value: impl IntoElement, cx: &App) -> AnyElement {
 }
 
 fn stat_text(
-    label: &'static str,
+    label: SharedString,
     value: String,
     color: Option<gpui_kit::Hsla>,
     cx: &App,
@@ -1646,6 +1704,20 @@ mod tests {
             arranged.rows[2],
             ListRow::Group(DayGroup::Earlier)
         ));
+    }
+
+    /// 导出的 Markdown 跟随界面语言；测试不切 locale（全局、并行），默认是英文，不能漏出中文标签。
+    #[test]
+    fn export_markdown_follows_locale() {
+        let mut session = summary("claude-code:mac:abc", SessionKind::Main, 0, 0);
+        session.cwd = None;
+        let out = export_markdown(&session, &Transcript::build(Vec::new()));
+        assert!(out.contains("- Source: "), "{out}");
+        assert!(out.contains("- Directory: (none)"), "{out}");
+        assert!(
+            t!("archive.export_meta", locale = "zh-CN").contains("- 来源："),
+            "中文模板保持原文"
+        );
     }
 
     #[test]

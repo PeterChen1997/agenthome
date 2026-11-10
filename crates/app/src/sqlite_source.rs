@@ -25,8 +25,8 @@ pub struct SqliteDataSource {
 
 impl SqliteDataSource {
     pub fn open(path: &Path) -> anyhow::Result<Self> {
-        let store =
-            Store::open(path).with_context(|| format!("打开索引库失败：{}", path.display()))?;
+        let store = Store::open(path)
+            .with_context(|| t!("sync.index_open_failed", path = path.display()).to_string())?;
         Ok(Self {
             store: Mutex::new(store),
             claude: ClaudeCodeProvider::new(paths::claude_projects_dir()),
@@ -36,7 +36,10 @@ impl SqliteDataSource {
     }
 
     fn with_store<T>(&self, f: impl FnOnce(&Store) -> anyhow::Result<T>) -> anyhow::Result<T> {
-        let guard = self.store.lock().map_err(|_| anyhow!("索引库锁已中毒"))?;
+        let guard = self
+            .store
+            .lock()
+            .map_err(|_| anyhow!(t!("sync.index_lock_poisoned").to_string()))?;
         f(&guard)
     }
 }

@@ -1,0 +1,238 @@
+_version: 2
+# --mock 演示数据（data.rs 的 MockDataSource）。项目名、模型名、路径不翻译。
+mock.untitled:
+  en: Untitled session
+  zh-CN: 未命名会话
+mock.stress_title:
+  en: "Stress test: session with 10,000 messages"
+  zh-CN: 超长会话：一万条消息压力测试
+mock.title.0:
+  en: Fix launch crash on the login screen on iOS 27
+  zh-CN: 修复登录页在 iOS 27 上的启动崩溃
+mock.title.1:
+  en: Virtualize the session list
+  zh-CN: 把会话列表改成虚拟化渲染
+mock.title.2:
+  en: Refactor the SQLite storage layer and add tests
+  zh-CN: 重构 SQLite 存储层并补测试
+mock.title.3:
+  en: Debug Metro port conflict
+  zh-CN: 排查 Metro 端口冲突
+mock.title.4:
+  en: Add daily usage stats to the dashboard
+  zh-CN: 为仪表盘加按天用量统计
+mock.title.5:
+  en: Clean up error handling in provider parsers
+  zh-CN: 整理 Provider 解析器的错误处理
+mock.title.6:
+  en: Look into CJK input method support in GPUI
+  zh-CN: 调研 GPUI 的中文输入法支持
+mock.title.7:
+  en: Write README and release notes
+  zh-CN: 编写 README 与发布说明
+mock.title.8:
+  en: Speed up scrolling with 100k messages
+  zh-CN: 优化 10 万条消息的滚动性能
+mock.title.9:
+  en: Migrate CI to GitHub Actions
+  zh-CN: 迁移 CI 到 GitHub Actions
+mock.title.10:
+  en: Give the Watch app a light icon
+  zh-CN: 给 Watch App 换浅色图标
+mock.title.11:
+  en: Remove unused dependencies
+  zh-CN: 清理未使用的依赖
+mock.title.12:
+  en: Add an appearance switch to settings
+  zh-CN: 给设置页加外观切换
+mock.title.13:
+  en: Debug WebSocket reconnect after drops
+  zh-CN: 排查 WebSocket 断线重连
+mock.title.14:
+  en: Make image uploads chunked and resumable
+  zh-CN: 把图片上传改成分片续传
+mock.title.15:
+  en: Write a CLI tool for CSV import
+  zh-CN: 写一个 CSV 导入的命令行工具
+mock.title.16:
+  en: Track down the race behind the blank home screen
+  zh-CN: 定位首页白屏的竞态
+mock.title.17:
+  en: Fix contrast gaps in the dark theme
+  zh-CN: 补齐暗色主题的对比度
+mock.title.18:
+  en: Move scheduled jobs onto the queue
+  zh-CN: 把定时任务迁到队列
+mock.title.19:
+  en: Document API error codes
+  zh-CN: 梳理 API 错误码文档
+mock.title.20:
+  en: Autosave drafts while offline
+  zh-CN: 实现离线草稿自动保存
+mock.title.21:
+  en: Evaluate local vector search options
+  zh-CN: 调研本地向量检索方案
+mock.title.22:
+  en: Load test the sync API and write up results
+  zh-CN: 压测同步接口并出报告
+mock.title.23:
+  en: Rewrite the packaging script with notarization
+  zh-CN: 重写打包脚本并接公证
+mock.subagent_fallback:
+  en: Subagent
+  zh-CN: 子代理
+mock.subagent.0:
+  en: "Subagent: find related call sites"
+  zh-CN: 子代理：搜索相关调用点
+mock.subagent.1:
+  en: "Subagent: run tests and summarize failures"
+  zh-CN: 子代理：跑测试并汇总失败
+mock.subagent.2:
+  en: "Subagent: review the changes"
+  zh-CN: 子代理：审阅改动
+mock.subagent_codex_cost:
+  en: "Subagent: verify Codex cost accounting"
+  zh-CN: 子代理：核对 Codex 成本口径
+mock.subagent_legacy_scripts:
+  en: "Subagent: tidy up old scripts"
+  zh-CN: 子代理：整理旧脚本
+mock.turn:
+  en: "Turn %{n}: %{text}"
+  zh-CN: "第 %{n} 轮：%{text}"
+mock.user.0:
+  en: Why does this function panic on an empty list? Please add a test for it too.
+  zh-CN: 帮我看看这个函数为什么在空列表上会 panic，顺便把测试补上。
+mock.user.1:
+  en: Pull this logic out into its own module, but don't touch the public API.
+  zh-CN: 把这段逻辑抽成独立模块，注意不要改公开接口。
+mock.user.2:
+  en: "There are three compiler warnings right now. Fix all of them, no #[allow]."
+  zh-CN: 现在编译有三个 warning，全部清掉，不要加 allow。
+mock.user.3:
+  en: Explain what this trait is for, then give me a minimal example.
+  zh-CN: 解释一下这个 trait 的作用，然后给出一个最小示例。
+mock.user.4:
+  en: The list jitters when it scrolls to the bottom. Can you figure out why?
+  zh-CN: 列表滚动到底部时会抖一下，帮我定位原因。
+mock.assistant.0:
+  en: |-
+    ## Root cause
+
+    `items.first()` is followed by a bare `unwrap()`, so an empty list always panics.
+
+    Suggested fix:
+
+    1. Return early with `let Some(first) = items.first() else { return Ok(()) };`
+    2. Add a regression test for empty input.
+
+    ```rust
+    fn head(items: &[u32]) -> Option<u32> {
+        items.first().copied()
+    }
+    ```
+
+    `cargo test` passes after the change.
+  zh-CN: |-
+    ## 结论
+
+    问题出在 `items.first()` 之后直接 `unwrap()`，空列表时必然 panic。
+
+    修改建议：
+
+    1. 用 `let Some(first) = items.first() else { return Ok(()) };` 提前返回；
+    2. 给空输入补一个回归测试。
+
+    ```rust
+    fn head(items: &[u32]) -> Option<u32> {
+        items.first().copied()
+    }
+    ```
+
+    改完后 `cargo test` 全绿。
+mock.assistant.1:
+  en: |-
+    This trait decouples **data access** from the **UI**: views only depend on `DataSource` and don't care whether it's backed by SQLite or memory.
+
+    - Queries run on a background thread;
+    - results are written back to entities on the foreground;
+    - the UI thread never does IO.
+
+    > Note: implementations must be `Send + Sync`, otherwise they can't be called across threads.
+  zh-CN: |-
+    这个 trait 把**数据访问**和**界面**解耦：界面只依赖 `DataSource`，不关心背后是 SQLite 还是内存。
+
+    - 查询在后台线程跑；
+    - 结果回到前台再写入实体；
+    - UI 线程不做 IO。
+
+    > 注意：实现必须是 `Send + Sync`，否则不能跨线程调用。
+mock.assistant.2:
+  en: |-
+    All three warnings are fixed:
+
+    | Location | Cause | Fix |
+    |---|---|---|
+    | `data.rs:42` | Unused variable | Removed |
+    | `format.rs:10` | Can be simplified with `?` | Rewritten |
+    | `main.rs:5` | Unnecessary `mut` | Removed |
+
+    `cargo clippy` is clean now.
+  zh-CN: |-
+    我已经把三处 warning 处理完了：
+
+    | 位置 | 原因 | 处理 |
+    |---|---|---|
+    | `data.rs:42` | 未使用的变量 | 删除 |
+    | `format.rs:10` | 可用 `?` 简化 | 改写 |
+    | `main.rs:5` | 多余的 `mut` | 删除 |
+
+    `cargo clippy` 现在零 warning。
+mock.bash_description:
+  en: Run clippy
+  zh-CN: 跑 clippy 检查
+mock.look_first:
+  en: Let me look at the relevant code first.
+  zh-CN: 先看一下相关代码。
+# 工具输出的后半段，要足够长（超过 200 字符）才能验证折叠态。
+mock.tool_output_tail:
+  en: |-
+    warning: `agenthome-app` (bin "agenthome-app") generated 3 warnings (run `cargo clippy --fix --bin "agenthome-app"` to apply 1 suggestion)
+        Checking agenthome-core v0.1.6 (/Users/peter/code_hub/agenthome/crates/core)
+        Checking agenthome-cli v0.1.6 (/Users/peter/code_hub/agenthome/crates/cli)
+        Finished `dev` profile [unoptimized + debuginfo] target(s) in 4.21s
+  zh-CN: 这是一段较长的工具输出，用来验证折叠态只显示前 200 个字符。这是一段较长的工具输出，用来验证折叠态只显示前 200 个字符。这是一段较长的工具输出，用来验证折叠态只显示前 200 个字符。这是一段较长的工具输出，用来验证折叠态只显示前 200 个字符。这是一段较长的工具输出，用来验证折叠态只显示前 200 个字符。这是一段较长的工具输出，用来验证折叠态只显示前 200 个字符。
+mock.thinking:
+  en: |-
+    The user wants the smallest possible change. First confirm there are only two call sites, then decide whether the signature needs to change.
+
+    Conclusion: keep the signature, handle empty input inside the function.
+  zh-CN: |-
+    用户要的是最小改动。先确认调用方只有两处，再决定是否要改签名。
+
+    结论：不改签名，只在内部处理空输入。
+mock.keep_signature:
+  en: I'd rather not change the public signature. Handling empty input inside the function means no caller has to change.
+  zh-CN: 我倾向于不改公开签名，只在函数内部处理空输入，这样调用方不用动。
+mock.follow_up:
+  en: |-
+    Two more notes:
+
+    - This change doesn't affect the serialization format;
+    - existing data doesn't need a migration.
+  zh-CN: |-
+    补充两点：
+
+    - 这个改动不影响序列化格式；
+    - 旧数据无需迁移。
+mock.quota_5h:
+  en: 5 hours
+  zh-CN: 5 小时
+mock.quota_7d:
+  en: 7 days
+  zh-CN: 7 天
+mock.quota_weekly:
+  en: Weekly
+  zh-CN: 每周
+mock.session_not_found:
+  en: "Session not found: %{id}"
+  zh-CN: "会话不存在：%{id}"

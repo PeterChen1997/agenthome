@@ -21,6 +21,37 @@ sys-locale = "0.3"
 # 离屏截图（文档与端到端核对用，锁屏时也能出图）：`cargo build -p agenthome-app --features capture`
 # 打开 gpui 的 test-support，换来 `Window::render_to_image`；正式包不开。
 [target.'cfg(target_os = "macos")'.dependencies]
+# 菜单栏状态项（gpui 没有 NSStatusBar API）：版本与 gpui-pre-macos 用的保持一致，不重复编译。
+block2 = "0.6"
+futures = "0.3"
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "block2",
+    "objc2-core-foundation",
+    "NSButton",
+    "NSControl",
+    "NSEvent",
+    "NSGraphics",
+    "NSImage",
+    "NSResponder",
+    "NSScreen",
+    "NSStatusBar",
+    "NSStatusBarButton",
+    "NSStatusItem",
+    "NSView",
+    "NSWindow",
+] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "NSData",
+    "NSDictionary",
+    "NSGeometry",
+    "NSObject",
+    "NSString",
+    "NSValue",
+] }
+raw-window-handle = "0.6"
 gpui-pre-macos = { version = "=0.3.11", optional = true, features = ["test-support"] }
 image = { version = "0.25", optional = true, default-features = false, features = ["png"] }
 

@@ -53,11 +53,11 @@ enum Page {
 impl Page {
     const ALL: [Page; 3] = [Page::Dashboard, Page::Archive, Page::Settings];
 
-    fn label(self) -> &'static str {
+    fn label(self) -> String {
         match self {
-            Page::Dashboard => "仪表盘",
-            Page::Archive => "归档",
-            Page::Settings => "设置",
+            Page::Dashboard => t!("workspace.page_dashboard").into(),
+            Page::Archive => t!("workspace.page_archive").into(),
+            Page::Settings => t!("workspace.page_settings").into(),
         }
     }
 
@@ -115,35 +115,44 @@ impl ResidentPanel {
             cx.theme().success
         };
         let plan: SharedString = if away {
-            "未接入".into()
+            t!("workspace.plan_not_connected").to_string().into()
         } else {
             quota
                 .map(|q| match (&q.plan, q.windows.is_empty()) {
                     (Some(plan), _) => plan.clone(),
                     // 有额度窗口但不知道套餐名：不能再说「未接入」。
-                    (None, false) => "订阅".to_string(),
-                    (None, true) => "未接入额度".to_string(),
+                    (None, false) => t!("workspace.plan_subscription").to_string(),
+                    (None, true) => t!("workspace.plan_no_quota").to_string(),
                 })
                 .unwrap_or_else(|| match who {
-                    ResidentId::Gemini => "已接入".to_string(),
-                    _ => "未接入额度".to_string(),
+                    ResidentId::Gemini => t!("workspace.plan_connected").to_string(),
+                    _ => t!("workspace.plan_no_quota").to_string(),
                 })
                 .into()
         };
         let (sub_label, sub_value): (SharedString, SharedString) = match (away, window) {
-            (true, _) => ("在设置里接入".into(), "".into()),
+            (true, _) => (
+                t!("workspace.connect_in_settings").to_string().into(),
+                "".into(),
+            ),
             // 各来源的额度信号不同：Claude 靠后台 /usage，Codex 靠 rollout 快照，Gemini 没有本地额度信号。
             (false, None) => (
                 match who {
-                    ResidentId::Claude => "等待 /usage 读取额度",
-                    ResidentId::Codex => "等待 rollout 额度快照",
-                    ResidentId::Gemini => "只统计会话 · 无额度信号",
+                    ResidentId::Claude => t!("workspace.waiting_claude"),
+                    ResidentId::Codex => t!("workspace.waiting_codex"),
+                    ResidentId::Gemini => t!("workspace.gemini_no_quota"),
                 }
+                .to_string()
                 .into(),
                 "".into(),
             ),
             (false, Some(w)) => (
-                format!("{} 重置", w.label).into(),
+                t!(
+                    "workspace.window_resets",
+                    window = crate::format::quota_window_label(w)
+                )
+                .to_string()
+                .into(),
                 w.resets_at_ms
                     .map(|at| countdown(at - now))
                     .unwrap_or_else(|| "—".to_string())
@@ -232,7 +241,12 @@ impl Render for ResidentPanel {
             .iter()
             .filter(|r| r.state == ResidentState::Away)
             .count();
-        let caption = format!("{} 位在线 · {} 外出", residents.len() - away, away);
+        let caption = t!(
+            "workspace.residents_caption",
+            online = residents.len() - away,
+            away = away
+        )
+        .to_string();
         // 事件气泡和在线人数都在小屋顶部，气泡出现时先让出位置。
         let show_caption = !self.habitat.read(cx).showing_toast();
         v_flex()
@@ -430,38 +444,49 @@ impl Workspace {
         let (dot, text) = if let Some(scan) = &sync.scanning {
             (
                 cx.theme().warning,
-                format!(
-                    "正在入库 {} {}/{}",
-                    scan.provider.as_str(),
-                    scan.done,
-                    scan.total
-                ),
+                t!(
+                    "workspace.ingesting",
+                    provider = scan.provider.as_str(),
+                    done = scan.done,
+                    total = scan.total
+                )
+                .to_string(),
             )
         } else if let Some(error) = sync.error.as_ref().or(live.error.as_ref()) {
             (cx.theme().danger, error.clone())
         } else if self.sync_engine.is_some() {
             match sync.last_sync_ms {
-                Some(at) => (
-                    cx.theme().success,
-                    format!(
-                        "监听中 · {} 个来源 · {}同步",
-                        sync.watching_count(),
-                        relative_time(at, now)
-                    ),
+                Some(at) => (cx.theme().success, {
+                    let count = sync.watching_count();
+                    let time = relative_time(at, now);
+                    if count == 1 {
+                        t!("workspace.watching_one", count = count, time = time)
+                    } else {
+                        t!("workspace.watching_other", count = count, time = time)
+                    }
+                    .to_string()
+                }),
+                None => (
+                    cx.theme().muted_foreground,
+                    t!("workspace.sync_starting").to_string(),
                 ),
-                None => (cx.theme().muted_foreground, "正在启动同步…".to_string()),
             }
         } else {
             match live.refreshed_at_ms {
-                Some(at) => (
-                    cx.theme().success,
-                    format!(
-                        "演示数据 · {} 个来源 · {}",
-                        live.detected_count(),
-                        relative_time(at, now)
-                    ),
+                Some(at) => (cx.theme().success, {
+                    let count = live.detected_count();
+                    let time = relative_time(at, now);
+                    if count == 1 {
+                        t!("workspace.demo_one", count = count, time = time)
+                    } else {
+                        t!("workspace.demo_other", count = count, time = time)
+                    }
+                    .to_string()
+                }),
+                None => (
+                    cx.theme().muted_foreground,
+                    t!("workspace.connecting").to_string(),
                 ),
-                None => (cx.theme().muted_foreground, "正在接入信号…".to_string()),
             }
         };
         // 底部品牌行（同 Notion 左下角的工作区行）：图标 + 名字，名字下一行是同步状态。
@@ -544,9 +569,9 @@ impl Workspace {
                     .small()
                     .icon(IconName::RefreshCw)
                     .tooltip(if sync.is_some() {
-                        "立即同步全部来源"
+                        t!("workspace.sync_now").to_string()
                     } else {
-                        "演示数据没有同步"
+                        t!("workspace.sync_demo").to_string()
                     })
                     .loading(scanning)
                     .disabled(sync.is_none())
@@ -626,7 +651,14 @@ impl Workspace {
                             .flex_none()
                             .text_color(cx.theme().muted_foreground),
                     )
-                    .child(div().flex_1().min_w_0().truncate().text_sm().child("搜索"))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .text_sm()
+                            .child(t!("workspace.search").to_string()),
+                    )
                     .child(
                         div()
                             .flex_none()
@@ -723,5 +755,15 @@ impl Render for Workspace {
                     .h_full()
                     .child(self.render_page()),
             )
+    }
+}
+
+impl Workspace {
+    /// 菜单栏弹窗用：同步状态与「立即同步」句柄（mock 下没有同步引擎，句柄为 None）。
+    pub fn sync_link(&self) -> (Entity<SyncState>, Option<crate::sync::SyncHandle>) {
+        (
+            self.sync.clone(),
+            self.sync_engine.as_ref().map(SyncEngine::handle),
+        )
     }
 }

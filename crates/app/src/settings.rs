@@ -137,7 +137,12 @@ impl SettingsView {
             Ok(()) => None,
             Err(error) => Some(Notice {
                 ok: false,
-                text: format!("外观已切换，但保存偏好失败：{error:#}").into(),
+                text: t!(
+                    "settings.appearance_save_failed",
+                    error = format!("{error:#}")
+                )
+                .to_string()
+                .into(),
             }),
         };
         cx.notify();
@@ -192,7 +197,9 @@ impl SettingsView {
                     },
                     Err(error) => Notice {
                         ok: false,
-                        text: format!("卸载失败，未改动任何文件：{error:#}").into(),
+                        text: t!("settings.uninstall_failed", error = format!("{error:#}"))
+                            .to_string()
+                            .into(),
                     },
                 });
                 this.reload_disk(cx);
@@ -211,24 +218,25 @@ impl SettingsView {
             .map(|p| self.render_source_row(p, now, cx))
             .collect();
         let status: SharedString = match (&scanning, sync.last_full_scan_ms) {
-            (Some(scan), _) => format!(
-                "正在入库 {} {}/{}",
-                provider_name(&scan.provider),
-                scan.done,
-                scan.total
+            (Some(scan), _) => t!(
+                "settings.ingesting",
+                provider = provider_name(&scan.provider),
+                done = scan.done,
+                total = scan.total
             )
+            .to_string()
             .into(),
-            (None, Some(at)) => format!(
-                "文件监听实时入库；最近一次全量扫描 {}，之后每小时兜底一次",
-                relative_time(at, now)
-            )
-            .into(),
-            (None, None) if self.sync_handle.is_none() => "演示数据，不扫描本机目录".into(),
-            (None, None) => "启动扫描进行中…".into(),
+            (None, Some(at)) => t!("settings.sync_live", time = relative_time(at, now))
+                .to_string()
+                .into(),
+            (None, None) if self.sync_handle.is_none() => {
+                t!("settings.sync_demo").to_string().into()
+            }
+            (None, None) => t!("settings.sync_starting").to_string().into(),
         };
         section(
-            "数据来源",
-            "只读各 agent 的本机会话文件，从不修改原目录",
+            t!("settings.sources_title").to_string(),
+            t!("settings.sources_hint").to_string(),
             cx,
         )
         .child(v_flex().gap(px(8.)).children(rows))
@@ -240,7 +248,7 @@ impl SettingsView {
                     Button::new("scan-now")
                         .outline()
                         .small()
-                        .label("立即扫描")
+                        .label(t!("settings.scan_now").to_string())
                         .disabled(self.sync_handle.is_none() || scanning.is_some())
                         .on_click(cx.listener(|this, _, _, cx| {
                             if let Some(handle) = &this.sync_handle {
@@ -257,38 +265,47 @@ impl SettingsView {
     fn render_source_row(&self, p: &ProviderSync, now: i64, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme();
         let state = if !p.detected {
-            chip("未检测到", theme.muted_foreground, cx)
+            chip(t!("settings.source_not_found"), theme.muted_foreground, cx)
         } else if p.watching {
-            chip("监听中", theme.success, cx)
+            chip(t!("settings.source_watching"), theme.success, cx)
         } else {
-            chip("仅定时扫描", theme.warning, cx)
+            chip(t!("settings.source_scheduled"), theme.warning, cx)
         };
         let mut detail = match p.last_scan_ms {
-            Some(at) => format!(
-                "{} 个会话文件 · 最近扫描 {} · 本次入库 {} · 失败 {} · 警告 {}",
-                p.files,
-                relative_time(at, now),
-                p.parsed,
-                p.failed,
-                p.warnings
-            ),
-            None if p.detected => "等待首次扫描".to_string(),
-            None => "目录不存在：该 agent 未安装或从未运行".to_string(),
+            Some(at) => {
+                let files = if p.files == 1 {
+                    t!("settings.source_files_one", count = p.files)
+                } else {
+                    t!("settings.source_files_other", count = p.files)
+                };
+                t!(
+                    "settings.source_detail",
+                    files = files,
+                    time = relative_time(at, now),
+                    parsed = p.parsed,
+                    failed = p.failed,
+                    warnings = p.warnings
+                )
+                .to_string()
+            }
+            None if p.detected => t!("settings.source_waiting").to_string(),
+            None => t!("settings.source_missing").to_string(),
         };
         if let Some(note) = p.watch_note.as_ref().filter(|_| p.detected) {
-            detail.push_str(&format!(" · 监听未启用：{note}"));
+            detail.push_str(" · ");
+            detail.push_str(&t!("settings.watch_off", note = note));
         }
         let name = provider_name(&p.provider);
         let root = crate::format::tilde(&p.root);
         let failure = p.last_failure.clone();
-        source_row(&p.provider, name, state, root.into(), detail.into(), cx)
+        source_row(&p.provider, &name, state, root.into(), detail.into(), cx)
             .when_some(failure, |row, failure| {
                 row.child(
                     div()
                         .pl(px(34.))
                         .text_size(px(12.))
                         .text_color(cx.theme().danger)
-                        .child(format!("最近失败：{failure}")),
+                        .child(t!("settings.last_failure", failure = failure).to_string()),
                 )
             })
             .into_any_element()
@@ -299,12 +316,13 @@ impl SettingsView {
         let now = now_ms();
         let snapshot_text = |provider: ProviderId| -> String {
             match live.quota.iter().find(|q| q.provider == provider) {
-                Some(q) => format!(
-                    "最近快照 {}（{}）",
-                    relative_time(q.fetched_at_ms, now),
-                    freshness_label(q.freshness)
-                ),
-                None => "暂无快照".to_string(),
+                Some(q) => t!(
+                    "settings.snapshot",
+                    time = relative_time(q.fetched_at_ms, now),
+                    freshness = freshness_label(q.freshness)
+                )
+                .to_string(),
+                None => t!("settings.no_snapshot").to_string(),
             }
         };
         let claude_snapshot = snapshot_text(ProviderId::ClaudeCode);
@@ -322,94 +340,97 @@ impl SettingsView {
         let probe_chip = chip(probe_view.chip, probe_color, cx);
         let can_probe = self.sync_handle.is_some() && probe.binary.is_some() && !probe.running;
 
-        section("额度来源", "只用官方程序与本机文件，不读取任何账号凭据", cx)
-            .child(
-                v_flex()
-                    .gap(px(6.))
-                    .child(
+        section(
+            t!("settings.quota_title").to_string(),
+            t!("settings.quota_hint").to_string(),
+            cx,
+        )
+        .child(
+            v_flex()
+                .gap(px(6.))
+                .child(
+                    h_flex()
+                        .gap(px(10.))
+                        .items_center()
+                        .child(provider_avatar(&ProviderId::ClaudeCode, 24.))
+                        .child(strong(t!("settings.claude_usage_title").to_string()))
+                        .child(probe_chip)
+                        .child(div().flex_1())
+                        .child(muted(claude_snapshot.clone(), cx)),
+                )
+                .child(div().pl(px(34.)).child(muted(probe_view.text, cx)))
+                .child(
+                    div()
+                        .pl(px(34.))
+                        .child(muted(t!("settings.claude_usage_desc").to_string(), cx)),
+                )
+                .child(
+                    h_flex().pl(px(34.)).child(
+                        Button::new("claude-usage-refresh")
+                            .outline()
+                            .small()
+                            .label(t!("settings.refresh_now").to_string())
+                            .loading(probe.running)
+                            .disabled(!can_probe)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                if let Some(handle) = &this.sync_handle {
+                                    handle.refresh_claude_quota();
+                                }
+                                cx.notify();
+                            })),
+                    ),
+                )
+                .when_some(legacy, |col, detail| {
+                    col.child(
                         h_flex()
-                            .gap(px(10.))
+                            .pl(px(34.))
+                            .gap(px(8.))
                             .items_center()
-                            .child(provider_avatar(&ProviderId::ClaudeCode, 24.))
-                            .child(strong("Claude Code · 官方 /usage（后台）"))
-                            .child(probe_chip)
-                            .child(div().flex_1())
-                            .child(muted(claude_snapshot.clone(), cx)),
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .text_size(px(12.))
+                                    .text_color(cx.theme().warning)
+                                    .child(
+                                        t!("settings.legacy_statusline", detail = detail)
+                                            .to_string(),
+                                    ),
+                            )
+                            .child(
+                                Button::new("statusline-uninstall")
+                                    .outline()
+                                    .small()
+                                    .label(t!("settings.uninstall").to_string())
+                                    .loading(self.busy)
+                                    .disabled(self.busy)
+                                    .on_click(
+                                        cx.listener(|this, _, _, cx| this.uninstall_statusline(cx)),
+                                    ),
+                            ),
                     )
-                    .child(div().pl(px(34.)).child(muted(probe_view.text, cx)))
-                    .child(div().pl(px(34.)).child(muted(
-                        "Claude 额度来自官方 /usage，每 15 分钟后台读取：启动一次官方 claude 命令\
-                         （约 10 秒），不发对话、不耗 token、不读凭据，桌面版用户也能看到订阅额度。\
-                         不需要再装 statusline。",
-                        cx,
-                    )))
-                    .child(
-                        h_flex().pl(px(34.)).child(
-                            Button::new("claude-usage-refresh")
-                                .outline()
-                                .small()
-                                .label("立即刷新")
-                                .loading(probe.running)
-                                .disabled(!can_probe)
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    if let Some(handle) = &this.sync_handle {
-                                        handle.refresh_claude_quota();
-                                    }
-                                    cx.notify();
-                                })),
-                        ),
-                    )
-                    .when_some(legacy, |col, detail| {
-                        col.child(
-                            h_flex()
-                                .pl(px(34.))
-                                .gap(px(8.))
-                                .items_center()
-                                .child(
-                                    div()
-                                        .flex_1()
-                                        .min_w_0()
-                                        .text_size(px(12.))
-                                        .text_color(cx.theme().warning)
-                                        .child(format!(
-                                            "检测到旧的 statusline 包装脚本，可卸载（{detail}）。\
-                                             卸载会把 ~/.claude/settings.json 的 statusLine 还原，改前先备份。"
-                                        )),
-                                )
-                                .child(
-                                    Button::new("statusline-uninstall")
-                                        .outline()
-                                        .small()
-                                        .label("卸载")
-                                        .loading(self.busy)
-                                        .disabled(self.busy)
-                                        .on_click(cx.listener(|this, _, _, cx| {
-                                            this.uninstall_statusline(cx)
-                                        })),
-                                ),
-                        )
-                    }),
-            )
-            .child(
-                v_flex()
-                    .gap(px(6.))
-                    .child(
-                        h_flex()
-                            .gap(px(10.))
-                            .items_center()
-                            .child(provider_avatar(&ProviderId::Codex, 24.))
-                            .child(strong("Codex · rollout 快照"))
-                            .child(chip("无需安装", cx.theme().success, cx))
-                            .child(div().flex_1())
-                            .child(muted(codex_snapshot, cx)),
-                    )
-                    .child(div().pl(px(34.)).child(muted(
-                        "读取 ~/.codex/sessions 最新会话文件里的 rate_limits；\
-                     ChatGPT 桌面版里的 Codex 也写在这里。",
-                        cx,
-                    ))),
-            )
-            .into_any_element()
+                }),
+        )
+        .child(
+            v_flex()
+                .gap(px(6.))
+                .child(
+                    h_flex()
+                        .gap(px(10.))
+                        .items_center()
+                        .child(provider_avatar(&ProviderId::Codex, 24.))
+                        .child(strong(t!("settings.codex_rollout_title").to_string()))
+                        .child(chip(t!("settings.no_setup_needed"), cx.theme().success, cx))
+                        .child(div().flex_1())
+                        .child(muted(codex_snapshot, cx)),
+                )
+                .child(
+                    div()
+                        .pl(px(34.))
+                        .child(muted(t!("settings.codex_rollout_desc").to_string(), cx)),
+                ),
+        )
+        .into_any_element()
     }
 
     fn render_storage(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -418,25 +439,28 @@ impl SettingsView {
             (Some(db), Some(bytes)) => {
                 format!("{} · {}", crate::format::tilde(db), human_bytes(bytes))
             }
-            (Some(db), None) => format!("{} · 计算中", crate::format::tilde(db)),
-            (None, _) => "演示数据，无索引库".to_string(),
+            (Some(db), None) => format!(
+                "{} · {}",
+                crate::format::tilde(db),
+                t!("settings.calculating")
+            ),
+            (None, _) => t!("settings.demo_no_index").to_string(),
         };
         let raw = self.sync.read(cx).raw.clone();
         let raw_line = raw_summary(&raw, self.sync_handle.is_some());
         let mut section = section(
-            "归档位置",
-            "raw 层逐字节保存原件，agent 自己清理了也还在；index 层可随时从头重建",
+            t!("settings.storage_title").to_string(),
+            t!("settings.storage_hint").to_string(),
             cx,
         )
-        .child(kv("归档目录", data_dir, cx))
-        .child(kv("索引库", index, cx))
-        .child(kv("原件（raw 层）", raw_line, cx));
+        .child(kv(t!("settings.archive_dir"), data_dir, cx))
+        .child(kv(t!("settings.index_db"), index, cx))
+        .child(kv(t!("settings.raw_layer"), raw_line, cx));
         if let Some(failure) = raw.last_failure.or(raw.open_error) {
-            section = section.child(
-                div()
-                    .pl(px(4.))
-                    .child(muted(format!("最近的归档错误：{failure}"), cx)),
-            );
+            section = section.child(div().pl(px(4.)).child(muted(
+                t!("settings.raw_last_error", failure = failure).to_string(),
+                cx,
+            )));
         }
         section.into_any_element()
     }
@@ -446,22 +470,26 @@ impl SettingsView {
             .iter()
             .position(|a| *a == self.appearance)
             .unwrap_or(0);
-        section("外观", "保存在 ~/AgentHome/config/app.json", cx)
-            .child(
-                h_flex().child(
-                    TabBar::new("appearance")
-                        .segmented()
-                        .xsmall()
-                        .selected_index(selected)
-                        .on_click(cx.listener(|this, ix: &usize, window, cx| {
-                            if let Some(appearance) = Appearance::ALL.get(*ix) {
-                                this.set_appearance(*appearance, window, cx);
-                            }
-                        }))
-                        .children(Appearance::ALL.iter().map(|a| Tab::new().label(a.label()))),
-                ),
-            )
-            .into_any_element()
+        section(
+            t!("settings.appearance").to_string(),
+            t!("settings.appearance_hint").to_string(),
+            cx,
+        )
+        .child(
+            h_flex().child(
+                TabBar::new("appearance")
+                    .segmented()
+                    .xsmall()
+                    .selected_index(selected)
+                    .on_click(cx.listener(|this, ix: &usize, window, cx| {
+                        if let Some(appearance) = Appearance::ALL.get(*ix) {
+                            this.set_appearance(*appearance, window, cx);
+                        }
+                    }))
+                    .children(Appearance::ALL.iter().map(|a| Tab::new().label(a.label()))),
+            ),
+        )
+        .into_any_element()
     }
 
     fn render_language(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -492,22 +520,16 @@ impl SettingsView {
     }
 
     fn render_about(&self, cx: &mut Context<Self>) -> AnyElement {
-        section("合规与定价", "", cx)
-            .child(muted(
-                "· 额度只走官方程序与本机文件：Claude 由官方 claude 命令的 /usage 提供，\
-                 Codex 走会话 rollout。AgentHome 不读取凭据，不提供 Claude OAuth usage 端点、Codex wham 端点等需要账号凭据的高风险来源。",
-                cx,
-            ))
-            .child(muted(
-                "· 不读取、不保存任何登录凭据；只读取会话文件：原件拷贝进 ~/AgentHome/raw、解析进索引，不改动 agent 原目录。",
-                cx,
-            ))
+        section(t!("settings.about_title").to_string(), "", cx)
+            .child(muted(t!("settings.about_quota").to_string(), cx))
+            .child(muted(t!("settings.about_credentials").to_string(), cx))
             .child(kv(
-                "定价表",
-                format!(
-                    "{}（内嵌快照，成本为估算；Claude 有官方成本时以官方为准）",
-                    pricing::pricing_version()
-                ),
+                t!("settings.pricing_table"),
+                t!(
+                    "settings.pricing_value",
+                    version = pricing::pricing_version()
+                )
+                .to_string(),
                 cx,
             ))
             .into_any_element()
@@ -597,8 +619,8 @@ enum Tone {
 /// 其他状态（没装、别人的命令、配置读不懂）都不出现卸载入口。
 fn legacy_statusline(status: Option<&StatuslineStatus>) -> Option<String> {
     let wrapped = |command: &Option<String>| match command {
-        Some(command) => format!("它包装着原命令 {command}"),
-        None => "安装前没有 statusline".to_string(),
+        Some(command) => t!("settings.legacy_wraps", command = command).to_string(),
+        None => t!("settings.legacy_no_previous").to_string(),
     };
     match status? {
         StatuslineStatus::Installed {
@@ -607,103 +629,147 @@ fn legacy_statusline(status: Option<&StatuslineStatus>) -> Option<String> {
         StatuslineStatus::InstalledElsewhere {
             script_path,
             wrapped_command,
-        } => Some(format!("{script_path}，{}", wrapped(wrapped_command))),
+        } => Some(
+            t!(
+                "settings.legacy_elsewhere",
+                path = script_path,
+                detail = wrapped(wrapped_command)
+            )
+            .to_string(),
+        ),
         _ => None,
     }
 }
 
 /// 后台 /usage 状态 → 标签与说明。
 struct ProbeView {
-    chip: &'static str,
+    chip: SharedString,
     tone: Tone,
     text: String,
 }
 
 fn probe_view(probe: &crate::sync::ClaudeProbe, syncing: bool, now: i64) -> ProbeView {
-    let view = |chip, tone, text: String| ProbeView { chip, tone, text };
+    let view =
+        |chip: std::borrow::Cow<'static, str>, tone, text: std::borrow::Cow<str>| ProbeView {
+            chip: chip.to_string().into(),
+            tone,
+            text: text.into_owned(),
+        };
     if !syncing {
-        return view("演示数据", Tone::Muted, "mock 模式不运行后台刷新".into());
+        return view(
+            t!("settings.probe_demo"),
+            Tone::Muted,
+            t!("settings.probe_demo_text"),
+        );
     }
     if probe.running {
         return view(
-            "刷新中",
+            t!("settings.probe_running"),
             Tone::Muted,
-            "正在后台运行官方 claude /usage…".into(),
+            t!("settings.probe_running_text"),
         );
     }
     match (&probe.last_error, probe.last_ok_ms, &probe.binary) {
-        (Some(error), _, _) => view("失败", Tone::Bad, format!("上次刷新失败：{error}")),
+        (Some(error), _, _) => view(
+            t!("settings.probe_failed"),
+            Tone::Bad,
+            t!("settings.probe_failed_text", error = error),
+        ),
         (None, Some(at), Some(bin)) => view(
-            "正常",
+            t!("settings.probe_ok"),
             Tone::Ok,
-            format!(
-                "{} 成功读取（{}）",
-                relative_time(at, now),
-                crate::format::tilde(bin)
+            t!(
+                "settings.probe_ok_text",
+                time = relative_time(at, now),
+                path = crate::format::tilde(bin)
             ),
         ),
-        _ => view("等待中", Tone::Muted, "启动后马上运行第一次".into()),
+        _ => view(
+            t!("settings.probe_waiting"),
+            Tone::Muted,
+            t!("settings.probe_waiting_text"),
+        ),
     }
 }
 
 fn uninstall_summary(report: &statusline_setup::UninstallReport) -> String {
     if !report.settings_changed {
-        return "本来就没有安装，未改动任何文件。".to_string();
+        return t!("settings.uninstall_noop").to_string();
     }
     let restored = match &report.restored_command {
-        Some(command) => format!("statusLine 已还原为 {command}。"),
-        None => "已删除 statusLine 一项（安装前没有）。".to_string(),
+        Some(command) => t!("settings.uninstall_restored", command = command).to_string(),
+        None => t!("settings.uninstall_removed").to_string(),
     };
     let backup = report
         .backup_path
         .as_ref()
-        .map(|p| format!("改动前的文件备份在 {}。", crate::format::tilde(p)))
+        .map(|p| t!("settings.uninstall_backup", path = crate::format::tilde(p)).to_string())
         .unwrap_or_default();
-    format!("已卸载：{restored}{backup}已收集的额度数据保留在 ~/AgentHome/signals。")
+    t!(
+        "settings.uninstall_done",
+        restored = restored,
+        backup = backup
+    )
+    .to_string()
 }
 
-fn provider_name(provider: &ProviderId) -> &'static str {
+fn provider_name(provider: &ProviderId) -> String {
     match provider {
-        ProviderId::ClaudeCode => "Claude Code",
-        ProviderId::Codex => "Codex",
-        ProviderId::GeminiCli => "Gemini CLI",
-        ProviderId::OpenCode => "OpenCode",
-        ProviderId::Cursor => "Cursor",
-        ProviderId::Other(_) => "其他",
+        ProviderId::ClaudeCode => "Claude Code".into(),
+        ProviderId::Codex => "Codex".into(),
+        ProviderId::GeminiCli => "Gemini CLI".into(),
+        ProviderId::OpenCode => "OpenCode".into(),
+        ProviderId::Cursor => "Cursor".into(),
+        ProviderId::Other(_) => t!("settings.provider_other").into(),
     }
 }
 
-fn freshness_label(freshness: Freshness) -> &'static str {
+fn freshness_label(freshness: Freshness) -> String {
     match freshness {
-        Freshness::Live => "实时",
-        Freshness::Cached => "缓存",
-        Freshness::Stale => "已过期",
+        Freshness::Live => t!("settings.freshness_live").into(),
+        Freshness::Cached => t!("settings.freshness_cached").into(),
+        Freshness::Stale => t!("settings.freshness_stale").into(),
     }
 }
 
 /// 设置页「原件（raw 层）」一行。
 fn raw_summary(raw: &RawSync, live: bool) -> String {
     if !live {
-        return "演示数据，不归档".to_string();
+        return t!("settings.raw_demo").to_string();
     }
     if let Some(error) = &raw.open_error {
-        return format!("打不开，只入索引、不归档：{error}");
+        return t!("settings.raw_open_failed", error = error).to_string();
     }
     let Some(stats) = &raw.stats else {
-        return "正在首次归档原件…".to_string();
+        return t!("settings.raw_first_run").to_string();
     };
-    let mut line = format!(
-        "{} 个原件 · {} 个版本 · 内容 {} · 占用 {}",
-        stats.sessions,
-        stats.versions,
-        human_bytes(stats.content_bytes),
-        human_bytes(stats.stored_bytes)
+    let originals = if stats.sessions == 1 {
+        t!("settings.raw_originals_one", count = stats.sessions)
+    } else {
+        t!("settings.raw_originals_other", count = stats.sessions)
+    };
+    let versions = if stats.versions == 1 {
+        t!("settings.raw_versions_one", count = stats.versions)
+    } else {
+        t!("settings.raw_versions_other", count = stats.versions)
+    };
+    let sizes = t!(
+        "settings.raw_sizes",
+        content = human_bytes(stats.content_bytes),
+        stored = human_bytes(stats.stored_bytes)
     );
+    let mut line = format!("{originals} · {versions} · {sizes}");
     if raw.failed > 0 {
-        line.push_str(&format!(" · 最近一次扫描 {} 个归档失败", raw.failed));
+        line.push_str(" · ");
+        line.push_str(&t!("settings.raw_failed", count = raw.failed));
     }
     if stats.unreadable > 0 {
-        line.push_str(&format!(" · {} 个清单读不懂", stats.unreadable));
+        line.push_str(" · ");
+        line.push_str(&if stats.unreadable == 1 {
+            t!("settings.raw_unreadable_one", count = stats.unreadable)
+        } else {
+            t!("settings.raw_unreadable_other", count = stats.unreadable)
+        });
     }
     line
 }
@@ -788,7 +854,11 @@ fn source_row(
         .child(div().pl(px(34.)).child(muted(detail, cx)))
 }
 
-fn chip(text: &'static str, color: gpui_kit::Hsla, _cx: &Context<SettingsView>) -> AnyElement {
+fn chip(
+    text: impl Into<SharedString>,
+    color: gpui_kit::Hsla,
+    _cx: &Context<SettingsView>,
+) -> AnyElement {
     div()
         .px(px(6.))
         .py(px(1.))
@@ -797,7 +867,7 @@ fn chip(text: &'static str, color: gpui_kit::Hsla, _cx: &Context<SettingsView>) 
         .border_color(color)
         .text_size(px(11.))
         .text_color(color)
-        .child(text)
+        .child(text.into())
         .into_any_element()
 }
 
@@ -812,7 +882,7 @@ fn muted(text: impl Into<SharedString>, cx: &Context<SettingsView>) -> gpui_kit:
         .child(text.into())
 }
 
-fn kv(key: &'static str, value: String, cx: &Context<SettingsView>) -> gpui_kit::Div {
+fn kv(key: impl Into<SharedString>, value: String, cx: &Context<SettingsView>) -> gpui_kit::Div {
     h_flex()
         .gap(px(12.))
         .items_start()
@@ -822,7 +892,7 @@ fn kv(key: &'static str, value: String, cx: &Context<SettingsView>) -> gpui_kit:
                 .flex_none()
                 .text_size(px(12.))
                 .text_color(cx.theme().muted_foreground)
-                .child(key),
+                .child(key.into()),
         )
         .child(div().flex_1().min_w_0().text_size(px(12.)).child(value))
 }
@@ -834,8 +904,11 @@ mod tests {
     #[test]
     fn raw_summary_reports_failures_instead_of_hiding_them() {
         let mut raw = RawSync::default();
-        assert_eq!(raw_summary(&raw, false), "演示数据，不归档");
-        assert_eq!(raw_summary(&raw, true), "正在首次归档原件…");
+        assert_eq!(raw_summary(&raw, false), "Demo data; not archived");
+        assert_eq!(
+            raw_summary(&raw, true),
+            "Archiving originals for the first time…"
+        );
         raw.stats = Some(agenthome_core::RawStats {
             sessions: 2,
             versions: 3,
@@ -846,12 +919,12 @@ mod tests {
         raw.failed = 4;
         assert_eq!(
             raw_summary(&raw, true),
-            "2 个原件 · 3 个版本 · 内容 2.0 KB · 占用 512 B · 最近一次扫描 4 个归档失败 · 1 个清单读不懂"
+            "2 originals · 3 versions · content 2.0 KB · on disk 512 B · 4 failed to archive in the last scan · 1 unreadable manifest"
         );
         raw.open_error = Some("权限不足".into());
         assert_eq!(
             raw_summary(&raw, true),
-            "打不开，只入索引、不归档：权限不足"
+            "Can't open; indexing only, not archiving: 权限不足"
         );
     }
 
