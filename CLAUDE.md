@@ -1,6 +1,6 @@
 # AgentHome · 给接手 agent 的总索引
 
-> 最后更新 2026-11-10（v0.1.6 开源准备）。新会话先读本文件，再按「从哪里开始」挑文档，不必通读全部。
+> 最后更新 2026-11-10（v0.2.0：菜单栏、中英双语，仓库公开）。新会话先读本文件，再按「从哪里开始」挑文档，不必通读全部。
 
 ## 一句话
 
@@ -8,15 +8,15 @@
 
 ## 现状
 
-- **v0.1.6 已发布并公证**（2026-11-10；v0.1.5 同日发布，0.1.6 只多了 worktree 会话归属修正）：https://github.com/PeterChen1997/agenthome/releases （私有仓库 `PeterChen1997/agenthome`，分支 `main`）。`/Applications` 里装的仍是 v0.1.4（用户未要求升级）。落地页源码 `site/`，私有预览 https://claude.ai/artifact/N54TGv6kPy71Kkdo4LjhgG ；GitHub Pages 工作流 `.github/workflows/pages.yml` 只手动触发，未启用。本轮：按字节偏移增量入库（大会话追加一行 0.5 ms、改 11 行）、⌘K 全局搜索（高亮 + 跳到消息）、Gemini 接入（Gemini CLI 全量、Antigravity 只取摘要）、成本口径修正（LiteLLM 2026-11-09 价表 + 长上下文分档 + Claude 跨会话按消息 id 去重 + Codex 归档目录，与 ccusage 偏差约 1%，见 `docs/12-成本口径核对.md`）、Claude 额度只走官方 /usage、浅色主题可读性、开源基础文件（LICENSE、贡献指南、CI、中英 README、`site/` 落地页）。
-- **开源前待用户拍板**：git 历史 18 个提交的作者邮箱是私人邮箱（改写历史或用孤立根提交另开公开仓库）；仓库可见性；是否启用 GitHub Pages；设计稿 `docs/design/` 里有真实项目名需替换。其余审计项（发版脚本里的签名身份、许可文件随包、内部文档）已处理。
+- **v0.2.0 已发布并公证**（2026-11-10）：https://github.com/PeterChen1997/agenthome/releases （公开仓库 `PeterChen1997/agenthome`，分支 `main`），`/Applications` 已装 0.2.0。本版新增：**macOS 菜单栏图标 + 像素风使用概要面板**（`crates/app/src/menubar.rs`；用户试过原生 NSMenu 方案后决定保留自绘面板，不要再改成原生菜单）；**界面中英双语**（rust-i18n，`crates/app/locales/*.yml` 按模块拆，设置页可切换，`--lang`）；关主窗口只隐藏、⌘Q 退出。升级前真实索引库备份在 `~/AgentHome/backup/agenthome-before-0.2.0.db`。落地页源码 `site/`，私有预览 https://claude.ai/artifact/N54TGv6kPy71Kkdo4LjhgG ；GitHub Pages 工作流只手动触发，未启用。v0.1.5 / 0.1.6 的内容：按字节偏移增量入库、⌘K 全局搜索、Gemini 接入、成本口径修正（见 `docs/12-成本口径核对.md`）、Claude 额度只走官方 /usage、开源基础文件。
+- **开源**：2026-11-10 用户决定直接公开现有仓库（不改写历史；git 历史里仍有私人邮箱与设计稿旧版本里的真实项目名，用户知情）。当前文件里的真实项目名与会话标题已换成虚构名。
 - 已实现：Claude Code 与 Codex 会话全量入库（本机约 2,800 会话 / 35 万条消息）；**实时同步**（app 启动即扫描、库不存在自动建库，notify / FSEvents 监听来源目录、防抖 2 秒只扫变化的来源，每小时兜底全量，标题栏显示「正在入库 x/y」/「监听中 · N 个来源 · X 同步」；新数据入库后仪表盘与归档静默刷新，打开的会话追加新消息）；仪表盘（住户额度、累计 token、到期与重置、30/90 天趋势、今天、按模型 / 项目、归档健康）；归档（按日分组列表、按父会话 id 折叠子代理、会话级成本、轮次 + Trace 折叠行的会话详情、打开即停在最新一条、中文全文搜索）；**设置页基础版**（来源与同步状态 + 立即扫描、Claude statusline 一键安装 / 卸载、归档位置与索引体积、外观跟随系统 / 浅色 / 深色并持久化、合规说明、定价表版本）；**Claude 订阅额度**（后台每 15 分钟在伪终端跑官方 `claude` 的 `/usage` 读屏，桌面版用户也有数据；套餐名读自 `~/.claude.json` 的 organizationType；与终端 statusline 两路合并）；**raw 层原件归档**（每个会话 jsonl 入库前先逐字节归档到 `~/AgentHome/raw/<provider>/<machineId>/<相对路径>/`，zstd 压缩、变长按字节段追加、被改写另存新版本、`manifest.json` 记 sha256 与来源；本机 2,603 个原件 9.8 GB → 占用 3.6 GB，首次 55 秒，之后每次扫描 0.5 秒）；会动的像素栖息地；左侧固定导航；CLI（含 `agenthome statusline status|install|uninstall`）。
 - 质量基线：`cargo fmt --check` 干净、`cargo clippy --workspace --all-targets -- -D warnings` 零警告、`cargo test --workspace` 约 130 个全绿（另 3 个 `#[ignore]` 真实数据基准）。索引库 `SCHEMA_VERSION` = 4，**不要升**；老数据修正用 `store.rs` 里带 `meta` 标记的一次性迁移。离屏截图：`--features capture`（锁屏可用，见 `docs/09` §5）。
 - **设计稿落地约 55%**：`docs/10-设计落地清单.md` 第二轮（2026-11-08）共 273 项，完成 156、部分 43、未开始 72、有意偏离 6。
 - 第一轮审计发现的两个口径缺陷（Codex 会话级 `input_includes_cache`、孤儿子代理被静默丢弃）**已于 2026-11-08 修复**。
 - **Claude 额度只走官方 `/usage`**（2026-11-09 用户决定，每 15 分钟必跑）。设置页不再提供 statusline 安装，检测到旧包装脚本时给卸载按钮；用户机器上仍装着，旧快照只在 /usage 无数据时兜底。
 - **⚠️ 284 个 Claude 会话的原件已被 Claude Code 的 30 天自动清理删掉（2026-11-08，会话日期 08-19 ~ 09-14），完整内容现在只存在于索引库里。raw 层是在它们被删之后才做好的，**救不回这 284 个原件**：用户已决定不做重建副本，所以升 `SCHEMA_VERSION` 或删库重建会让它们从 app 里永久消失——动之前先跟用户说。** 其余会话的原件自 2026-11-08 起都在 raw 层里。 后台 `/usage` 启动 CLI 时已用 `--settings {"cleanupPeriodDays":36500}` 避免触发清理，但用户自己在终端开 `claude` 仍会清理。
-- **还没做的核心能力**：raw 附属文件（tool-results 等，10.47）、user 层持久化（星标重启即丢）、菜单栏弹窗。
+- **还没做的核心能力**：raw 附属文件（tool-results 等，10.47）、user 层持久化（星标重启即丢）；CLI 与 core 的报错仍只有中文。
 
 ## 从哪里开始
 
@@ -136,7 +136,7 @@ cargo fmt --all --check && cargo clippy --workspace --all-targets && cargo test 
 5. 持久化：raw 层 10.1–10.4 已完成；剩 user 层（星标、笔记）、10.5 预览模式、10.47 附属文件。
 7. 额度与仪表盘补齐：先用真实 rollout 核对 Codex credits 字段。
 8. 归档列表与搜索增强（依赖 2）。
-9. 菜单栏弹窗（依赖 3、7；先查 gpui 是否支持 status item）。
+9. 菜单栏：图标与面板已做（0.2.0）；剩全局快捷键、图标随额度变色、到期提醒（`docs/10-设计落地清单.md` §8）。
 10. P2 / P3 远期：更多来源（Gemini CLI、OpenCode、Pi）、语义搜索、外部 Provider 协议等。
 
 另有两个待查的边角问题：脚本 nohup 拉起时窗口不重绘；`Workspace` 观察整个 `ArchiveView` 导致的多余重绘。

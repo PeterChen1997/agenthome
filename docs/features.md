@@ -2,10 +2,11 @@
 
 English | [简体中文](features.zh-CN.md)
 
-A page-by-page tour of AgentHome 0.1.6. The app has one window with a fixed left sidebar and three pages: **Dashboard**, **Archive** and **Settings**. ⌘K search is available everywhere.
+A page-by-page tour of AgentHome 0.2.0. The app has a **menu bar popup** for a quick look and a main window with a fixed left sidebar and three pages: **Dashboard**, **Archive** and **Settings**. ⌘K search is available everywhere in the main window.
 
-The interface is currently Simplified Chinese only; this document gives the English meaning of each label. All screenshots use built-in demo data (`--mock`).
+The interface is available in English and Simplified Chinese (see [Language](#language)). All screenshots use built-in demo data (`--mock`).
 
+- [Menu bar](#menu-bar)
 - [Sidebar](#sidebar)
 - [Pixel habitat](#pixel-habitat)
 - [Dashboard](#dashboard)
@@ -13,20 +14,44 @@ The interface is currently Simplified Chinese only; this document gives the Engl
 - [Session detail](#session-detail)
 - [⌘K global search](#k-global-search)
 - [Settings](#settings)
+- [Language](#language)
 - [Sync and storage](#sync-and-storage)
 - [CLI](#cli)
+
+## Menu bar
+
+AgentHome puts a small pixel-house icon in the macOS menu bar. Clicking it opens a usage summary under the icon; clicking anywhere else closes it.
+
+<p>
+  <img src="screenshots/menubar-dark.en.png" alt="Menu bar popup, dark" width="360">
+  <img src="screenshots/menubar-light.en.png" alt="Menu bar popup, light" width="360">
+</p>
+
+From top to bottom:
+
+- **Habitat**: the same pixel house as in the sidebar, with its event bubbles.
+- **Today**: three tiles, **Cost today**, **Output today** and **Sessions today**.
+- **One row per agent** (Claude, Codex, Gemini): status (Working, Thinking, Just finished, Low quota, Idle, Not connected), the percentage left in the 5-hour window with a 10-cell stamina bar, the countdown to its reset, the tightest other window (for example "7d 22% left · 2d 16h"), and today's output tokens and cost. Gemini has no quota signal, so its row shows sessions and today's usage only.
+- **Recent**: the three most recently updated sessions (sub-agents excluded). Clicking one opens the main window on that session.
+- **Buttons**: **Open AgentHome**, **Sync now** (scans all sources immediately), **Settings…** and **Quit**.
+
+The popup keeps updating while the main window is hidden.
+
+**Closing and quitting.** Closing the main window only hides it; AgentHome keeps running in the menu bar, syncing and reading quota. Bring the window back with **Open AgentHome** in the popup or by clicking the Dock icon. To quit, use ⌘Q, **Quit** in the popup, or the Dock menu.
+
+Not implemented yet: a global shortcut to open the popup, an icon that changes color when quota runs low, and reminders before quota resets or credits expire.
 
 ## Sidebar
 
 From top to bottom:
 
 - **Sync button** (top right of the sidebar): triggers an immediate scan. The empty area at the top can be dragged to move the window.
-- **Search box** (搜索, ⌘K): opens the global search palette.
+- **Search box** (⌘K): opens the global search palette.
 - **Habitat**: the pixel house, see below.
-- **Resident rows**: one row per agent with its plan name, a ten-segment "stamina" bar showing how much of the current quota window remains, the percentage remaining and a countdown to the next reset. Gemini shows "connected, no quota signal" (已接入 · 无额度信号) because Gemini has no local quota data.
-- **Navigation**: Dashboard (仪表盘), Archive (归档), Settings (设置).
+- **Resident rows**: one row per agent with its plan name, a ten-segment "stamina" bar showing how much of the current quota window remains, the percentage remaining and a countdown to the next reset. Gemini shows "Sessions only · no quota signal" because Gemini has no local quota data.
+- **Navigation**: Dashboard, Archive, Settings.
 - **Page-specific section**: on the Archive page, views and projects (see [Archive](#archive)).
-- **Footer**: app name and sync status, for example "watching · N sources · synced just now", or ingestion progress "x/y" while a scan is running.
+- **Footer**: app name and sync status, for example "Synced just now · 3 sources", or ingestion progress "x/y" while a scan is running.
 
 ## Pixel habitat
 
@@ -42,87 +67,87 @@ Each resident's state is derived from real activity in that agent's transcripts 
 
 | State | Label | When |
 |---|---|---|
-| Working | 工作中 | New records appeared in the last 30 seconds. |
-| Thinking | 思考中 | The latest record is a thinking block or a tool call still waiting for its result, or the session has been quiet for 30 seconds to 10 minutes. |
-| Happy | 完成了 | Shown for 3 seconds after a session finishes or quota resets from zero. |
-| Tired | 快没电 | Less than 20% of the quota window remains. |
-| Sleeping | 休息中 | No activity for 10 minutes, the session ended, or the quota is exhausted and waiting for reset. |
-| Away | 外出 | The agent's data directory was not found. A sign stands on the desk instead of the resident. |
+| Working | Working | New records appeared in the last 30 seconds. |
+| Thinking | Thinking | The latest record is a thinking block or a tool call still waiting for its result, or the session has been quiet for 30 seconds to 10 minutes. |
+| Happy | Done! | Shown for 3 seconds after a session finishes or quota resets from zero. |
+| Tired | Low battery | Less than 20% of the quota window remains. |
+| Sleeping | Resting | No activity for 10 minutes, the session ended, or the quota is exhausted and waiting for reset. |
+| Away | Away | The agent's data directory was not found. A sign stands on the desk instead of the resident. |
 
 When several conditions hold, the order is: away, sleeping (quota exhausted), tired, happy, working, thinking, sleeping (idle). The house also follows the local clock (day, evening, night; lamps and fireplace light up in the evening) and shows short event bubbles, for example when a session finishes.
 
 ## Dashboard
 
-![Dashboard, dark](screenshots/dashboard-dark.png)
+![Dashboard, dark](screenshots/dashboard-dark.en.png)
 
-![Dashboard, light](screenshots/dashboard-light.png)
+![Dashboard, light](screenshots/dashboard-light.en.png)
 
-The **Refresh quota** button (刷新额度) at the top right re-reads quota immediately.
+The **Refresh quota** button at the top right re-reads quota immediately.
 
-### Quota detail (额度详情)
+### Quota detail
 
 One column per agent: resident avatar, plan (for example Max or Plus), current habitat state, and a tag naming the data source.
 
-- **Claude** (tag: compliant · official `/usage`): 5-hour and 7-day windows with percentage remaining and countdowns to reset. Data comes from running the official `claude` CLI's `/usage` in the background every 15 minutes.
-- **Codex** (tag: compliant · rollout snapshot): 5-hour and weekly windows, plus **reset credits** (重置信用) with the number of credits and time until they expire. Data comes from the `rate_limits` snapshot Codex writes into its own rollout files.
-- **Gemini**: no quota signal (无额度信号). Gemini CLI and Antigravity have no readable local quota data, so only sessions and tokens are counted.
+- **Claude** (tag: Compliant · official /usage): 5-hour and 7-day windows with percentage remaining and countdowns to reset. Data comes from running the official `claude` CLI's `/usage` in the background every 15 minutes.
+- **Codex** (tag: Compliant · rollout snapshot): 5-hour and weekly windows, plus **reset credits** with the number of credits and time until they expire. Data comes from the `rate_limits` snapshot Codex writes into its own rollout files.
+- **Gemini**: No quota signal. Gemini CLI and Antigravity have no readable local quota data, so only sessions and tokens are counted.
 
-Bars are stamina bars: they show what remains in each window (体力条 = 窗口剩余) and change color as it runs low. Countdowns turn amber when a reset is less than 6 hours away or less than a quarter of the window remains, and red when less than an hour is left.
+Bars are stamina bars: they show what remains in each window ("Bar = what's left in the window") and change color as it runs low. Countdowns turn amber when a reset is less than 6 hours away or less than a quarter of the window remains, and red when less than an hour is left.
 
-### Cumulative tokens (累计 token)
+### Total tokens
 
-Period tabs: today, this week, this month, all (今天 / 本周 / 本月 / 全部).
+Period tabs: Today, Week, Month, All.
 
 - Four tiles: **input**, **output**, **cache read**, **cache write**, each split by agent. The cache-write tile also splits 5-minute and 1-hour writes.
 - A short explanation of why cache read is so large: in a long session every request re-reads the whole conversation from cache, so the same context is counted again and again (hit rates around 99% are normal). Cache reads cost roughly a tenth of the input price, which is why token counts grow much faster than cost.
-- **Estimated cost** (估算成本) for the period, split by agent, with session and message counts. See [How costs are calculated](../README.md#how-costs-are-calculated).
+- **Estimated cost** for the period, split by agent, with session and message counts. See [How costs are calculated](../README.md#how-costs-are-calculated).
 - **Output tokens by resident**: a horizontal bar per agent.
 
-### Upcoming resets (到期与重置)
+### Upcoming resets
 
-All upcoming events in time order: each quota window reset, and Codex credit expiry. Each row shows the absolute time and a countdown. Rows add context when relevant, for example "less than 1/4 remaining".
+All upcoming events in time order: each quota window reset, and Codex credit expiry. Each row shows the absolute time and a countdown. Rows add context when relevant, for example "Less than 1/4 left".
 
-### Token trend (token 量趋势)
+### Token trend
 
 Daily bars for the last 30 or 90 days. A toggle switches the metric between tokens (input / output / cache write stacked), cost, and message count.
 
-### Today (今天)
+### Today
 
 Four tiles for today so far: estimated cost, output tokens, sessions, and cache read (with cache write). Each tile compares with yesterday. The card also lists how many sessions are currently in progress.
 
-### By model (按模型) and by project (按项目)
+### By model and by project
 
 Cost per model as horizontal bars, and the top 5 projects (by working directory) by cost.
 
-### Archive health (归档健康)
+### Archive health
 
-Per source: total sessions, sessions that exist **only in the archive** because the agent already deleted the original (仅归档存在), sessions whose originals will be **cleaned up within 7 days** (7 天内将被清理), and compressed `.zst` files (Codex compresses old rollouts; AgentHome decompresses them when parsing).
+Per source: total sessions, sessions that exist **only in the archive** because the agent already deleted the original, sessions whose originals will be **cleaned up within 7 days**, and compressed `.zst` files (Codex compresses old rollouts; AgentHome decompresses them when parsing).
 
 ## Archive
 
-![Archive, dark](screenshots/archive-dark.png)
+![Archive, dark](screenshots/archive-dark.en.png)
 
-**Sidebar views**: all sessions (全部会话), starred (星标), archive-only (仅归档存在), cleaned up within 7 days (7 天内将清理). Below them, **projects** with session counts. Stars are kept in memory only for now and are lost on restart.
+**Sidebar views**: All sessions, Starred, Archive only, Cleaned up in 7 days. Below them, **projects** with session counts. Stars are kept in memory only for now and are lost on restart.
 
 **Session list**:
 
-- The header shows the number of sessions and the total including sub-agents (含子代理共 N), which matches the sidebar count.
+- The header shows the number of sessions and the total including sub-agents ("N incl. sub-agents"), which matches the sidebar count.
 - Sessions are grouped by day (today, yesterday, earlier).
 - Each row shows the agent icon, title, project, relative time, message count and estimated cost.
 - Sub-agent sessions are folded under their parent; the row shows a "+N sub-agents" badge.
 
 ## Session detail
 
-![Session detail, dark](screenshots/session-dark.png)
+![Session detail, dark](screenshots/session-dark.en.png)
 
-![Session detail, light](screenshots/session-light.png)
+![Session detail, light](screenshots/session-light.en.png)
 
-**Header**: title, working directory, and actions:
+**Header**: title, working directory, source agent and time range, and actions:
 
 - **Star** (☆).
-- **Reveal in Finder** (在 Finder 显示): selects the original transcript file in Finder. It does not open or modify it.
-- **Export Markdown** (导出 Markdown): writes the session as Markdown to `~/Downloads`.
-- **Continue in Claude Code / Codex** (用 … 继续): copies the resume command (`claude --resume <id>` or `codex resume <id>`) to the clipboard, to paste in a terminal.
+- **Finder**: selects the original transcript file in Finder. It does not open or modify it.
+- **Export**: writes the session as Markdown to `~/Downloads`.
+- **Resume**: copies the command that continues the session in its agent (`claude --resume <id>` or `codex resume <id>`) to the clipboard, to paste in a terminal.
 
 **Metrics**: model(s), messages, input, output, cache read / write, estimated cost, tool calls (with failures), sub-agents.
 
@@ -135,9 +160,9 @@ Per source: total sessions, sessions that exist **only in the archive** because 
 
 ## ⌘K global search
 
-![Search, dark](screenshots/search-dark.png)
+![Search, dark](screenshots/search-dark.en.png)
 
-![Search, light](screenshots/search-light.png)
+![Search, light](screenshots/search-light.en.png)
 
 Press ⌘K (or click the search box) to open the palette.
 
@@ -148,16 +173,28 @@ Press ⌘K (or click the search box) to open the palette.
 
 ## Settings
 
-![Settings, dark](screenshots/settings-dark.png)
+![Settings, dark](screenshots/settings-dark.en.png)
 
-- **Data sources** (数据来源): each detected source with its root directory, watch status and last scan, plus a **Scan now** button. AgentHome only reads these directories and never modifies them.
-- **Quota sources** (额度来源):
-  - Claude Code · official `/usage` (background): time of the latest snapshot and a **Refresh now** button. A refresh starts the `claude` command once (about 10 seconds); it sends no conversation, uses no tokens and reads no credentials, and it works for desktop-app users too.
+- **Sources**: each detected source with its root directory, watch status and last scan, plus a **Scan now** button. AgentHome only reads these directories and never modifies them.
+- **Quota sources**:
+  - Claude Code · official /usage (background): time of the latest snapshot and a **Refresh now** button. A refresh starts the `claude` command once (about 10 seconds); it sends no conversation, uses no tokens and reads no credentials, and it works for desktop-app users too.
   - If an older AgentHome statusline wrapper script is detected in `~/.claude/settings.json`, a notice offers to **uninstall** it. Uninstalling restores your original `statusLine` setting and backs up the file first.
   - Codex · rollout snapshot: no installation needed; shows the time of the latest snapshot.
-- **Archive location** (归档位置): the archive directory, index size and raw-layer size.
-- **Appearance** (外观): follow system, light or dark. Saved in `~/AgentHome/config/app.json`.
-- **Compliance and pricing** (合规与定价): what AgentHome does and does not access, and the version of the bundled price table (for example `litellm-2026-11-09`).
+- **Archive location**: the archive directory, index size and raw-layer size.
+- **Appearance**: System, Light or Dark. Saved in `~/AgentHome/config/app.json`.
+- **Language**: System, 简体中文 or English. See [Language](#language).
+- **Compliance & pricing**: what AgentHome does and does not access, and the version of the bundled price table (for example `litellm-2026-11-09`).
+
+## Language
+
+The interface, including the menu bar popup and the demo data, is available in English and Simplified Chinese. Choose it under **Settings → Language**:
+
+- **System** (default): Chinese when the first preferred language in macOS is Chinese, English otherwise.
+- **简体中文** or **English**: always use that language.
+
+The change applies immediately, without a restart, and is saved in `~/AgentHome/config/app.json`. The launch option `--lang zh-CN|en` pins the language for one run without saving it.
+
+Session content is shown as recorded; it is not translated. The CLI output is still in Chinese.
 
 ## Sync and storage
 

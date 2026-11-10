@@ -6,9 +6,9 @@
 
 Rust + [GPUI Kit](https://github.com/longbridge/gpui-kit) 编写的原生 macOS 应用，所有数据只留在本机。
 
-![仪表盘（暗色）](docs/screenshots/dashboard-dark.png)
+![仪表盘（暗色）](docs/screenshots/dashboard-dark.zh-CN.png)
 
-> 界面目前只有简体中文，英文界面在路线图上。所有截图均为内置演示数据。
+> 界面支持简体中文与英文。所有截图均为内置演示数据。
 
 ## 为什么做
 
@@ -17,6 +17,23 @@ Rust + [GPUI Kit](https://github.com/longbridge/gpui-kit) 编写的原生 macOS 
 - **额度散落各处。** Claude 的 5 小时 / 7 天窗口、Codex 的 5 小时 / 每周窗口、Codex 重置信用及其过期时间，分在不同地方。
 
 AgentHome 把每份转录拷进你自己的归档，建全文索引，并直接从转录里计算用量和成本。
+
+## 菜单栏
+
+AgentHome 常驻 macOS 菜单栏。点像素小屋图标，不用打开主窗口就能看到使用概要：
+
+<img src="docs/screenshots/menubar-dark.zh-CN.png" alt="菜单栏弹窗" width="360" align="right">
+
+- 栖息地，以及今日成本、今日输出 token、今日会话数；
+- 每个 agent 一行（Claude、Codex、Gemini）：状态、5 小时窗口剩余（10 格体力条）、距重置的倒计时、最吃紧的另一个窗口，以及今天的输出与成本；
+- 最近 3 个会话，点击在主窗口打开并定位；
+- **打开 AgentHome**、**立即同步**、**设置…**、**退出**。
+
+关闭主窗口只是隐藏，AgentHome 继续在菜单栏里同步、读取额度；从弹窗或 Dock 图标唤回主窗口，退出用 ⌘Q、弹窗里的「退出」或 Dock 菜单。
+
+尚未实现：呼出弹窗的全局快捷键、额度紧张时图标变色、重置提醒。
+
+<br clear="right">
 
 ## 功能
 
@@ -27,6 +44,8 @@ AgentHome 把每份转录拷进你自己的归档，建全文索引，并直接�
 - **归档浏览。** 按日分组、子代理折叠进父会话、会话级成本；会话详情按轮次展示，工具调用是可折叠的 Trace 行，支持 Markdown 与代码高亮。
 - **⌘K 全局搜索。** 跨全部消息全文搜索，支持中文子串；结果按会话分组、命中词高亮，回车直接跳到那条消息。
 - **会话操作。** 在 Finder 显示原件、导出 Markdown、复制用原 agent 继续该会话的命令。
+- **菜单栏弹窗。** 额度、今日数据和最近会话一点就看到；关掉主窗口后应用仍在菜单栏运行。
+- **中英双语界面。** 设置 → 界面语言：跟随系统 / 简体中文 / English，切换立即生效。
 - **像素栖息地。** 左栏的像素小屋里住着 Claude（狐狸）、Codex（企鹅）、Gemini（猫），随真实活动与额度工作、思考、开心、疲惫或睡觉。
 - **CLI。** 在终端里看同一份数据：`agenthome scan / sessions / show / stats / quota / activity / statusline`。
 
@@ -34,7 +53,7 @@ AgentHome 把每份转录拷进你自己的归档，建全文索引，并直接�
 
 | 会话详情 | ⌘K 搜索 |
 |---|---|
-| ![会话详情](docs/screenshots/session-dark.png) | ![搜索](docs/screenshots/search-dark.png) |
+| ![会话详情](docs/screenshots/session-dark.zh-CN.png) | ![搜索](docs/screenshots/search-dark.zh-CN.png) |
 
 ## 安装
 
@@ -44,7 +63,9 @@ AgentHome 把每份转录拷进你自己的归档，建全文索引，并直接�
 2. 解压，把 `AgentHome.app` 拖进「应用程序」。
 3. 打开即可。应用已用 Developer ID 签名并经 Apple 公证，不会出现 Gatekeeper 拦截。
 
-首次启动会创建 `~/AgentHome/` 并扫描能找到的来源目录，无需配置。
+首次启动会创建 `~/AgentHome/` 并扫描能找到的来源目录，无需配置。界面语言默认跟随 macOS（首选语言是中文就用中文，否则英文），可在「设置 → 界面语言」修改。
+
+AgentHome 会在菜单栏放一个图标。关闭主窗口后应用仍在菜单栏运行；退出用 ⌘Q。
 
 CLI 随应用附带，位于 `AgentHome.app/Contents/MacOS/agenthome`，可以软链到 `PATH` 里，也可以从源码构建（见下文）。
 
@@ -82,7 +103,7 @@ AgentHome 写入的所有内容都在 `~/AgentHome/` 下：
 | `raw/<provider>/<machine>/...` | 转录的逐字节副本，zstd 压缩，附 `manifest.json`（来源路径、sha256）。只增不改：增长的文件按字节段追加，被改写的文件另存新版本。Antigravity 的加密 `.pb` 不归档。 |
 | `index/agenthome.db` | SQLite 索引，含 FTS5 trigram 全文索引，可从来源重建。 |
 | `signals/` | 额度快照（如 `claude-usage.json`）。 |
-| `config/app.json` | 应用偏好（外观）。 |
+| `config/app.json` | 应用偏好（外观、界面语言）。 |
 
 读取的来源：
 
@@ -154,17 +175,17 @@ cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings
 
 ```bash
 cargo build -p agenthome-app --features capture
-./target/debug/agenthome-app --mock --page dashboard --capture out.png
+./target/debug/agenthome-app --mock --lang zh-CN --appearance dark --page dashboard --capture out.png
+./target/debug/agenthome-app --mock --lang zh-CN --menubar-popup --capture popup.png
 ```
 
 首次构建要从源码编译 GPUI，需要几分钟。仓库结构、提交约定、如何接入新来源见 [CONTRIBUTING.zh-CN.md](CONTRIBUTING.zh-CN.md)；设计与开发文档索引见 [docs/README.md](docs/README.md)。
 
 ## 路线图
 
-- 英文界面
 - Windows 与 Linux 版本
 - 更多来源（如 OpenCode 等 agent CLI）
-- 菜单栏弹窗：额度与今日数据
+- 菜单栏：全局快捷键、额度紧张时图标变色、重置与过期提醒
 - 星标与笔记持久化；tool-results 等附属文件归档
 
 ## 许可

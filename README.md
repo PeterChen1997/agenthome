@@ -6,9 +6,9 @@ A local home for your AI coding agents. AgentHome keeps a permanent, searchable 
 
 Native macOS app written in Rust with [GPUI Kit](https://github.com/longbridge/gpui-kit). Everything stays on your machine.
 
-![Dashboard (dark)](docs/screenshots/dashboard-dark.png)
+![Dashboard (dark)](docs/screenshots/dashboard-dark.en.png)
 
-> The user interface is currently **Simplified Chinese only**. An English UI is on the roadmap. All screenshots use built-in demo data.
+> The interface is available in English and Simplified Chinese. All screenshots use built-in demo data.
 
 ## Why
 
@@ -17,6 +17,23 @@ Native macOS app written in Rust with [GPUI Kit](https://github.com/longbridge/g
 - **Quota is scattered.** Claude's 5-hour and 7-day windows, Codex's 5-hour and weekly windows, Codex credits and their expiry all live in different places.
 
 AgentHome copies every transcript into an archive you own, indexes it for full-text search, and computes usage and cost from the transcripts themselves.
+
+## Menu bar
+
+AgentHome lives in the macOS menu bar. Click the pixel-house icon for a usage summary without opening the main window:
+
+<img src="docs/screenshots/menubar-dark.en.png" alt="Menu bar popup" width="360" align="right">
+
+- the habitat, and today's cost, output tokens and sessions;
+- one row per agent (Claude, Codex, Gemini): status, how much of the 5-hour window is left as a 10-cell bar, the countdown to its reset, the tightest other window, and today's output and cost;
+- the three most recent sessions; clicking one opens it in the main window;
+- **Open AgentHome**, **Sync now**, **Settings…** and **Quit**.
+
+Closing the main window only hides it. AgentHome keeps syncing and reading quota in the menu bar; reopen the window from the popup or the Dock icon, and quit with ⌘Q, from the popup or from the Dock menu.
+
+Not implemented yet: a global shortcut for the popup, an icon that changes color when quota runs low, and reset reminders.
+
+<br clear="right">
 
 ## Features
 
@@ -27,6 +44,8 @@ AgentHome copies every transcript into an archive you own, indexes it for full-t
 - **Archive browser.** Sessions grouped by day, sub-agents folded under their parent, per-session cost, a session view with turns, collapsible trace rows for tool calls, Markdown and code highlighting.
 - **⌘K global search.** Full-text search across all messages, including Chinese substrings. Results are grouped by session with highlighted matches; Enter jumps to the exact message.
 - **Session actions.** Reveal the original file in Finder, export to Markdown, or copy the command to resume the session in its original agent.
+- **Menu bar popup.** Quota, today's numbers and recent sessions one click away; the app keeps running there when the window is closed.
+- **English and Chinese.** Settings → Language: System, 简体中文 or English. Switching applies immediately.
 - **Pixel habitat.** A small pixel-art house in the sidebar where Claude (fox), Codex (penguin) and Gemini (cat) work, think, celebrate, get tired or sleep based on real activity and quota.
 - **CLI.** The same data from the terminal: `agenthome scan / sessions / show / stats / quota / activity / statusline`.
 
@@ -34,7 +53,7 @@ See [docs/features.md](docs/features.md) for a page-by-page walkthrough.
 
 | Session detail | ⌘K search |
 |---|---|
-| ![Session detail](docs/screenshots/session-dark.png) | ![Search](docs/screenshots/search-dark.png) |
+| ![Session detail](docs/screenshots/session-dark.en.png) | ![Search](docs/screenshots/search-dark.en.png) |
 
 ## Install
 
@@ -44,7 +63,9 @@ Requirements: macOS 15 or later on Apple Silicon (arm64).
 2. Unzip it and move `AgentHome.app` to `/Applications`.
 3. Open it. The app is signed with a Developer ID and notarized by Apple, so it opens without Gatekeeper warnings.
 
-On first launch AgentHome creates `~/AgentHome/` and scans the source directories it finds. Nothing needs to be configured.
+On first launch AgentHome creates `~/AgentHome/` and scans the source directories it finds. Nothing needs to be configured. The interface follows the macOS language (Chinese if it is your first preferred language, English otherwise); change it under Settings → Language.
+
+AgentHome adds an icon to the menu bar. Closing the main window keeps the app running there; quit with ⌘Q.
 
 The CLI ships inside the app bundle at `AgentHome.app/Contents/MacOS/agenthome`. You can symlink it onto your `PATH`, or build it from source (see below).
 
@@ -82,7 +103,7 @@ Everything AgentHome writes lives under `~/AgentHome/`:
 | `raw/<provider>/<machine>/...` | Byte-for-byte copies of transcripts, zstd-compressed, with a `manifest.json` (source path, sha256). Append-only: growing files are stored as appended byte ranges, rewritten files as new versions. Antigravity's encrypted `.pb` files are not archived. |
 | `index/agenthome.db` | SQLite index with an FTS5 trigram full-text index. It can be rebuilt from the sources. |
 | `signals/` | Quota snapshots (for example `claude-usage.json`). |
-| `config/app.json` | App preferences (appearance). |
+| `config/app.json` | App preferences (appearance, language). |
 
 Sources read:
 
@@ -156,17 +177,17 @@ Offscreen screenshots (used for these docs):
 
 ```bash
 cargo build -p agenthome-app --features capture
-./target/debug/agenthome-app --mock --page dashboard --capture out.png
+./target/debug/agenthome-app --mock --lang en --appearance dark --page dashboard --capture out.png
+./target/debug/agenthome-app --mock --lang en --menubar-popup --capture popup.png
 ```
 
 The first build compiles GPUI from source and takes several minutes. See [CONTRIBUTING.md](CONTRIBUTING.md) for the repository layout, commit conventions and how to add a new source. Design and development notes (mostly in Chinese) are indexed in [docs/README.md](docs/README.md).
 
 ## Roadmap
 
-- English user interface
 - Windows and Linux builds
 - More sources (for example OpenCode and other agent CLIs)
-- Menu bar popover with quota and today's numbers
+- Menu bar: global shortcut, icon color when quota runs low, reset and expiry reminders
 - Persisted stars and notes; archiving of attachment files such as tool results
 
 ## License

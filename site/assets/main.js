@@ -4,6 +4,12 @@
   var LANG_KEY = "agenthome.lang";
   var reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 
+  // Asset URLs go through one place so a single-file build can swap in inlined copies.
+  var inlined = window.AGENTHOME_ASSETS || {};
+  function asset(path) {
+    return Object.prototype.hasOwnProperty.call(inlined, path) ? inlined[path] : path;
+  }
+
   function store(key, value) {
     try {
       if (value === undefined) return window.localStorage.getItem(key);
@@ -18,19 +24,32 @@
 
   var zh = {
     "skip": "跳到正文",
+    "nav.menubar": "菜单栏",
     "nav.tour": "预览",
     "nav.features": "功能",
     "nav.privacy": "隐私",
     "nav.install": "安装",
-    "hero.eyebrow": "v0.1.6 · 开源 · macOS",
+    "hero.eyebrow": "v0.2.0 · 开源 · macOS",
     "hero.title": "给你的 AI 编程 agent 一个家。",
     "hero.lede": "AgentHome 把 Claude Code、Codex、Gemini CLI 的每个会话拷贝进本地仓库，长期保存、随时全文搜索；token 消耗、估算成本和订阅剩余额度放在同一块仪表盘上。小屋里的三位住户，会跟着 agent 的真实活动和额度变换状态。",
     "hero.download": "下载 macOS 版",
     "hero.source": "在 GitHub 查看源码",
     "hero.f1": "macOS 15+ · Apple Silicon",
     "hero.f2": "已签名并经 Apple 公证",
-    "hero.f3": "界面目前为简体中文",
+    "hero.f3": "中英双语界面",
     "hero.note": "演示循环。应用里的状态跟随真实数据：会话正在写入时工作，任一额度窗口低于 20% 时疲惫，空闲或额度用尽时睡觉。",
+    "mb.label": "常驻菜单栏",
+    "mb.title": "额度和今天的花费，点一下就看到。",
+    "mb.lede": "点 macOS 菜单栏里的像素小屋，不用打开主窗口，就能看到三位 agent 的使用概要。",
+    "mb.1.t": "今天一眼看到",
+    "mb.1.p": "栖息地，加上今日成本、今日输出 token 和今日会话数。",
+    "mb.2.t": "每位 agent 一行",
+    "mb.2.p": "Claude、Codex、Gemini：状态、5 小时窗口剩余（10 格体力条）、重置倒计时、最吃紧的另一个窗口，以及今天的输出与成本。",
+    "mb.3.t": "接着干活",
+    "mb.3.p": "最近 3 个会话点一下直接在归档里打开。还能打开主窗口、立即同步、进设置或退出。",
+    "mb.4.t": "一直在线",
+    "mb.4.p": "关闭窗口只是隐藏，AgentHome 继续在菜单栏里同步；退出用 ⌘Q。",
+    "mb.demo": "弹窗截图为演示数据。",
     "tod.day": "白天",
     "tod.evening": "傍晚",
     "tod.night": "夜晚",
@@ -70,13 +89,13 @@
     "inst.label": "安装",
     "inst.title": "三步，大约一分钟。",
     "inst.1.t": "下载",
-    "inst.1.p": "从 GitHub 最新 Release 下载 <code>AgentHome-0.1.6-macos-arm64.zip</code>。",
+    "inst.1.p": "从 GitHub 最新 Release 下载 <code>AgentHome-0.2.0-macos-arm64.zip</code>。",
     "inst.2.t": "拖进应用程序",
     "inst.2.p": "解压后把 <code>AgentHome.app</code> 拖进「应用程序」。安装包已用 Developer ID 签名并经 Apple 公证。",
     "inst.3.t": "打开",
-    "inst.3.p": "首次启动会把磁盘上已有的会话建成归档，之后持续监听新会话。",
-    "inst.cta": "下载 v0.1.6",
-    "inst.req": "需要 macOS 15 或更高版本、Apple Silicon。应用界面目前为简体中文。",
+    "inst.3.p": "首次启动会把磁盘上已有的会话建成归档，之后常驻菜单栏，持续监听新会话。",
+    "inst.cta": "下载 v0.2.0",
+    "inst.req": "需要 macOS 15 或更高版本、Apple Silicon。界面支持简体中文与英文，默认跟随 macOS 语言。",
     "foot.by": "作者 Peter Chen",
     "foot.src": "源码",
     "foot.rel": "版本发布",
@@ -107,6 +126,7 @@
       b.setAttribute("aria-pressed", String(b.getAttribute("data-lang") === lang));
     });
     renderStateLabels();
+    renderShot();
   }
 
   document.querySelectorAll(".lang button").forEach(function (b) {
@@ -134,7 +154,7 @@
     var slot = slots[who];
     if (!slot || slot.getAttribute("data-state") === state) return;
     var img = slot.querySelector("img");
-    var src = "assets/habitat/" + who + "-" + state + ".webp";
+    var src = asset("assets/habitat/" + who + "-" + state + ".webp");
     if (reduceMotion.matches) {
       img.src = src;
       slot.setAttribute("data-state", state);
@@ -164,7 +184,7 @@
   // Preload every sprite so swaps do not flash.
   if (!reduceMotion.matches) {
     order.forEach(function (who) {
-      loops[who].forEach(function (state) { (new Image()).src = "assets/habitat/" + who + "-" + state + ".webp"; });
+      loops[who].forEach(function (state) { (new Image()).src = asset("assets/habitat/" + who + "-" + state + ".webp"); });
     });
   }
 
@@ -214,16 +234,24 @@
   /* ---------- Screenshot tour ---------- */
 
   var shotImg = document.getElementById("shot-img");
+  var menubarImg = document.getElementById("menubar-img");
   var shot = "dashboard";
-  var mode = window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+  var lightQuery = window.matchMedia("(prefers-color-scheme: light)");
+  var mode = lightQuery.matches ? "light" : "dark";
   var alts = {
     dashboard: "AgentHome dashboard: quota per resident, cumulative tokens, estimated cost and reset countdowns",
     session: "AgentHome session detail: turns, trace rows and per-session cost",
     search: "AgentHome ⌘K search: highlighted matches grouped by session"
   };
 
+  // Screenshot files carry the app's locale code: dashboard-dark.en.webp, dashboard-dark.zh-CN.webp.
+  function shotSrc(name, theme) {
+    return asset("assets/shots/" + name + "-" + theme + "." + (lang === "zh" ? "zh-CN" : "en") + ".webp");
+  }
+
   function renderShot() {
-    var src = "assets/shots/" + shot + "-" + mode + ".webp";
+    if (!shotImg) return;
+    var src = shotSrc(shot, mode);
     if (shotImg.getAttribute("src") !== src) {
       shotImg.classList.add("loading");
       shotImg.onload = function () { shotImg.classList.remove("loading"); };
@@ -237,6 +265,9 @@
       b.setAttribute("aria-pressed", String(b.getAttribute("data-mode") === mode));
     });
     document.querySelectorAll(".cap").forEach(function (c) { c.hidden = c.getAttribute("data-cap") !== shot; });
+    // The menu bar popup follows the page's own light / dark scheme, not the tour toggle.
+    var popup = shotSrc("menubar", lightQuery.matches ? "light" : "dark");
+    if (menubarImg && menubarImg.getAttribute("src") !== popup) menubarImg.src = popup;
   }
   document.querySelectorAll(".tabs button").forEach(function (b) {
     b.addEventListener("click", function () { shot = b.getAttribute("data-shot"); renderShot(); });
@@ -246,10 +277,8 @@
     b.addEventListener("click", function () { modePicked = true; mode = b.getAttribute("data-mode"); renderShot(); });
   });
   // Until the visitor picks one, screenshots follow the system appearance.
-  var lightQuery = window.matchMedia("(prefers-color-scheme: light)");
   function onScheme() {
-    if (modePicked) return;
-    mode = lightQuery.matches ? "light" : "dark";
+    if (!modePicked) mode = lightQuery.matches ? "light" : "dark";
     renderShot();
   }
   if (lightQuery.addEventListener) lightQuery.addEventListener("change", onScheme);

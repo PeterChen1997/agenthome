@@ -29,6 +29,7 @@
       <span>AgentHome</span>
     </a>
     <nav class="top-nav" aria-label="Sections">
+      <a href="#menubar" data-i18n="nav.menubar">Menu bar</a>
       <a href="#tour" data-i18n="nav.tour">Tour</a>
       <a href="#features" data-i18n="nav.features">Features</a>
       <a href="#privacy" data-i18n="nav.privacy">Privacy</a>
@@ -48,7 +49,7 @@
   <section class="hero" id="top">
     <div class="wrap hero-grid">
       <div class="hero-copy">
-        <p class="eyebrow"><span class="pip" aria-hidden="true"></span><span data-i18n="hero.eyebrow">v0.1.6 · open source · macOS</span></p>
+        <p class="eyebrow"><span class="pip" aria-hidden="true"></span><span data-i18n="hero.eyebrow">v0.2.0 · open source · macOS</span></p>
         <h1 data-i18n="hero.title">A home for your AI coding agents.</h1>
         <p class="lede" data-i18n="hero.lede">AgentHome copies every Claude Code, Codex and Gemini CLI session into a local archive you can keep and search for good, and puts tokens, cost and remaining quota on one dashboard. Up in the cabin, three residents change with what your agents are really doing.</p>
         <div class="cta">
@@ -65,7 +66,7 @@
           <li data-i18n="hero.f1">macOS 15+ · Apple Silicon</li>
           <li data-i18n="hero.f2">Signed &amp; notarized by Apple</li>
           <li>Apache-2.0</li>
-          <li data-i18n="hero.f3">App UI in Simplified Chinese for now</li>
+          <li data-i18n="hero.f3">English &amp; Chinese interface</li>
         </ul>
       </div>
 
@@ -101,6 +102,30 @@
     </div>
   </section>
 
+  <section class="menubar" id="menubar" aria-labelledby="menubar-title">
+    <div class="wrap mb-grid">
+      <div class="mb-copy">
+        <div class="sec-head">
+          <p class="label" data-i18n="mb.label">In the menu bar</p>
+          <h2 id="menubar-title" data-i18n="mb.title">Quota and today's spend, one click away.</h2>
+          <p class="sec-lede" data-i18n="mb.lede">Click the pixel house in the macOS menu bar for a summary of all three agents, without opening the main window.</p>
+        </div>
+        <ul class="mb-points">
+          <li><b data-i18n="mb.1.t">Today at a glance</b><span data-i18n="mb.1.p">The habitat, plus today's cost, output tokens and sessions.</span></li>
+          <li><b data-i18n="mb.2.t">One row per agent</b><span data-i18n="mb.2.p">Claude, Codex and Gemini: status, 5-hour quota left as a 10-cell bar, reset countdown, the tightest other window, and today's output and cost.</span></li>
+          <li><b data-i18n="mb.3.t">Back to work</b><span data-i18n="mb.3.p">The three latest sessions open straight into the archive. Open the app, sync now, jump to Settings or quit.</span></li>
+          <li><b data-i18n="mb.4.t">Always running</b><span data-i18n="mb.4.p">Closing the window only hides it. AgentHome keeps syncing in the menu bar; quit with ⌘Q.</span></li>
+        </ul>
+      </div>
+      <figure class="mb-shot">
+        <div class="mb-frame">
+          <img id="menubar-img" src="assets/shots/menubar-dark.en.webp" width="360" height="700" alt="AgentHome menu bar popup: habitat, today's cost, output and sessions, quota per agent and recent sessions" loading="lazy">
+        </div>
+        <figcaption class="demo-note" data-i18n="mb.demo">Popup with demo data.</figcaption>
+      </figure>
+    </div>
+  </section>
+
   <section class="tour" id="tour" aria-labelledby="tour-title">
     <div class="wrap">
       <div class="sec-head">
@@ -120,7 +145,7 @@
       </div>
       <figure class="shot">
         <div class="shot-frame">
-          <img id="shot-img" src="assets/shots/dashboard-dark.webp" width="1400" height="860" alt="AgentHome dashboard: quota per resident, cumulative tokens, estimated cost and reset countdowns" loading="lazy">
+          <img id="shot-img" src="assets/shots/dashboard-dark.en.webp" width="1400" height="860" alt="AgentHome dashboard: quota per resident, cumulative tokens, estimated cost and reset countdowns" loading="lazy">
         </div>
         <figcaption>
           <p class="cap" data-cap="dashboard" data-i18n="tour.c1">Quota for each resident, cumulative tokens split into input, output, cache read and cache write, estimated cost, reset countdowns and 30 / 90-day trends.</p>
@@ -193,7 +218,7 @@
         <li>
           <span class="num" aria-hidden="true">1</span>
           <h3 data-i18n="inst.1.t">Download</h3>
-          <p data-i18n="inst.1.p">Get <code>AgentHome-0.1.6-macos-arm64.zip</code> from the latest GitHub release.</p>
+          <p data-i18n="inst.1.p">Get <code>AgentHome-0.2.0-macos-arm64.zip</code> from the latest GitHub release.</p>
         </li>
         <li>
           <span class="num" aria-hidden="true">2</span>
@@ -203,12 +228,12 @@
         <li>
           <span class="num" aria-hidden="true">3</span>
           <h3 data-i18n="inst.3.t">Open it</h3>
-          <p data-i18n="inst.3.p">On first launch it builds your archive from the sessions already on disk, then keeps watching for new ones.</p>
+          <p data-i18n="inst.3.p">On first launch it builds your archive from the sessions already on disk, then keeps watching for new ones from the menu bar.</p>
         </li>
       </ol>
       <div class="install-cta">
-        <a class="btn btn-primary" href="https://github.com/PeterChen1997/agenthome/releases/latest"><span data-i18n="inst.cta">Download v0.1.6</span></a>
-        <p class="req" data-i18n="inst.req">Requires macOS 15 or later on Apple Silicon. The app interface is currently in Simplified Chinese.</p>
+        <a class="btn btn-primary" href="https://github.com/PeterChen1997/agenthome/releases/latest"><span data-i18n="inst.cta">Download v0.2.0</span></a>
+        <p class="req" data-i18n="inst.req">Requires macOS 15 or later on Apple Silicon. The interface comes in English and Simplified Chinese and follows your macOS language.</p>
       </div>
     </div>
   </section>
