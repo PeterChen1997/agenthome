@@ -25,7 +25,6 @@ use gpui_kit::{
     StatefulInteractiveElement as _, Styled as _, Subscription, Task, Window, div, px,
 };
 
-use crate::assets::FONT_PIXEL_SANS;
 use crate::config::{self, Appearance, Language};
 use crate::format::{now_ms, relative_time};
 use crate::live::LiveState;
@@ -514,18 +513,28 @@ impl SettingsView {
         };
         let claude_snapshot = snapshot_text(ProviderId::ClaudeCode);
         let codex_snapshot = snapshot_text(ProviderId::Codex);
+        let agy_snapshot = snapshot_text(ProviderId::AntigravityCli);
         let legacy = legacy_statusline(self.disk.statusline.as_ref());
         let theme = cx.theme();
 
         let probe = self.sync.read(cx).claude_probe.clone();
-        let probe_view = probe_view(&probe, self.sync_handle.is_some(), now);
-        let probe_color = match probe_view.tone {
+        let claude_view = probe_view(&probe, self.sync_handle.is_some(), now, "claude");
+        let probe_color = match claude_view.tone {
             Tone::Ok => theme.success,
             Tone::Bad => theme.danger,
             Tone::Muted => theme.muted_foreground,
         };
-        let probe_chip = chip(probe_view.chip, probe_color, cx);
+        let probe_chip = chip(claude_view.chip, probe_color, cx);
         let can_probe = self.sync_handle.is_some() && probe.binary.is_some() && !probe.running;
+        let agy = self.sync.read(cx).agy_probe.clone();
+        let agy_view = probe_view(&agy, self.sync_handle.is_some(), now, "agy");
+        let agy_color = match agy_view.tone {
+            Tone::Ok => theme.success,
+            Tone::Bad => theme.danger,
+            Tone::Muted => theme.muted_foreground,
+        };
+        let agy_chip = chip(agy_view.chip, agy_color, cx);
+        let can_agy = self.sync_handle.is_some() && agy.binary.is_some() && !agy.running;
         let reset_credits = self.render_reset_credits(now, cx);
 
         section(
@@ -546,7 +555,7 @@ impl SettingsView {
                         .child(div().flex_1())
                         .child(muted(claude_snapshot.clone(), cx)),
                 )
-                .child(div().pl(px(34.)).child(muted(probe_view.text, cx)))
+                .child(div().pl(px(34.)).child(muted(claude_view.text, cx)))
                 .child(
                     div()
                         .pl(px(34.))
@@ -619,6 +628,42 @@ impl SettingsView {
                 ),
         )
         .child(reset_credits)
+        .child(
+            v_flex()
+                .gap(px(6.))
+                .child(
+                    h_flex()
+                        .gap(px(10.))
+                        .items_center()
+                        .child(provider_avatar(&ProviderId::AntigravityCli, 24.))
+                        .child(strong(t!("settings.agy_usage_title").to_string()))
+                        .child(agy_chip)
+                        .child(div().flex_1())
+                        .child(muted(agy_snapshot, cx)),
+                )
+                .child(div().pl(px(34.)).child(muted(agy_view.text, cx)))
+                .child(
+                    div()
+                        .pl(px(34.))
+                        .child(muted(t!("settings.agy_usage_desc").to_string(), cx)),
+                )
+                .child(
+                    h_flex().pl(px(34.)).child(
+                        Button::new("agy-usage-refresh")
+                            .outline()
+                            .small()
+                            .label(t!("settings.refresh_now").to_string())
+                            .loading(agy.running)
+                            .disabled(!can_agy)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                if let Some(handle) = &this.sync_handle {
+                                    handle.refresh_agy_quota();
+                                }
+                                cx.notify();
+                            })),
+                    ),
+                ),
+        )
         .into_any_element()
     }
 
@@ -837,7 +882,8 @@ struct ProbeView {
     text: String,
 }
 
-fn probe_view(probe: &crate::sync::ClaudeProbe, syncing: bool, now: i64) -> ProbeView {
+/// `agent` 是官方命令名（`claude` / `agy`），只用于「正在运行」的说明。
+fn probe_view(probe: &crate::sync::QuotaProbe, syncing: bool, now: i64, agent: &str) -> ProbeView {
     let view =
         |chip: std::borrow::Cow<'static, str>, tone, text: std::borrow::Cow<str>| ProbeView {
             chip: chip.to_string().into(),
@@ -855,7 +901,14 @@ fn probe_view(probe: &crate::sync::ClaudeProbe, syncing: bool, now: i64) -> Prob
         return view(
             t!("settings.probe_running"),
             Tone::Muted,
-            t!("settings.probe_running_text"),
+            t!("settings.probe_running_text", agent = agent),
+        );
+    }
+    if probe.not_installed {
+        return view(
+            t!("settings.probe_not_installed"),
+            Tone::Muted,
+            t!("settings.probe_not_installed_text", agent = agent),
         );
     }
     match (&probe.last_error, probe.last_ok_ms, &probe.binary) {
@@ -903,14 +956,7 @@ fn uninstall_summary(report: &statusline_setup::UninstallReport) -> String {
 }
 
 fn provider_name(provider: &ProviderId) -> String {
-    match provider {
-        ProviderId::ClaudeCode => "Claude Code".into(),
-        ProviderId::Codex => "Codex".into(),
-        ProviderId::GeminiCli => "Gemini CLI".into(),
-        ProviderId::OpenCode => "OpenCode".into(),
-        ProviderId::Cursor => "Cursor".into(),
-        ProviderId::Other(_) => t!("settings.provider_other").into(),
-    }
+    agenthome_core::providers::registry::display_name(provider)
 }
 
 fn freshness_label(freshness: Freshness) -> String {
@@ -999,7 +1045,6 @@ fn section(
                 .items_center()
                 .child(
                     div()
-                        .font_family(FONT_PIXEL_SANS)
                         .font_weight(FontWeight::SEMIBOLD)
                         .text_size(px(14.))
                         .child(title),

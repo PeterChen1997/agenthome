@@ -22,6 +22,29 @@ pub enum WatchEvent {
     Error(String),
 }
 
+/// 一个要监听的目录：属于哪个来源、哪些后缀的文件变化算数（由来源的 `watch_suffixes` 声明）。
+#[derive(Clone, Debug, PartialEq)]
+pub struct WatchRoot {
+    pub provider: ProviderId,
+    pub root: PathBuf,
+    pub suffixes: &'static [&'static str],
+}
+
+impl WatchRoot {
+    /// 一个来源要监听的全部目录。
+    pub fn of(provider: &dyn crate::SourceProvider) -> Vec<WatchRoot> {
+        provider
+            .watch_roots()
+            .into_iter()
+            .map(|root| WatchRoot {
+                provider: provider.id(),
+                root,
+                suffixes: provider.watch_suffixes(),
+            })
+            .collect()
+    }
+}
+
 /// 监听句柄；drop 即停止监听。
 pub struct RootWatcher {
     _inner: notify::RecommendedWatcher,
@@ -33,10 +56,10 @@ pub struct RootWatcher {
 
 /// 递归监听每个根目录。某个根目录挂不上不影响其他根目录，原因记在 `unwatched`。
 pub fn watch_roots(
-    roots: &[(ProviderId, PathBuf)],
+    roots: &[WatchRoot],
     mut on_event: impl FnMut(WatchEvent) + Send + 'static,
 ) -> anyhow::Result<RootWatcher> {
-    let owned: Vec<(ProviderId, PathBuf)> = roots.to_vec();
+    let owned: Vec<WatchRoot> = roots.to_vec();
     let lookup = owned.clone();
     let mut inner =
         notify::recommended_watcher(move |result: notify::Result<notify::Event>| match result {
@@ -70,7 +93,7 @@ pub fn watch_roots(
 
     let mut watched = Vec::new();
     let mut unwatched = Vec::new();
-    for (provider, root) in owned {
+    for WatchRoot { provider, root, .. } in owned {
         if !root.is_dir() {
             unwatched.push((provider, root, "目录不存在".to_string()));
             continue;
@@ -87,27 +110,44 @@ pub fn watch_roots(
     })
 }
 
-/// 路径属于哪个来源。只认会话转录文件（`.jsonl` 与 Codex 的 `.jsonl.zst`），
-/// 其余文件（锁文件、临时文件、目录本身）的变化不触发入库。
-pub fn classify(roots: &[(ProviderId, PathBuf)], path: &Path) -> Option<ProviderId> {
+/// 路径属于哪个来源：取包含它的**最深**根目录（`~/.gemini` 与 `~/.gemini/antigravity-cli` 是嵌套的），
+/// 再看文件名是不是该来源声明的转录后缀；锁文件、临时文件、目录本身的变化不触发入库。
+pub fn classify(roots: &[WatchRoot], path: &Path) -> Option<ProviderId> {
     let name = path.file_name()?.to_str()?;
-    if !(name.ends_with(".jsonl") || name.ends_with(".jsonl.zst")) {
-        return None;
-    }
-    roots
+    let owner = roots
         .iter()
-        .find(|(_, root)| path.starts_with(root))
-        .map(|(provider, _)| provider.clone())
+        .filter(|r| path.starts_with(&r.root))
+        .max_by_key(|r| r.root.components().count())?;
+    owner
+        .suffixes
+        .iter()
+        .any(|suffix| name.ends_with(suffix))
+        .then(|| owner.provider.clone())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn roots() -> Vec<(ProviderId, PathBuf)> {
+    fn roots() -> Vec<WatchRoot> {
+        let root = |provider, path: &str, suffixes| WatchRoot {
+            provider,
+            root: PathBuf::from(path),
+            suffixes,
+        };
         vec![
-            (ProviderId::ClaudeCode, PathBuf::from("/h/.claude/projects")),
-            (ProviderId::Codex, PathBuf::from("/h/.codex/sessions")),
+            root(ProviderId::ClaudeCode, "/h/.claude/projects", &[".jsonl"]),
+            root(
+                ProviderId::Codex,
+                "/h/.codex/sessions",
+                &[".jsonl", ".jsonl.zst"],
+            ),
+            root(ProviderId::GeminiCli, "/h/.gemini", &[".jsonl"]),
+            root(
+                ProviderId::AntigravityCli,
+                "/h/.gemini/antigravity-cli",
+                &[".db"],
+            ),
         ]
     }
 
@@ -123,6 +163,15 @@ mod tests {
     }
 
     #[test]
+    fn nested_roots_go_to_the_deepest_one() {
+        // agy 的目录在 ~/.gemini 里面；归给外层的 Gemini 会让 agy 的对话永远不入库。
+        let agy = Path::new("/h/.gemini/antigravity-cli/conversations/abc.db");
+        assert_eq!(classify(&roots(), agy), Some(ProviderId::AntigravityCli));
+        let gemini = Path::new("/h/.gemini/tmp/proj/chats/session-x.jsonl");
+        assert_eq!(classify(&roots(), gemini), Some(ProviderId::GeminiCli));
+    }
+
+    #[test]
     fn noise_does_not_trigger_ingest() {
         // 锁文件、sqlite、来源目录外的 jsonl 都不该引起扫描，否则活跃时会空转。
         let lock = Path::new("/h/.codex/sessions/2026/11/08/rollout-x.jsonl.lock");
@@ -131,5 +180,8 @@ mod tests {
         assert_eq!(classify(&roots(), db), None);
         let outside = Path::new("/h/.codex/history.jsonl");
         assert_eq!(classify(&roots(), outside), None);
+        // agy 进行中只写 -wal：每次写入都触发会让入库空转。
+        let wal = Path::new("/h/.gemini/antigravity-cli/conversations/abc.db-wal");
+        assert_eq!(classify(&roots(), wal), None);
     }
 }

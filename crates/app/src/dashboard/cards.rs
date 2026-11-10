@@ -12,7 +12,7 @@ use gpui_kit::{
 use super::fmt::{
     AMBER, GREEN, LINE, MUTED, RED, RED_TEXT, amber_text, avatar_path, provider_color,
 };
-use crate::assets::{FONT_PIXEL_MONO, FONT_PIXEL_SANS, PixelMono as _};
+use crate::assets::MonoText as _;
 
 /// 卡片壳：面板底 + 1px 线 + 4px 圆角，内容纵向排列。
 pub fn card(cx: &App) -> Div {
@@ -27,14 +27,13 @@ pub fn card(cx: &App) -> Div {
         .border_color(cx.theme().border)
 }
 
-/// 卡片标题行：Pixelify Sans 标题 + 次要说明。
+/// 卡片标题行：正文加粗标题 + 次要说明。
 pub fn card_title(title: impl Into<SharedString>, sub: impl Into<SharedString>) -> Div {
     h_flex()
         .items_center()
         .gap(px(8.))
         .child(
             div()
-                .font_family(FONT_PIXEL_SANS)
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_size(px(14.))
                 .child(title.into()),
@@ -47,12 +46,12 @@ pub fn card_title(title: impl Into<SharedString>, sub: impl Into<SharedString>) 
         )
 }
 
-/// VT323 数字容器。
-pub fn vt(size: f32) -> Div {
+/// 等宽数字容器（主题等宽字体，任何分辨率都清晰）。
+pub fn mono_num(size: f32, cx: &App) -> Div {
     div()
-        .font_family(FONT_PIXEL_MONO)
+        .font_family(cx.theme().mono_font_family.clone())
         .text_size(px(size))
-        .line_height(px(size))
+        .line_height(px((size * 1.25).round()))
         .whitespace_nowrap()
 }
 
@@ -114,7 +113,7 @@ pub fn hp_bar(left: Option<f32>, cx: &App) -> Div {
     let color = left.map(|l| hp_color(l, cx));
     let empty = cx.theme().border;
     h_flex().gap(px(3.)).children((0..10).map(move |i| {
-        div().flex_1().h(px(10.)).rounded(px(1.)).bg(match color {
+        div().flex_1().h(px(8.)).rounded(px(1.)).bg(match color {
             Some(c) if i < filled => c,
             _ => empty,
         })
@@ -161,7 +160,7 @@ impl RenderOnce for Tag {
             .rounded(px(2.))
             .bg(bg)
             .text_color(fg)
-            .pixel_mono(&self.text, 14., cx)
+            .mono_text(&self.text, 11., cx)
             .line_height(px(14.))
             .whitespace_nowrap()
             .child(self.text)
@@ -186,7 +185,7 @@ impl Tile {
             value: value.into(),
             note: None,
             note_color: None,
-            value_size: 30.,
+            value_size: 22.,
         }
     }
 
@@ -215,7 +214,7 @@ impl RenderOnce for Tile {
                     .text_color(cx.theme().muted_foreground)
                     .child(self.label),
             )
-            .child(vt(self.value_size).child(self.value))
+            .child(mono_num(self.value_size, cx).child(self.value))
             .when_some(self.note, |tile, note| {
                 tile.child(
                     // 窄窗口下来源拆分放不下一行：换行而不是截断，数字不能被省略号吃掉。
@@ -303,7 +302,7 @@ impl RenderOnce for BarRow {
                     })),
             )
             .child(
-                vt(18.)
+                mono_num(13., cx)
                     .w(px(72.))
                     .flex_shrink_0()
                     .text_right()

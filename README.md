@@ -38,7 +38,7 @@ Not implemented yet: a global shortcut for the popup, an icon that changes color
 ## Features
 
 - **Archive that outlives agent cleanup.** Each transcript is copied byte-for-byte (zstd-compressed) into `~/AgentHome/raw/` before it is indexed. When the agent deletes its own file, your copy remains.
-- **Three sources.** Claude Code, Codex (including archived sessions), and Gemini CLI. For Antigravity, only titles, times and workspaces are indexed; message bodies are encrypted and cannot be read.
+- **Four sources, one registry.** Claude Code, Codex (including archived sessions), Gemini CLI, and Antigravity CLI (`agy`, which replaced Gemini CLI for personal Google accounts). For the Antigravity desktop app, only titles, times and workspaces are indexed; its message bodies are encrypted. Every source is one entry in a provider registry, so adding another agent (OpenCode, say) is one parser file plus one line; see [docs/13-来源插件开发指南.md](docs/13-来源插件开发指南.md) (in Chinese).
 - **Real-time sync.** File-system events trigger incremental ingestion by byte offset, so appending a line to a large session costs about half a millisecond. A full scan runs hourly as a safety net.
 - **Dashboard.** Quota for each agent, cumulative tokens (input / output / cache read / cache write), estimated cost, 30/90-day trends, today's numbers, breakdown by model and by project, upcoming resets and expirations, archive health.
 - **Archive browser.** Sessions grouped by day, sub-agents folded under their parent, per-session cost, a session view with turns, collapsible trace rows for tool calls, Markdown and code highlighting.
@@ -78,7 +78,7 @@ The CLI ships inside the app bundle at `AgentHome.app/Contents/MacOS/agenthome`.
 - **How quota is read.**
   - Claude: every 15 minutes AgentHome runs the official `claude` CLI's `/usage` command in a background pseudo-terminal and reads the text it prints. This sends no conversation and consumes no tokens. It requires the `claude` CLI to be installed and logged in.
   - Codex: read from the `rate_limits` snapshot that Codex itself writes into its rollout files.
-  - Gemini: there is no local quota signal, so only sessions and tokens are shown.
+  - Gemini: read from Antigravity CLI with the official `agy -p /usage` every 15 minutes (no conversation, no tokens). Without `agy` installed, only sessions and tokens are shown.
 
 Your archive contains your full conversation history, which may include secrets you once pasted into an agent. Protect `~/AgentHome/` like any other sensitive directory. See [SECURITY.md](SECURITY.md) for details and for reporting vulnerabilities.
 
@@ -100,7 +100,7 @@ Everything AgentHome writes lives under `~/AgentHome/`:
 
 | Path | Contents |
 |---|---|
-| `raw/<provider>/<machine>/...` | Byte-for-byte copies of transcripts, zstd-compressed, with a `manifest.json` (source path, sha256). Append-only: growing files are stored as appended byte ranges, rewritten files as new versions. Antigravity's encrypted `.pb` files are not archived. |
+| `raw/<provider>/<machine>/...` | Byte-for-byte copies of transcripts, zstd-compressed, with a `manifest.json` (source path, sha256). Append-only: growing files are stored as appended byte ranges, rewritten files as new versions. Antigravity's encrypted `.pb` files and Antigravity CLI's SQLite conversations are not archived (they are rewritten in place). |
 | `index/agenthome.db` | SQLite index with an FTS5 trigram full-text index. It can be rebuilt from the sources. |
 | `signals/` | Quota snapshots (for example `claude-usage.json`). |
 | `config/app.json` | App preferences (appearance, language). |
@@ -112,7 +112,8 @@ Sources read:
 | Claude Code | `~/.claude/projects/` |
 | Codex | `~/.codex/sessions/`, `~/.codex/archived_sessions/` |
 | Gemini CLI | `~/.gemini/tmp/<hash>/chats/` (`.json` / `.jsonl`) |
-| Antigravity | `~/.gemini/antigravity/conversation_summaries.db` (titles, times, workspaces only) |
+| Antigravity CLI (`agy`) | `~/.gemini/antigravity-cli/conversations/<id>.db` (full conversations and per-request token usage) |
+| Antigravity desktop | `~/.gemini/antigravity/conversation_summaries.db` (titles, times, workspaces only) |
 
 A third layer for your own stars and notes (`user/`) is designed but not yet persisted; stars are currently kept in memory only.
 

@@ -37,6 +37,35 @@ pub trait DataSource: Send + Sync + 'static {
     fn search(&self, query: &str, limit: usize) -> anyhow::Result<Vec<SearchHit>>;
 }
 
+/// 一位住户名下全部来源的周期用量之和（猫 = Gemini CLI + Antigravity CLI，归属见来源注册表）。
+pub fn resident_totals(
+    source: &dyn DataSource,
+    period: Period,
+    who: crate::habitat::ResidentId,
+) -> anyhow::Result<UsageTotals> {
+    let mut acc: Option<UsageTotals> = None;
+    for provider in crate::live::providers_of(who) {
+        let t = source.totals(period, Some(provider))?;
+        acc = Some(match acc {
+            None => t,
+            Some(mut a) => {
+                a.usage.add(&t.usage);
+                a.cost_usd += t.cost_usd;
+                a.sessions += t.sessions;
+                a.messages += t.messages;
+                a.cost_source = match (a.cost_source, t.cost_source) {
+                    (x, y) if x == y => x,
+                    (CostSource::Unknown, y) => y,
+                    (x, CostSource::Unknown) => x,
+                    _ => CostSource::Mixed,
+                };
+                a
+            }
+        });
+    }
+    acc.ok_or_else(|| anyhow::anyhow!("住户 {who:?} 在来源注册表里没有任何来源"))
+}
+
 /// mock 搜索每个会话最多扫多少条消息（第一个会话有 1 万条，全扫没必要）。
 const MOCK_SEARCH_MESSAGES: usize = 300;
 /// mock 搜索每个会话最多给几条消息命中。
@@ -726,9 +755,9 @@ impl DataSource for MockDataSource {
             Period::All => 180.0,
         };
         let share = match provider {
+            Some(ProviderId::ClaudeCode) => 0.88,
             Some(ProviderId::Codex) => 0.12,
-            Some(ProviderId::GeminiCli) => 0.0,
-            Some(_) => 0.88,
+            Some(_) => 0.0,
             None => 1.0,
         };
         let k = scale * share;

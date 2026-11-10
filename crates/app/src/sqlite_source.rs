@@ -8,19 +8,16 @@ use agenthome_core::model::{
     CostBreakdown, DailyUsage, Message, Period, ProviderActivity, ProviderHealth, ProviderId,
     QuotaSnapshot, SearchHit, SessionQuery, SessionSummary, UsageTotals,
 };
-use agenthome_core::{
-    ClaudeCodeProvider, CodexProvider, GeminiProvider, SourceProvider, Store, claude_statusline,
-    codex_rollout_quota, paths,
-};
+use agenthome_core::providers::registry;
+use agenthome_core::{SourceProvider, Store, claude_statusline, codex_rollout_quota};
 use anyhow::{Context as _, anyhow};
 
 use crate::data::{DataSource, ProjectRow};
 
 pub struct SqliteDataSource {
     store: Mutex<Store>,
-    claude: ClaudeCodeProvider,
-    codex: CodexProvider,
-    gemini: GeminiProvider,
+    /// 来源注册表里的全部来源（活动探测用）。
+    providers: Vec<Box<dyn SourceProvider + Send + Sync>>,
 }
 
 impl SqliteDataSource {
@@ -29,9 +26,7 @@ impl SqliteDataSource {
             .with_context(|| t!("sync.index_open_failed", path = path.display()).to_string())?;
         Ok(Self {
             store: Mutex::new(store),
-            claude: ClaudeCodeProvider::new(paths::claude_projects_dir()),
-            codex: CodexProvider::new(paths::codex_sessions_dir()),
-            gemini: GeminiProvider::new(paths::gemini_dir()),
+            providers: registry::instantiate_all(),
         })
     }
 
@@ -92,7 +87,11 @@ impl DataSource for SqliteDataSource {
     }
 
     fn activity(&self) -> anyhow::Result<Vec<ProviderActivity>> {
-        let providers: [&dyn SourceProvider; 3] = [&self.claude, &self.codex, &self.gemini];
+        let providers: Vec<&dyn SourceProvider> = self
+            .providers
+            .iter()
+            .map(|p| -> &dyn SourceProvider { p.as_ref() })
+            .collect();
         self.with_store(|store| store.activity(&providers))
     }
 
@@ -120,6 +119,10 @@ impl DataSource for SqliteDataSource {
                     crate::format::now_ms(),
                 );
             }
+            out.push(s);
+        }
+        // Antigravity CLI 额度：后台每 15 分钟跑一次官方 `agy -p /usage`。
+        if let Some(s) = agenthome_core::signals::agy_usage_snapshot(None)? {
             out.push(s);
         }
         Ok(out)

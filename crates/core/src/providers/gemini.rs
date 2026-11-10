@@ -691,7 +691,7 @@ fn first_user_title(m: &Message) -> Option<String> {
     (!t.is_empty()).then_some(t)
 }
 
-fn one_line(s: &str, max: usize) -> String {
+pub(crate) fn one_line(s: &str, max: usize) -> String {
     s.split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
@@ -719,17 +719,17 @@ fn sha256_hex(s: &str) -> String {
 }
 
 #[derive(Default)]
-struct SummaryRow {
-    title: Option<String>,
-    workspace: Option<String>,
-    parent: Option<String>,
-    last_modified_ms: Option<i64>,
-    last_user_input_ms: Option<i64>,
+pub(crate) struct SummaryRow {
+    pub(crate) title: Option<String>,
+    pub(crate) workspace: Option<String>,
+    pub(crate) parent: Option<String>,
+    pub(crate) last_modified_ms: Option<i64>,
+    pub(crate) last_user_input_ms: Option<i64>,
 }
 
 /// 只读打开 Antigravity 的摘要库，取一行。标题在 `raw_summary`（protobuf）的字段 1；
 /// `title` 列本机实测全空，`preview` 是对话片段，只在两者都没有时兜底。
-fn read_summary(db: &Path, conv_id: &str) -> Result<Option<SummaryRow>> {
+pub(crate) fn read_summary(db: &Path, conv_id: &str) -> Result<Option<SummaryRow>> {
     use rusqlite::{OpenFlags, OptionalExtension};
     let conn = rusqlite::Connection::open_with_flags(
         db,

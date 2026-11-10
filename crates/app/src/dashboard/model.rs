@@ -8,8 +8,9 @@ use agenthome_core::model::{
     UsageTotals,
 };
 
-use crate::data::DataSource;
+use crate::data::{DataSource, resident_totals};
 use crate::format::{absolute_date, now_ms};
+use crate::habitat::ResidentId;
 
 /// 页头周期（今天 / 30 天 / 90 天 / 全部）驱动的一整页数据。
 pub struct Overview {
@@ -101,9 +102,9 @@ pub fn load_overview(
 pub fn load_tokens(source: &dyn DataSource, period: Period) -> anyhow::Result<TokenTotals> {
     Ok(TokenTotals {
         all: source.totals(period, None)?,
-        claude: source.totals(period, Some(ProviderId::ClaudeCode))?,
-        codex: source.totals(period, Some(ProviderId::Codex))?,
-        gemini: source.totals(period, Some(ProviderId::GeminiCli))?,
+        claude: resident_totals(source, period, ResidentId::Claude)?,
+        codex: resident_totals(source, period, ResidentId::Codex)?,
+        gemini: resident_totals(source, period, ResidentId::Gemini)?,
     })
 }
 
@@ -155,6 +156,10 @@ pub fn due_items(snapshots: &[QuotaSnapshot]) -> Vec<DueItem> {
     for snapshot in snapshots {
         let name = super::fmt::provider_name(&snapshot.provider);
         for window in &snapshot.windows {
+            // 没用过的窗口不进到期列表：agy 对未用的 5 小时窗口报「现在 + 5 小时」，每次刷新都往后推，没有意义。
+            if window.used_percent <= 0.0 {
+                continue;
+            }
             let Some(at_ms) = window.resets_at_ms else {
                 continue;
             };

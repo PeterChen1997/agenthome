@@ -3,10 +3,11 @@
 use agenthome_core::model::{
     ContentBlock, CostSource, Freshness, Period, ProviderId, Role, SessionQuery,
 };
+use agenthome_core::providers::registry;
 use agenthome_core::statusline_setup::{self, StatuslinePaths, StatuslineStatus};
 use agenthome_core::{
-    ClaudeCodeProvider, CodexProvider, GeminiProvider, RawArchive, SourceProvider, Store,
-    claude_statusline, codex_rollout_quota, ingest_all, paths, pricing,
+    RawArchive, SourceProvider, Store, claude_statusline, codex_rollout_quota, ingest_all, paths,
+    pricing,
 };
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand, ValueEnum};
@@ -31,7 +32,7 @@ enum PeriodArg {
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// 扫描全部来源（Claude Code、Codex、Gemini）并入库（增量）
+    /// 扫描来源注册表里的全部来源（Claude Code、Codex、Gemini CLI、Antigravity CLI）并入库（增量）
     Scan {
         /// Claude Code projects 根目录，默认 ~/.claude/projects
         #[arg(long)]
@@ -94,6 +95,12 @@ enum Cmd {
         /// 启动官方 codex 只读查询一次 ChatGPT 重置额度（由 codex 自己鉴权；不兑换、不读凭据）
         #[arg(long)]
         refresh_codex_reset_credits: bool,
+        /// 先跑一次官方 `agy -p /usage` 刷新 Antigravity 额度（约 12 秒，不建对话、不耗 token）
+        #[arg(long)]
+        refresh_agy: bool,
+        /// 调试：跑一次官方 `claude` 的 /usage，把原始屏幕文字打印出来（核对解析用）
+        #[arg(long)]
+        print_claude_screen: bool,
     },
     /// 各来源最近活动
     Activity {
@@ -151,11 +158,15 @@ fn main() -> Result<()> {
             statusline,
             refresh_claude,
             refresh_codex_reset_credits,
+            refresh_agy,
+            print_claude_screen,
         } => quota(
             codex_root,
             statusline,
             refresh_claude,
             refresh_codex_reset_credits,
+            refresh_agy,
+            print_claude_screen,
         ),
         Cmd::Activity {
             db,
@@ -176,16 +187,27 @@ fn open_store(db: Option<PathBuf>) -> Result<Store> {
     Store::open(&path).with_context(|| format!("打开索引库 {}", path.display()))
 }
 
+/// 来源注册表里的全部来源；前三个来源的根目录可用旧参数覆盖（测试、换机器时用）。
 fn providers(
     root: Option<PathBuf>,
     codex_root: Option<PathBuf>,
     gemini_root: Option<PathBuf>,
-) -> (ClaudeCodeProvider, CodexProvider, GeminiProvider) {
-    (
-        ClaudeCodeProvider::new(root.unwrap_or_else(paths::claude_projects_dir)),
-        CodexProvider::new(codex_root.unwrap_or_else(paths::codex_sessions_dir)),
-        GeminiProvider::new(gemini_root.unwrap_or_else(paths::gemini_dir)),
-    )
+) -> Vec<Box<dyn SourceProvider + Send + Sync>> {
+    registry::builtin()
+        .iter()
+        .map(|spec| {
+            let custom = match spec.id {
+                ProviderId::ClaudeCode => root.clone(),
+                ProviderId::Codex => codex_root.clone(),
+                ProviderId::GeminiCli => gemini_root.clone(),
+                _ => None,
+            };
+            match custom {
+                Some(dir) => (spec.build)(dir),
+                None => spec.instantiate(),
+            }
+        })
+        .collect()
 }
 
 fn scan(
@@ -195,16 +217,15 @@ fn scan(
     db: Option<PathBuf>,
     no_raw: bool,
 ) -> Result<()> {
-    let (claude, codex, gemini) = providers(root, codex_root, gemini_root);
-    let list: [&dyn SourceProvider; 3] = [&claude, &codex, &gemini];
-    let detected: Vec<&dyn SourceProvider> = list.iter().copied().filter(|p| p.detect()).collect();
+    let all = providers(root, codex_root, gemini_root);
+    let detected: Vec<&dyn SourceProvider> = all
+        .iter()
+        .map(|p| -> &dyn SourceProvider { p.as_ref() })
+        .filter(|p| p.detect())
+        .collect();
     if detected.is_empty() {
-        bail!(
-            "未找到任何来源目录：{} / {} / {}",
-            claude.root().display(),
-            codex.root().display(),
-            gemini.root().display()
-        );
+        let roots: Vec<String> = all.iter().map(|p| p.root().display().to_string()).collect();
+        bail!("未找到任何来源目录：{}", roots.join(" / "));
     }
     let db = db.unwrap_or_else(paths::default_index_db);
     let raw = if no_raw {
@@ -233,12 +254,11 @@ fn scan(
     eprintln!();
 
     for (provider, r) in &report.per_provider {
-        let root = match provider {
-            ProviderId::ClaudeCode => claude.root().display().to_string(),
-            ProviderId::Codex => codex.root().display().to_string(),
-            ProviderId::GeminiCli => gemini.root().display().to_string(),
-            _ => String::new(),
-        };
+        let root = all
+            .iter()
+            .find(|p| &p.id() == provider)
+            .map(|p| p.root().display().to_string())
+            .unwrap_or_default();
         println!("== {} ({root})", provider.as_str());
         println!(
             "发现文件: {}  重新解析: {}  未变跳过: {}  旧副本跳过: {}",
@@ -661,7 +681,19 @@ fn quota(
     statusline: Option<PathBuf>,
     refresh_claude: bool,
     refresh_codex_reset_credits: bool,
+    refresh_agy: bool,
+    print_claude_screen: bool,
 ) -> Result<()> {
+    if print_claude_screen {
+        let claude = agenthome_core::signals::find_claude_binary()
+            .ok_or_else(|| anyhow::anyhow!("找不到官方 claude 命令"))?;
+        let screen = agenthome_core::signals::claude_usage::capture_usage_screen(
+            &claude,
+            &paths::default_data_dir(),
+        )?;
+        println!("{screen}");
+        return Ok(());
+    }
     if refresh_codex_reset_credits {
         println!("正在启动官方 codex 查询重置额度 …");
         agenthome_core::signals::refresh_reset_credits(None)?;
@@ -720,6 +752,19 @@ fn quota(
             println!("没查过：用 --refresh-codex-reset-credits 查一次，或在 app 设置页点「查询」。")
         }
     }
+    let agy_path = agenthome_core::signals::agy_usage::agy_usage_path();
+    if refresh_agy {
+        let agy = agenthome_core::signals::find_agy_binary().ok_or_else(|| {
+            anyhow::anyhow!("找不到官方 agy 命令（~/.local/bin、/opt/homebrew/bin、PATH）")
+        })?;
+        println!("\n正在运行 {} -p /usage …", agy.display());
+        agenthome_core::signals::refresh_agy_usage(&agy, &paths::default_data_dir(), &agy_path)?;
+    }
+    println!("\n== Antigravity CLI（/usage 快照 {}）", agy_path.display());
+    match agenthome_core::signals::agy_usage_snapshot(Some(&agy_path))? {
+        Some(s) => print_snapshot(&s),
+        None => println!("无快照：用 --refresh-agy 跑一次，或等 app 定时刷新。"),
+    }
     Ok(())
 }
 
@@ -765,8 +810,11 @@ fn activity(
     gemini_root: Option<PathBuf>,
 ) -> Result<()> {
     let store = open_store(db)?;
-    let (claude, codex, gemini) = providers(root, codex_root, gemini_root);
-    let list: [&dyn SourceProvider; 3] = [&claude, &codex, &gemini];
+    let all = providers(root, codex_root, gemini_root);
+    let list: Vec<&dyn SourceProvider> = all
+        .iter()
+        .map(|p| -> &dyn SourceProvider { p.as_ref() })
+        .collect();
     let rows = store.activity(&list)?;
     let header = ["来源", "检测到", "最近活动", "类型", "10分钟内活跃会话"];
     let body: Vec<Vec<String>> = rows

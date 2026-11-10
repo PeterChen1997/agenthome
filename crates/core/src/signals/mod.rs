@@ -1,15 +1,18 @@
 //! 额度信号：都来自本机文件，不走网络、不碰鉴权。
 //!
+//! - `agy_usage`：后台跑官方 Antigravity CLI 的 `agy -p /usage --output-format json` 得到的快照。
 //! - `claude_statusline`：statusline 包装脚本写下的最近一次 JSON（见 docs/06-statusline-安装.md）。
 //! - `claude_usage`：后台在伪终端跑官方 `claude` 的 `/usage` 读屏得到的快照（只用桌面版时的来源）。
 //! - `codex_rollout_quota`：最新 rollout 里最后一条 `token_count.rate_limits`。
 //! - `codex_reset_credits`：ChatGPT 重置额度。本机没有，由用户手动触发、启动官方 `codex app-server` 只读查询。
 
+pub mod agy_usage;
 pub mod claude_statusline;
 pub mod claude_usage;
 pub mod codex_reset_credits;
 pub mod codex_rollout;
 
+pub use agy_usage::{agy_usage_snapshot, find_agy_binary, refresh_agy_usage};
 pub use claude_statusline::claude_statusline;
 pub use claude_usage::{
     claude_usage_snapshot, find_claude_binary, merge_claude, refresh_claude_usage,

@@ -12,10 +12,10 @@ use gpui_kit::{
     SharedString, Styled as _, Subscription, Task, Window, div, px, rgb,
 };
 
-use super::cards::{Tag, TagKind, avatar, card, card_title, hp_bar, hp_color, vt};
+use super::cards::{Tag, TagKind, avatar, card, card_title, hp_bar, hp_color, mono_num};
 use super::fmt::{self, GREEN, MUTED, RED_TEXT, amber_text, countdown};
 use super::model::{DueItem, due_items};
-use crate::assets::PixelMono as _;
+use crate::assets::MonoText as _;
 use crate::format::{now_ms, quota_window_label};
 use crate::habitat::{HabitatView, ResidentId};
 use crate::live::{LiveState, shown_state};
@@ -57,12 +57,12 @@ impl QuotaState {
     }
 }
 
-fn provider_of(who: ResidentId) -> ProviderId {
-    match who {
-        ResidentId::Claude => ProviderId::ClaudeCode,
-        ResidentId::Codex => ProviderId::Codex,
-        ResidentId::Gemini => ProviderId::GeminiCli,
-    }
+/// 头像用：住户名下登记的第一个来源（头像按住户取，哪个来源都一样）。
+fn resident_provider(who: ResidentId) -> ProviderId {
+    crate::live::providers_of(who)
+        .into_iter()
+        .next()
+        .unwrap_or(ProviderId::Other(String::new()))
 }
 
 /// 「额度详情」卡：三位住户各一列，状态文案来自栖息地状态机，体力条来自额度窗口。
@@ -102,8 +102,10 @@ impl ResidentsCard {
         now_ms: i64,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let provider = provider_of(who);
-        let snapshot = snapshots.iter().find(|s| s.provider == provider);
+        // 按住户找快照：猫的额度来自 Antigravity CLI（Gemini CLI 没有额度信号）。
+        let snapshot = snapshots
+            .iter()
+            .find(|s| crate::live::resident_of(&s.provider) == Some(who));
         // 未接入（`status` 为 None）只写「未接入」；已接入时套餐名优先，没有套餐名写「已接入」。
         let plan: SharedString = match (&status, snapshot.and_then(|s| s.plan.clone())) {
             (None, _) => t!("dashboard.plan_not_connected").into_owned(),
@@ -163,7 +165,9 @@ impl ResidentsCard {
                         .iter()
                         .map(|w| window_row(who.slug(), w, now_ms, cx)),
                 );
-                body = body.child(reset_line(snapshot, now_ms, cx));
+                if let Some(credits) = credits_line(snapshot, now_ms, cx) {
+                    body = body.child(credits);
+                }
             }
             None => {
                 body = body.child(window_row_empty(cx)).child(
@@ -191,7 +195,7 @@ impl ResidentsCard {
             })
             .when(who != ResidentId::Gemini, |col| col.pr(px(16.)))
             .when(snapshot.is_none(), |col| col.opacity(0.6))
-            .child(avatar(&provider, 40.))
+            .child(avatar(&resident_provider(who), 40.))
             .child(body)
             .into_any_element()
     }
@@ -280,13 +284,16 @@ fn window_row(
             h_flex()
                 .justify_between()
                 .items_baseline()
+                .gap(px(8.))
                 .text_size(px(12.))
                 .text_color(cx.theme().muted_foreground)
                 .child(
+                    // 窗口名可截断（「5h (Claude/GPT)」较长）；徽标与右侧的重置、百分比固定不缩。
                     h_flex()
+                        .min_w_0()
                         .items_center()
                         .gap(px(6.))
-                        .child(quota_window_label(window))
+                        .child(div().min_w_0().truncate().child(quota_window_label(window)))
                         .when_some(reading, |row, reading| {
                             row.child(PressureBadge::new(
                                 SharedString::from(format!(
@@ -299,13 +306,37 @@ fn window_row(
                         }),
                 )
                 .child(
-                    vt(22.)
-                        .text_color(if left > 50.0 {
-                            cx.theme().foreground
-                        } else {
-                            hp_color(left, cx)
+                    // 右侧：重置倒计时 + 剩余百分比，跟着各自的条走（不再在卡片底部另列一串）。
+                    h_flex()
+                        .flex_none()
+                        .items_baseline()
+                        .gap(px(10.))
+                        .when_some(window.resets_at_ms, |row, at| {
+                            let remaining = at - now_ms;
+                            let text = countdown(remaining);
+                            row.child(
+                                h_flex()
+                                    .items_baseline()
+                                    .gap(px(4.))
+                                    .text_size(px(11.5))
+                                    .child(t!("dashboard.reset_short"))
+                                    .child(
+                                        mono_num(12., cx)
+                                            .text_color(due_color(remaining, Some(left), cx))
+                                            .child(text),
+                                    ),
+                            )
                         })
-                        .child(format!("{left:.0}%")),
+                        .child(
+                            mono_num(13., cx)
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_color(if left > 50.0 {
+                                    cx.theme().foreground
+                                } else {
+                                    hp_color(left, cx)
+                                })
+                                .child(format!("{left:.0}%")),
+                        ),
                 ),
         )
         .child(hp_bar(Some(left), cx))
@@ -333,42 +364,25 @@ fn window_row_empty(cx: &mut Context<ResidentsCard>) -> AnyElement {
                 .text_size(px(12.))
                 .text_color(cx.theme().muted_foreground)
                 .child(t!("dashboard.quota"))
-                .child(vt(22.).text_color(cx.theme().muted_foreground).child("--")),
+                .child(
+                    mono_num(16., cx)
+                        .text_color(cx.theme().muted_foreground)
+                        .child("--"),
+                ),
         )
         .child(hp_bar(None, cx))
         .into_any_element()
 }
 
-/// 底部一行：各窗口重置倒计时 + Codex 重置信用。
-fn reset_line(snapshot: &QuotaSnapshot, now_ms: i64, cx: &App) -> AnyElement {
+/// 底部一行：Codex 重置额度（张数与最近一张的过期倒计时）；没有就不画。
+fn credits_line(snapshot: &QuotaSnapshot, now_ms: i64, cx: &App) -> Option<AnyElement> {
     let mut line = h_flex()
         .flex_wrap()
         .gap(px(14.))
         .text_size(px(11.5))
         .text_color(rgb(MUTED));
-    for window in &snapshot.windows {
-        let Some(at) = window.resets_at_ms else {
-            continue;
-        };
-        let remaining = at - now_ms;
-        let text = countdown(remaining);
-        line = line.child(
-            h_flex()
-                .gap(px(4.))
-                .items_baseline()
-                .child(t!(
-                    "dashboard.window_reset",
-                    window = quota_window_label(window)
-                ))
-                .child(
-                    vt(16.)
-                        .pixel_mono(&text, 16., cx)
-                        .text_color(due_color(remaining, Some(100.0 - window.used_percent), cx))
-                        .child(text),
-                ),
-        );
-    }
-    if let Some(credits) = &snapshot.credits {
+    let credits = snapshot.credits.as_ref()?;
+    {
         let mut item = h_flex()
             .gap(px(4.))
             .items_baseline()
@@ -387,14 +401,18 @@ fn reset_line(snapshot: &QuotaSnapshot, now_ms: i64, cx: &App) -> AnyElement {
                     .unwrap_or(("", template.as_ref()));
                 let unit = |text: &str| {
                     let text = text.trim().to_string();
-                    vt(16.)
-                        .pixel_mono(&text, 16., cx)
+                    mono_num(12., cx)
+                        .mono_text(&text, 12., cx)
                         .text_color(rgb(GREEN))
                         .child(text)
                 };
                 item = item
                     .when(!before.trim().is_empty(), |item| item.child(unit(before)))
-                    .child(vt(16.).text_color(rgb(GREEN)).child(n.to_string()))
+                    .child(
+                        mono_num(12., cx)
+                            .text_color(rgb(GREEN))
+                            .child(n.to_string()),
+                    )
                     .when(!after.trim().is_empty(), |item| item.child(unit(after)));
             }
             None if credits.unlimited => item = item.child(t!("dashboard.credits_unlimited")),
@@ -412,8 +430,8 @@ fn reset_line(snapshot: &QuotaSnapshot, now_ms: i64, cx: &App) -> AnyElement {
                     item.child(before.trim().to_string())
                 })
                 .child(
-                    vt(16.)
-                        .pixel_mono(&text, 16., cx)
+                    mono_num(12., cx)
+                        .mono_text(&text, 12., cx)
                         .text_color(due_color(expires - now_ms, None, cx))
                         .child(text),
                 )
@@ -423,7 +441,7 @@ fn reset_line(snapshot: &QuotaSnapshot, now_ms: i64, cx: &App) -> AnyElement {
         }
         line = line.child(item);
     }
-    line.into_any_element()
+    Some(line.into_any_element())
 }
 
 /// 倒计时颜色：不足 1 小时红；不足 6 小时或窗口剩余不足 1/4 琥珀；其余用主题正文色
@@ -504,7 +522,7 @@ impl DueCard {
                 let text = countdown(remaining);
                 div()
                     .flex_none()
-                    .pixel_mono(&text, 22., cx)
+                    .mono_text(&text, 16., cx)
                     .line_height(px(22.))
                     .text_color(due_color(remaining, item.quota_left, cx))
                     .child(text)

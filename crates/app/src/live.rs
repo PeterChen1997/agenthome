@@ -68,20 +68,31 @@ pub fn shown_state(connected: bool, state: ResidentState) -> Option<ResidentStat
 }
 
 /// core 的来源 → 栖息地住户；没有住户形象的来源返回 None。
+/// 归属登记在来源注册表里（Antigravity CLI 与 Gemini CLI 同归猫住户）。
 pub fn resident_of(provider: &ProviderId) -> Option<ResidentId> {
-    match provider {
-        ProviderId::ClaudeCode => Some(ResidentId::Claude),
-        ProviderId::Codex => Some(ResidentId::Codex),
-        ProviderId::GeminiCli => Some(ResidentId::Gemini),
-        _ => None,
-    }
+    use agenthome_core::providers::registry::{Resident, spec};
+    spec(provider)?.resident.map(|r| match r {
+        Resident::Claude => ResidentId::Claude,
+        Resident::Codex => ResidentId::Codex,
+        Resident::Gemini => ResidentId::Gemini,
+    })
 }
 
-/// 主窗口：Claude 取 five_hour，Codex 取 primary，其余取第一个。
+/// 住户名下的全部来源（来源注册表里 `resident` 指向它的那些）。
+pub fn providers_of(who: ResidentId) -> Vec<ProviderId> {
+    agenthome_core::providers::registry::builtin()
+        .into_iter()
+        .filter(|s| resident_of(&s.id) == Some(who))
+        .map(|s| s.id)
+        .collect()
+}
+
+/// 主窗口：Claude 取 five_hour，Codex 取 primary，Antigravity 取 Gemini 组的 5 小时，其余取第一个。
 pub fn primary_window(snapshot: &QuotaSnapshot) -> Option<&QuotaWindow> {
     let wanted = match snapshot.provider {
         ProviderId::ClaudeCode => "five_hour",
         ProviderId::Codex => "primary",
+        ProviderId::AntigravityCli => "gemini-5h",
         _ => "",
     };
     snapshot
@@ -115,14 +126,24 @@ fn diff_events(
     now_ms: i64,
 ) -> Vec<HabitatEvent> {
     let mut events = Vec::new();
+    // 一位住户可能代表多个来源（猫 = Gemini CLI + Antigravity CLI）：任一来源检测到就算在家，
+    // 逐来源发会让后一个「没装」盖掉前一个。
+    for who in ResidentId::ALL {
+        let mine: Vec<&ProviderActivity> = activity
+            .iter()
+            .filter(|a| resident_of(&a.provider) == Some(who))
+            .collect();
+        if !mine.is_empty() {
+            events.push(HabitatEvent::Detected {
+                who,
+                detected: mine.iter().any(|a| a.detected),
+            });
+        }
+    }
     for current in activity {
         let Some(who) = resident_of(&current.provider) else {
             continue;
         };
-        events.push(HabitatEvent::Detected {
-            who,
-            detected: current.detected,
-        });
         let last =
             previous.and_then(|(prev, _)| prev.iter().find(|p| p.provider == current.provider));
         let is_new_record = last.is_none_or(|p| p.last_activity_ms != current.last_activity_ms);

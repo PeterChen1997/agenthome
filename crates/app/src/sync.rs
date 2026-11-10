@@ -18,9 +18,10 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use agenthome_core::model::ProviderId;
+use agenthome_core::providers::registry;
 use agenthome_core::{
-    ClaudeCodeProvider, CodexProvider, GeminiProvider, IngestCache, RawArchive, RawStats, Report,
-    SourceProvider, Store, WatchEvent, ingest_all_cached, ingest_paths, paths, watch_roots,
+    IngestCache, RawArchive, RawStats, Report, SourceProvider, Store, WatchEvent, WatchRoot,
+    ingest_all_cached, ingest_paths, paths, watch_roots,
 };
 use gpui_kit::{App, AsyncApp, Entity, Task};
 
@@ -34,7 +35,7 @@ const MAX_DELAY: Duration = Duration::from_secs(10);
 /// 兜底全量扫描间隔。
 const FALLBACK_SCAN: Duration = Duration::from_secs(3_600);
 /// 后台跑官方 `claude /usage` 刷新 Claude 订阅额度的间隔（每次约 10 秒、不耗 token）。
-const CLAUDE_PROBE_INTERVAL: Duration = Duration::from_secs(15 * 60);
+const QUOTA_PROBE_INTERVAL: Duration = Duration::from_secs(15 * 60);
 /// 前台检查后台快照的间隔。
 const UI_POLL: Duration = Duration::from_millis(500);
 
@@ -79,9 +80,11 @@ pub struct ProviderSync {
 
 /// 后台 `/usage` 刷新 Claude 额度的状况。
 #[derive(Clone, Debug, Default, PartialEq)]
-pub struct ClaudeProbe {
+pub struct QuotaProbe {
     /// 找到的官方 claude 可执行文件；None 表示没装或不在常见位置。
     pub binary: Option<PathBuf>,
+    /// 找过了、本机没装这个 CLI（不是失败，只是没有这个额度来源）。
+    pub not_installed: bool,
     pub running: bool,
     /// 最近一次成功的时刻（Unix 毫秒）。
     pub last_ok_ms: Option<i64>,
@@ -115,7 +118,9 @@ pub struct SyncState {
     pub data_revision: u64,
     /// 打开索引库失败、监听后端报错等；UI 以文字展示。
     pub error: Option<String>,
-    pub claude_probe: ClaudeProbe,
+    pub claude_probe: QuotaProbe,
+    /// Antigravity CLI 额度（官方 `agy -p /usage`）。
+    pub agy_probe: QuotaProbe,
     pub raw: RawSync,
     /// 内部版本号：快照任何字段变化都加一，前台据此判断要不要重绘。
     version: u64,
@@ -139,6 +144,7 @@ impl SyncState {
 pub struct SyncEngine {
     commands: Sender<Command>,
     probe: Sender<bool>,
+    agy_probe: Sender<bool>,
     _poll: Task<()>,
 }
 
@@ -147,6 +153,7 @@ pub struct SyncEngine {
 pub struct SyncHandle {
     commands: Sender<Command>,
     probe: Sender<bool>,
+    agy_probe: Sender<bool>,
 }
 
 impl SyncHandle {
@@ -159,16 +166,20 @@ impl SyncHandle {
     pub fn refresh_claude_quota(&self) {
         let _ = self.probe.send(true);
     }
+
+    /// 立即跑一次官方 `agy -p /usage` 刷新 Antigravity 额度。
+    pub fn refresh_agy_quota(&self) {
+        let _ = self.agy_probe.send(true);
+    }
 }
 
 impl SyncEngine {
     /// 启动入库线程与文件监听，状态写进 `state`。
     pub fn start(db_path: PathBuf, state: Entity<SyncState>, cx: &mut App) -> Self {
-        let roots: Vec<(ProviderId, PathBuf)> = vec![
-            (ProviderId::ClaudeCode, paths::claude_projects_dir()),
-            (ProviderId::Codex, paths::codex_sessions_dir()),
-            (ProviderId::GeminiCli, paths::gemini_dir()),
-        ];
+        let roots: Vec<(ProviderId, PathBuf)> = registry::builtin()
+            .iter()
+            .map(|spec| (spec.id.clone(), (spec.default_root)()))
+            .collect();
         let shared = Arc::new(Mutex::new(SyncState {
             providers: roots
                 .iter()
@@ -204,6 +215,13 @@ impl SyncEngine {
             .spawn(move || run_claude_probe(probe_shared, probe_receiver))
             .expect("启动 Claude 额度线程失败");
 
+        let (agy_probe, agy_receiver) = mpsc::channel::<bool>();
+        let agy_shared = shared.clone();
+        std::thread::Builder::new()
+            .name("agenthome-agy-usage".into())
+            .spawn(move || run_agy_probe(agy_shared, agy_receiver))
+            .expect("启动 Antigravity 额度线程失败");
+
         // 弱引用：外壳释放状态实体后轮询自行退出。
         let state = state.downgrade();
         let poll = cx.spawn(async move |cx: &mut AsyncApp| {
@@ -228,6 +246,7 @@ impl SyncEngine {
         Self {
             commands,
             probe,
+            agy_probe,
             _poll: poll,
         }
     }
@@ -236,6 +255,7 @@ impl SyncEngine {
         SyncHandle {
             commands: self.commands.clone(),
             probe: self.probe.clone(),
+            agy_probe: self.agy_probe.clone(),
         }
     }
 }
@@ -264,14 +284,11 @@ fn run_worker(
             return;
         }
     };
-    let claude = ClaudeCodeProvider::new(paths::claude_projects_dir());
-    let codex = CodexProvider::new(paths::codex_sessions_dir());
-    let gemini = GeminiProvider::new(paths::gemini_dir());
-    let sources = Sources {
-        claude: &claude,
-        codex: &codex,
-        gemini: &gemini,
-    };
+    let providers = registry::instantiate_all();
+    let sources: Vec<&dyn SourceProvider> = providers
+        .iter()
+        .map(|p| -> &dyn SourceProvider { p.as_ref() })
+        .collect();
     let raw_root = paths::raw_dir_for_db(&db_path);
     let raw = match RawArchive::open(raw_root.clone()) {
         Ok(raw) => Some(raw),
@@ -285,11 +302,8 @@ fn run_worker(
     update(&shared, |s| s.raw.root = Some(raw_root));
 
     // 先挂监听再扫：扫描期间发生的变化会排进通道，扫完立刻补一轮。
-    // 除各来源主目录外还监听 Codex 的归档目录（会话被归档时 rollout 挪到那里）；它不存在属正常，不算没挂上。
-    let mut watch_list = roots.clone();
-    if let Some(archive) = codex.archive_root() {
-        watch_list.push((ProviderId::Codex, archive.to_path_buf()));
-    }
+    // 各来源自己声明要监听的目录（Codex 还有归档目录）；目录不存在属正常，不算没挂上。
+    let watch_list: Vec<WatchRoot> = sources.iter().flat_map(|p| WatchRoot::of(*p)).collect();
     let error_sender = watch_sender.clone();
     let watcher = watch_roots(&watch_list, move |event| match event {
         WatchEvent::Changed { provider, paths } => {
@@ -375,13 +389,6 @@ fn run_worker(
     drop(watcher);
 }
 
-/// 同步引擎管的三个来源。
-struct Sources<'a> {
-    claude: &'a ClaudeCodeProvider,
-    codex: &'a CodexProvider,
-    gemini: &'a GeminiProvider,
-}
-
 /// 一次要处理的变化：要全量扫描的来源 + 其余来源里变了的文件。
 #[derive(Default)]
 struct Batch {
@@ -408,24 +415,19 @@ fn scan(
     store: &mut Store,
     raw: Option<&RawArchive>,
     batch: &Batch,
-    sources: &Sources<'_>,
+    sources: &[&dyn SourceProvider],
     cache: &mut IngestCache,
     shared: &Mutex<SyncState>,
 ) {
-    let both: [(&ProviderId, &dyn SourceProvider); 3] = [
-        (&ProviderId::ClaudeCode, sources.claude),
-        (&ProviderId::Codex, sources.codex),
-        (&ProviderId::GeminiCli, sources.gemini),
-    ];
-    let full: Vec<&dyn SourceProvider> = both
+    let full: Vec<&dyn SourceProvider> = sources
         .iter()
-        .filter(|(id, _)| batch.full.contains(id))
-        .map(|(_, p)| *p)
+        .filter(|p| batch.full.contains(&p.id()))
+        .copied()
         .collect();
-    let partial: Vec<&dyn SourceProvider> = both
+    let partial: Vec<&dyn SourceProvider> = sources
         .iter()
-        .filter(|(id, _)| !batch.full.contains(id))
-        .map(|(_, p)| *p)
+        .filter(|p| !batch.full.contains(&p.id()))
+        .copied()
         .collect();
     let paths: Vec<PathBuf> = batch
         .paths
@@ -470,7 +472,7 @@ fn scan(
         .chain(batch.full.iter().cloned())
         .collect();
     let now = now_ms();
-    let full = batch.full.len() == both.len();
+    let full = batch.full.len() == sources.len();
     // 统计要遍历全部清单，只在有写入或还没统计过时重算。
     let stats_stale = shared.lock().map(|s| s.raw.stats.is_none()).unwrap_or(true);
     let raw_stats = raw
@@ -521,7 +523,7 @@ fn apply_report(p: &mut ProviderSync, report: &Report, now: i64, full: bool) {
     });
 }
 
-/// Claude 额度线程：启动即跑一次，之后每 [`CLAUDE_PROBE_INTERVAL`] 一次；`true` 指令强制立即跑。
+/// Claude 额度线程：启动即跑一次，之后每 [`QUOTA_PROBE_INTERVAL`] 一次；`true` 指令强制立即跑。
 fn run_claude_probe(shared: Arc<Mutex<SyncState>>, receiver: mpsc::Receiver<bool>) {
     use agenthome_core::signals::{claude_usage, find_claude_binary};
 
@@ -555,7 +557,42 @@ fn run_claude_probe(shared: Arc<Mutex<SyncState>>, receiver: mpsc::Receiver<bool
             }
         }
         // 定时到点或收到「立即刷新」都直接再跑一次。
-        if let Err(RecvTimeoutError::Disconnected) = receiver.recv_timeout(CLAUDE_PROBE_INTERVAL) {
+        if let Err(RecvTimeoutError::Disconnected) = receiver.recv_timeout(QUOTA_PROBE_INTERVAL) {
+            break;
+        }
+    }
+}
+
+/// Antigravity 额度线程：装了 `agy` 才跑；启动即跑一次，之后与 Claude 同频；`true` 指令强制立即跑。
+/// 没装时不报错（只是没有这个来源），设置页显示「未找到 agy」。
+fn run_agy_probe(shared: Arc<Mutex<SyncState>>, receiver: mpsc::Receiver<bool>) {
+    use agenthome_core::signals::{agy_usage, find_agy_binary};
+
+    loop {
+        let binary = find_agy_binary();
+        update(&shared, |s| {
+            s.agy_probe.binary = binary.clone();
+            s.agy_probe.not_installed = binary.is_none();
+        });
+        if let Some(bin) = &binary {
+            update(&shared, |s| s.agy_probe.running = true);
+            let result = agy_usage::refresh_agy_usage(
+                bin,
+                &paths::default_data_dir(),
+                &agy_usage::agy_usage_path(),
+            );
+            update(&shared, |s| {
+                s.agy_probe.running = false;
+                match result {
+                    Ok(snapshot) => {
+                        s.agy_probe.last_ok_ms = Some(snapshot.fetched_at_ms);
+                        s.agy_probe.last_error = None;
+                    }
+                    Err(error) => s.agy_probe.last_error = Some(format!("{error:#}")),
+                }
+            });
+        }
+        if let Err(RecvTimeoutError::Disconnected) = receiver.recv_timeout(QUOTA_PROBE_INTERVAL) {
             break;
         }
     }

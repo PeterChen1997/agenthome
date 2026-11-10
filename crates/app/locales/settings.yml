@@ -156,8 +156,20 @@ settings.probe_running:
   en: Refreshing
   zh-CN: 刷新中
 settings.probe_running_text:
-  en: Running the official claude /usage in the background…
-  zh-CN: 正在后台运行官方 claude /usage…
+  en: "Running the official %{agent} /usage in the background…"
+  zh-CN: "正在后台运行官方 %{agent} /usage…"
+settings.probe_not_installed:
+  en: Not installed
+  zh-CN: 未安装
+settings.probe_not_installed_text:
+  en: "Official %{agent} command not found (~/.local/bin, /opt/homebrew/bin, /usr/local/bin); this quota source is skipped"
+  zh-CN: "没有找到官方 %{agent} 命令（~/.local/bin、/opt/homebrew/bin、/usr/local/bin），跳过这个额度来源"
+settings.agy_usage_title:
+  en: Antigravity CLI · official /usage (background)
+  zh-CN: Antigravity CLI · 官方 /usage（后台）
+settings.agy_usage_desc:
+  en: "Antigravity quota (5-hour and weekly limits for the Gemini group and the Claude/GPT group, plus the separate weekly Gemini 4 Argon limit on Pro plans) comes from the official agy /usage, read every 15 minutes by running agy -p /usage once (about 12 seconds). It starts no conversation, uses no tokens and reads no credentials."
+  zh-CN: "Antigravity 额度（Gemini 组与 Claude/GPT 组各自的 5 小时与每周额度，以及 Pro 套餐单独的 Gemini 4 Argon 周额度）来自官方 agy 的 /usage，每 15 分钟后台运行一次 agy -p /usage（约 12 秒）：不建对话、不耗 token、不读凭据。"
 settings.probe_failed:
   en: Failed
   zh-CN: 失败
@@ -191,9 +203,6 @@ settings.uninstall_backup:
 settings.uninstall_done:
   en: "Uninstalled. %{restored}%{backup}Quota data already collected stays in ~/AgentHome/signals."
   zh-CN: "已卸载：%{restored}%{backup}已收集的额度数据保留在 ~/AgentHome/signals。"
-settings.provider_other:
-  en: Other
-  zh-CN: 其他
 settings.freshness_live:
   en: live
   zh-CN: 实时

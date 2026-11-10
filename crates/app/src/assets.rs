@@ -51,9 +51,11 @@ pub const FONTS: &[&[u8]] = &[
 ];
 
 /// 字体文件里的 family 名，`font_family()` 时用。
+/// 像素字体只有字体像素落在整屏幕像素上才清晰，在 1 倍屏的小字号上会发虚，所以只用在：
+/// VT323 —— 栖息地场景里的文字（场景本身是像素画）；
 pub const FONT_PIXEL_MONO: &str = "VT323";
-/// 区块标题用，C 块接线前暂无调用方。
-#[allow(dead_code)]
+/// Pixelify Sans —— 品牌字「AgentHome」，字号用 11px 的整数倍（它一个像素格约为字号的 1/11）。
+/// 数字、倒计时、标签用 [`MonoText`]（主题等宽字体），标题用正文字体加粗。
 pub const FONT_PIXEL_SANS: &str = "Pixelify Sans";
 
 /// 像素字体（VT323 / Pixelify Sans）没有中日韩字形：含这类字符的文字会退回系统字体，
@@ -63,25 +65,21 @@ pub fn has_cjk(text: &str) -> bool {
     text.chars().any(|c| c >= '\u{2E80}')
 }
 
-/// 和 VT323 字号视觉等大的正文字号：VT323 字面约为同字号正文的七成。
-pub fn body_size_for_pixel(size: f32) -> f32 {
-    (size * 0.72).round().max(11.)
-}
-
-/// 用 VT323 显示一段可能含中文的文字：纯拉丁字符用 VT323 与 `size`；
-/// 含中文时改用主题正文字体、字号换成视觉等大的正文字号。
-pub trait PixelMono: Styled + Sized {
-    fn pixel_mono(self, text: &str, size: f32, cx: &App) -> Self {
-        if has_cjk(text) {
-            self.font_family(cx.theme().font_family.clone())
-                .text_size(px(body_size_for_pixel(size)))
+/// 数字、倒计时、短标签：主题等宽字体（macOS 默认 Menlo），任何分辨率都清晰；含中文时用正文字体，
+/// 否则汉字会退回系统字体却按等宽字体的度量排。像素字体（VT323 / Pixelify）在 1 倍屏上发虚，
+/// 只留给品牌字与栖息地场景，见 docs/09 §1。
+pub trait MonoText: Styled + Sized {
+    fn mono_text(self, text: &str, size: f32, cx: &App) -> Self {
+        let family = if has_cjk(text) {
+            cx.theme().font_family.clone()
         } else {
-            self.font_family(FONT_PIXEL_MONO).text_size(px(size))
-        }
+            cx.theme().mono_font_family.clone()
+        };
+        self.font_family(family).text_size(px(size))
     }
 }
 
-impl<T: Styled> PixelMono for T {}
+impl<T: Styled> MonoText for T {}
 
 /// app 的素材源：内置图片 + gpui-kit 默认图标。
 pub struct AppAssets;

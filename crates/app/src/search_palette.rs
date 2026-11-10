@@ -23,7 +23,7 @@ use gpui_kit::{
     WeakEntity, Window, div, px,
 };
 
-use crate::assets::PixelMono as _;
+use crate::assets::MonoText as _;
 use crate::data::DataSource;
 use crate::format::{now_ms, relative_time};
 use crate::message_row::{provider_avatar, provider_short_name};
@@ -644,7 +644,7 @@ fn session_header(group: &HitGroup, now: i64, cx: &App) -> AnyElement {
             row.child(
                 div()
                     .flex_none()
-                    .pixel_mono(&text, 14., cx)
+                    .mono_text(&text, 11., cx)
                     .text_color(cx.theme().muted_foreground)
                     .child(text),
             )

@@ -18,7 +18,6 @@ use gpui_kit::{
 };
 
 use crate::archive::ArchiveView;
-use crate::assets::FONT_PIXEL_MONO;
 use crate::format::{clock_time, preview, short_duration, short_tokens};
 
 /// 消息流里一个可折叠块的标识：(消息 id, 块下标)。
@@ -180,12 +179,12 @@ enum TagKind {
 
 /// 来源头像；没有头像素材的来源用机器人图标。
 pub fn provider_avatar(provider: &ProviderId, size: f32) -> AnyElement {
-    let slug = match provider {
-        ProviderId::ClaudeCode => Some("claude"),
-        ProviderId::Codex => Some("codex"),
-        ProviderId::GeminiCli => Some("gemini"),
-        _ => None,
-    };
+    use agenthome_core::providers::registry::{Resident, spec};
+    let slug = spec(provider).and_then(|s| s.resident).map(|r| match r {
+        Resident::Claude => "claude",
+        Resident::Codex => "codex",
+        Resident::Gemini => "gemini",
+    });
     match slug {
         Some(slug) => img(format!("avatars/avatar-{slug}.png"))
             .size(px(size))
@@ -203,18 +202,14 @@ pub fn provider_short_name(provider: &ProviderId) -> &str {
         ProviderId::ClaudeCode => "Claude",
         ProviderId::Codex => "Codex",
         ProviderId::GeminiCli => "Gemini",
+        ProviderId::AntigravityCli => "Antigravity",
         other => other.as_str(),
     }
 }
 
-/// 产品全名，详情头部用。
-pub fn provider_display_name(provider: &ProviderId) -> &str {
-    match provider {
-        ProviderId::ClaudeCode => "Claude Code",
-        ProviderId::Codex => "Codex",
-        ProviderId::GeminiCli => "Gemini CLI",
-        other => other.as_str(),
-    }
+/// 产品全名，详情头部用；名字登记在来源注册表里。
+pub fn provider_display_name(provider: &ProviderId) -> String {
+    agenthome_core::providers::registry::display_name(provider)
 }
 
 /// 渲染消息流的第 `ix` 行。配对过的工具结果已并入调用行，自身渲染为零高。
@@ -448,8 +443,8 @@ pub fn render_row(
             div()
                 .flex_none()
                 .w(px(TURN_COLUMN))
-                .font_family(FONT_PIXEL_MONO)
-                .text_size(px(18.))
+                .font_family(cx.theme().mono_font_family.clone())
+                .text_size(px(13.))
                 .text_color(cx.theme().muted_foreground)
                 .when(turn_start, |col| col.child(format!("{turn_number:02}"))),
         )
@@ -519,7 +514,9 @@ fn render_trace_group(
                 TagKind::Err => Tag::danger(),
                 TagKind::Dim => Tag::secondary(),
             };
-            tag.small().font_family(FONT_PIXEL_MONO).child(text)
+            tag.small()
+                .font_family(cx.theme().mono_font_family.clone())
+                .child(text)
         });
         v_flex()
             .w_full()

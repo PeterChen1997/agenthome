@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use agenthome_core::model::{Period, ProviderId, QuotaSnapshot, QuotaWindow, SessionQuery};
-use agenthome_core::pressure::{PressureReading, worst_pressure};
+use agenthome_core::pressure::{PressureReading, pressure_to_show};
 use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
@@ -21,7 +21,7 @@ use gpui_kit::{
     StatefulInteractiveElement as _, Styled as _, Subscription, Task, Window, div, img, px,
 };
 
-use crate::assets::{FONT_PIXEL_MONO, FONT_PIXEL_SANS};
+use crate::assets::FONT_PIXEL_SANS;
 use crate::data::DataSource;
 use crate::format::{
     countdown, now_ms, quota_window_label, relative_time, short_cost, short_tokens, thousands,
@@ -68,14 +68,6 @@ pub struct Overview {
     pub recent: Vec<RecentSession>,
 }
 
-fn provider_of(who: ResidentId) -> ProviderId {
-    match who {
-        ResidentId::Claude => ProviderId::ClaudeCode,
-        ResidentId::Codex => ProviderId::Codex,
-        ResidentId::Gemini => ProviderId::GeminiCli,
-    }
-}
-
 /// 读今日汇总与最近会话（后台线程调用）。子代理会话不进「最近」，与归档列表的折叠一致。
 pub fn load_overview(source: &dyn DataSource) -> anyhow::Result<Overview> {
     let today = |provider: Option<ProviderId>| {
@@ -90,7 +82,12 @@ pub fn load_overview(source: &dyn DataSource) -> anyhow::Result<Overview> {
     let total = today(None)?;
     let mut agents = [DayUsage::default(); 3];
     for who in ResidentId::ALL {
-        agents[who.index()] = today(Some(provider_of(who)))?;
+        let t = crate::data::resident_totals(source, Period::Today, who)?;
+        agents[who.index()] = DayUsage {
+            output_tokens: t.usage.output_tokens,
+            cost_usd: t.cost_usd,
+            sessions: t.sessions,
+        };
     }
     let recent = source
         .sessions(&SessionQuery {
@@ -206,10 +203,12 @@ pub fn agent_quota(snapshot: &QuotaSnapshot, now_ms: i64) -> Option<AgentQuota> 
             expires_in_ms: credits.expires_at_ms.map(|at| at - now_ms),
         });
     let pressure =
-        worst_pressure(&snapshot.windows, now_ms).map(|(window, reading)| WindowPressure {
-            label: (window.id != primary.id).then(|| window_short_label(window)),
-            window: quota_window_label(window),
-            reading,
+        pressure_to_show(&snapshot.windows, &primary.id, now_ms).map(|(window, reading)| {
+            WindowPressure {
+                label: (window.id != primary.id).then(|| window_short_label(window)),
+                window: quota_window_label(window),
+                reading,
+            }
         });
     Some(AgentQuota {
         primary: window_use(primary, now_ms),
@@ -448,7 +447,8 @@ impl MenuBarPanel {
                             .bg(chip_bg)
                             .font_family(FONT_PIXEL_SANS)
                             .font_weight(FontWeight::SEMIBOLD)
-                            .text_size(px(13.))
+                            // Pixelify 一个像素格约为字号的 1/11：11px 时正好落在整像素上，1 倍屏也不发虚。
+                            .text_size(px(11.))
                             .text_color(cx.theme().primary)
                             .child("AgentHome"),
                     )
@@ -490,8 +490,8 @@ impl MenuBarPanel {
                 )
                 .child(
                     div()
-                        .font_family(FONT_PIXEL_MONO)
-                        .text_size(px(22.))
+                        .font_family(cx.theme().mono_font_family.clone())
+                        .text_size(px(16.))
                         .line_height(px(22.))
                         .text_color(color)
                         .child(text),
@@ -714,8 +714,8 @@ impl MenuBarPanel {
                                         })
                                         .child(
                                             div()
-                                                .font_family(FONT_PIXEL_MONO)
-                                                .text_size(px(17.))
+                                                .font_family(cx.theme().mono_font_family.clone())
+                                                .text_size(px(12.))
                                                 .text_color(level_color(used, cx))
                                                 .child(format!("{}%", (100.0 - used).round())),
                                         )
@@ -805,8 +805,8 @@ impl MenuBarPanel {
                 div()
                     .px(px(8.))
                     .pb(px(2.))
-                    .font_family(FONT_PIXEL_SANS)
                     .text_size(px(11.))
+                    .font_weight(FontWeight::SEMIBOLD)
                     .text_color(cx.theme().muted_foreground)
                     .child(t!("menubar.recent")),
             )

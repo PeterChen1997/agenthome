@@ -10,6 +10,7 @@
 
 - **v0.2.0 已发布并公证**（2026-11-10）：https://github.com/PeterChen1997/agenthome/releases （公开仓库 `PeterChen1997/agenthome`，分支 `main`），`/Applications` 已装 0.2.0。本版新增：**macOS 菜单栏图标 + 像素风使用概要面板**（`crates/app/src/menubar.rs`；用户试过原生 NSMenu 方案后决定保留自绘面板，不要再改成原生菜单）；**界面中英双语**（rust-i18n，`crates/app/locales/*.yml` 按模块拆，设置页可切换，`--lang`）；关主窗口只隐藏、⌘Q 退出。升级前真实索引库备份在 `~/AgentHome/backup/agenthome-before-0.2.0.db`。落地页源码 `site/`，私有预览 https://claude.ai/artifact/N54TGv6kPy71Kkdo4LjhgG ；GitHub Pages 工作流只手动触发，未启用。v0.1.5 / 0.1.6 的内容：按字节偏移增量入库、⌘K 全局搜索、Gemini 接入、成本口径修正（见 `docs/12-成本口径核对.md`）、Claude 额度只走官方 /usage、开源基础文件。
 - **ChatGPT 重置额度**（2026-11-10）：rollout 快照里没有，设置页「额度来源」下手动「查询」（首次弹授权），用 ChatGPT 桌面版自带的官方 codex（0.166 起支持；独立安装的 0.140 不支持）只读查询，结果存 `~/AgentHome/signals/codex-reset-credits.json`，并进 Codex 额度快照；仪表盘、「到期与重置」卡逐张显示，菜单栏在 3 天内过期时抢先显示并着色（3 天琥珀、1 天红）。CLI：`agenthome quota --refresh-codex-reset-credits`。代码 `crates/core/src/signals/codex_reset_credits.rs`。
+- **来源插件化 + Antigravity CLI**（2026-11-10，未发版）：Gemini CLI 已对个人账号（含 Google AI Pro）停服，个人用户改用 Antigravity CLI（`agy`），它每个对话一个 SQLite（`~/.gemini/antigravity-cli/conversations/<id>.db`），内容是**没加密**的 protobuf，含每次请求的新鲜输入 / 缓存读 / 输出 / 思考 token；新来源 `antigravity-cli`（`crates/core/src/providers/antigravity_cli.rs` + 无 schema 读取 `proto.rs`），栖息地归猫住户。所有来源改走注册表 `crates/core/src/providers/registry.rs`（同步、命令行、仪表盘、归档都遍历它），加 OpenCode 这类来源见 `docs/13-来源插件开发指南.md`；不重新编译的外部插件留到下一步。真实数据核对：4 个 agy 对话的 token 与 `agy -p --output-format stream-json` 逐条一致。猫住户的额度来自 `agy -p /usage --output-format json`（`crates/core/src/signals/agy_usage.rs`，快照 `~/AgentHome/signals/agy-usage.json`，后台每 15 分钟，设置页「立即刷新」，CLI `agenthome quota --refresh-agy`）：Gemini 组与 Claude/GPT 组各 5 小时 + 每周，另有 Pro 套餐的 Gemini 4 Argon 周额度。同批修了 Codex 两处口径（fork 首条累计值、缓存写重复计数），见 `docs/12` 第 7 节。
 - **v0.2.1 已发布并公证**（2026-11-10，`/Applications` 已装 0.2.1）：额度使用压力徽标 + ChatGPT 重置额度手动查询与到期提醒，见下两条。
 - **额度使用压力**（2026-11-10）：每个额度窗口按「已用比例 ÷ 窗口已过时间」判断照现在速度到重置前够不够用，分宽裕 / 正常 / 偏紧 / 紧张 / 已用尽，统一用 `crates/app/src/pressure_badge.rs` 的徽标（悬停有推算依据与五档说明）；仪表盘每窗口一个，偏紧和紧张时写「照此速度 X 后用完」，左栏住户行与菜单栏面板显示最紧的窗口（不是主窗口时带窗口名，如「7d 偏紧」）。计算在 `crates/core/src/pressure.rs`，阈值见 `docs/10-设计落地清单.md` 6.45。
 - **开源**：2026-11-10 用户决定直接公开现有仓库（不改写历史；git 历史里仍有私人邮箱与设计稿旧版本里的真实项目名，用户知情）。当前文件里的真实项目名与会话标题已换成虚构名。
@@ -50,6 +51,8 @@
 | `docs/09-开发踩坑记录.md` | GPUI、数据解析、额度、生图素材、验证工具的坑 | 现行，持续追加 |
 | `docs/10-设计落地清单.md` | **设计稿 + 规格逐项对照代码的验收清单**：271 项的状态、证据（path:line）、缺口，以及按依赖排好的 10 个收尾批次 | 现行，开发主清单 |
 | `docs/11-开发流水线.md` | 每项功能从认领到发布的 10 道关卡（G0–G9）与勾选项，含多 agent 并行规则 | 现行，必须遵守 |
+| `docs/12-成本口径核对.md` | 与 ccusage 的成本三方核对；第 7 节与业界开源实现的口径对照 | 现行 |
+| `docs/13-来源插件开发指南.md` | 来源注册表、`SourceProvider` 要实现什么、入库口径、加新来源的步骤与测试写法 | 现行 |
 | `docs/design/README.md` | 设计稿 v2.1 文件结构、实现与设计稿差异 | 现行 |
 | `docs/design/brainstorm/README.md` | 六个视觉方向与取舍（最终选「像素栖息地」） | 历史 |
 | `docs/research/` 下的 01~04 | 四份原始调研：GPUI 框架、GPUI Kit 生态、17 种 agent 会话格式、用量 / 配额 API | 参考 |
@@ -64,7 +67,7 @@
 ```
 crates/core   agenthome-core，零 UI 依赖
   model.rs            规范化模型：Session / Message / ContentBlock / Usage / Period / QuotaSnapshot / ProviderActivity …
-  providers/          SourceProvider trait；claude_code.rs、codex.rs、gemini.rs
+  providers/          SourceProvider trait；registry.rs（来源注册表，加来源只改这里）；claude_code.rs、codex.rs、gemini.rs、antigravity_cli.rs；proto.rs（无 schema 的 protobuf 读取）
   ingest.rs           ingest_all：按 size+mtime 增量，一个事务写会话 + 消息 + sources
   store.rs            SQLite（WAL、busy_timeout、FTS5 trigram），SCHEMA_VERSION=4；列表 / 详情 / 仪表盘查询 / 归档健康 / 活动
   watch.rs            notify（FSEvents）监听来源根目录，只认 .jsonl / .jsonl.zst
@@ -115,7 +118,7 @@ cargo fmt --all --check && cargo clippy --workspace --all-targets && cargo test 
 
 1. 产品名 AgentHome，归档目录 `~/AgentHome`。
 2. 存储：**拷贝，绝不软链、绝不动 agent 原目录**；仓库分 raw（原件，不可变）/ index（SQLite，可重建）/ user（星标笔记）三层。
-3. 额度只用合规来源：Claude 走官方 `claude` CLI 的 `/usage`（后台伪终端读屏，2026-11-08 用户选定）与 statusline，Codex 走 rollout 快照；**不做** Claude OAuth usage 端点、Codex wham 端点，AgentHome 不读取任何凭据。例外（2026-11-10 用户决定）：ChatGPT 重置额度本机没有，由用户在设置页**手动点「查询」**、第一次弹授权说明同意后，启动官方 `codex app-server` 发只读 `account/rateLimits/read`，由 codex 自己鉴权；仍不读凭据、不自动轮询、绝不调兑换（consume）。
+3. 额度只用合规来源：Claude 走官方 `claude` CLI 的 `/usage`（后台伪终端读屏，2026-11-08 用户选定）与 statusline，Codex 走 rollout 快照，Antigravity 走官方 `agy -p /usage --output-format json`（后台每 15 分钟，不建对话、不耗 token，2026-11-10）；**不做** Claude OAuth usage 端点、Codex wham 端点，AgentHome 不读取任何凭据。例外（2026-11-10 用户决定）：ChatGPT 重置额度本机没有，由用户在设置页**手动点「查询」**、第一次弹授权说明同意后，启动官方 `codex app-server` 发只读 `account/rateLimits/read`，由 codex 自己鉴权；仍不读凭据、不自动轮询、绝不调兑换（consume）。
 4. core 自带 CLI；TUI 以后再说。
 5. 首次启动默认归档模式。
 6. 外部 Provider 协议：自定义最小协议，只借 ACP / MCP 的 JSON-RPC over stdio 传输层。
@@ -140,7 +143,7 @@ cargo fmt --all --check && cargo clippy --workspace --all-targets && cargo test 
 7. 额度与仪表盘补齐：先用真实 rollout 核对 Codex credits 字段。
 8. 归档列表与搜索增强（依赖 2）。
 9. 菜单栏：图标与面板已做（0.2.0）；剩全局快捷键、图标随额度变色、到期提醒（`docs/10-设计落地清单.md` §8）。
-10. P2 / P3 远期：更多来源（Gemini CLI、OpenCode、Pi）、语义搜索、外部 Provider 协议等。
+10. P2 / P3 远期：更多来源（OpenCode、Pi，照 `docs/13` 加）、不重新编译的外部来源插件、语义搜索、外部 Provider 协议等。
 
 另有两个待查的边角问题：脚本 nohup 拉起时窗口不重绘；`Workspace` 观察整个 `ArchiveView` 导致的多余重绘。
 

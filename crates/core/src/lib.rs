@@ -28,6 +28,7 @@ pub mod watch;
 pub use ingest::{
     IngestCache, Progress, Report, ingest_all, ingest_all_cached, ingest_claude, ingest_paths,
 };
+pub use providers::antigravity_cli::AntigravityCliProvider;
 pub use providers::claude_code::ClaudeCodeProvider;
 pub use providers::codex::CodexProvider;
 pub use providers::gemini::GeminiProvider;
@@ -36,4 +37,4 @@ pub use raw::{RawArchive, RawOutcome, RawReport, RawStats};
 pub use signals::{claude_statusline, codex_rollout_quota};
 pub use statusline_setup::{InstallReport, StatuslinePaths, StatuslineStatus, UninstallReport};
 pub use store::{ResumePoint, SourceRecord, Store, WriteStats};
-pub use watch::{RootWatcher, WatchEvent, watch_roots};
+pub use watch::{RootWatcher, WatchEvent, WatchRoot, watch_roots};

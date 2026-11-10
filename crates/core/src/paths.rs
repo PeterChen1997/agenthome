@@ -55,6 +55,11 @@ pub fn codex_archived_sessions_dir() -> PathBuf {
         .join("archived_sessions")
 }
 
+/// `~/.gemini/antigravity-cli`：Antigravity CLI（`agy`）的数据目录。
+pub fn antigravity_cli_dir() -> PathBuf {
+    gemini_dir().join("antigravity-cli")
+}
+
 /// `~/.gemini`：Gemini CLI（`tmp/<项目>/chats/`）与 Antigravity（`antigravity/conversations/`）的共同根目录。
 pub fn gemini_dir() -> PathBuf {
     dirs::home_dir()

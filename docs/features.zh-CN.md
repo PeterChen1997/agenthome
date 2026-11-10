@@ -90,7 +90,7 @@ AgentHome 在 macOS 菜单栏放一个像素小屋图标。点击后在图标下
 
 - **Claude**（标签「合规 · 官方 /usage」）：5 小时与 7 天窗口的剩余百分比和重置倒计时。数据来自后台每 15 分钟运行一次官方 `claude` CLI 的 `/usage`。
 - **Codex**（标签「合规 · rollout 快照」）：5 小时与每周窗口，以及 ChatGPT **重置额度**的张数和每张的过期时间。窗口数据来自 Codex 自己写进 rollout 文件的 `rate_limits` 快照；重置额度本机没有，要在设置页手动点「查询」（第一次会请你授权），由 ChatGPT 桌面版自带的官方 codex 用你已登录的账号只读查一次，AgentHome 不读凭据、不兑换。
-- **Gemini**：无额度信号。Gemini CLI 与 Antigravity 都没有可读的本地额度数据，只统计会话与 token。
+- **Gemini**：额度来自 Antigravity CLI（`agy`）：后台每 15 分钟运行一次官方 `agy -p /usage`（不建对话、不耗 token、不读凭据），显示 Gemini 组与 Claude/GPT 组各自的 5 小时与每周额度，以及 Pro 套餐单独的 Gemini 4 Argon 周额度；主窗口是 Gemini 组的 5 小时。没装 `agy` 时只统计会话与 token（Gemini CLI 没有额度信号）。猫住户的用量是 Gemini CLI 与 Antigravity CLI 两个来源之和。
 
 体力条表示窗口剩余（「体力条 = 窗口剩余」），快用完时变色。倒计时在距重置不足 6 小时或窗口剩余不足 1/4 时变琥珀色，不足 1 小时变红。
 

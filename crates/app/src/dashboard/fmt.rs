@@ -1,5 +1,7 @@
 //! 仪表盘专用的格式化与设计令牌色；通用格式化见 `crate::format`。
 
+use crate::habitat::ResidentId;
+use crate::live::resident_of;
 use agenthome_core::model::ProviderId;
 use chrono::{Datelike as _, Local, NaiveDate, TimeZone as _};
 
@@ -30,33 +32,33 @@ pub fn amber_text(cx: &gpui_kit::App) -> gpui_kit::Hsla {
 }
 
 /// 住户色：Claude 赭陶、Codex 黑白、Gemini 蓝紫。
+/// 按来源注册表里登记的住户取色；没有住户的来源用中性色。
 pub fn provider_color(provider: &ProviderId) -> u32 {
-    match provider {
-        ProviderId::ClaudeCode => CLAUDE,
-        ProviderId::Codex => CODEX,
-        ProviderId::GeminiCli => GEMINI,
-        _ => MUTED,
+    match resident_of(provider) {
+        Some(ResidentId::Claude) => CLAUDE,
+        Some(ResidentId::Codex) => CODEX,
+        Some(ResidentId::Gemini) => GEMINI,
+        None => MUTED,
     }
 }
 
-/// 住户显示名。
-pub fn provider_name(provider: &ProviderId) -> &str {
-    match provider {
-        ProviderId::ClaudeCode => "Claude",
-        ProviderId::Codex => "Codex",
-        ProviderId::GeminiCli => "Gemini",
-        other => other.as_str(),
+/// 住户显示名；没有住户的来源用注册表里的名字。
+pub fn provider_name(provider: &ProviderId) -> String {
+    match resident_of(provider) {
+        Some(ResidentId::Claude) => "Claude".into(),
+        Some(ResidentId::Codex) => "Codex".into(),
+        Some(ResidentId::Gemini) => "Gemini".into(),
+        None => agenthome_core::providers::registry::display_name(provider),
     }
 }
 
-/// 头像素材路径；非内置来源返回 None。
+/// 头像素材路径（按住户）；没有住户的来源返回 None。
 pub fn avatar_path(provider: &ProviderId) -> Option<&'static str> {
-    match provider {
-        ProviderId::ClaudeCode => Some("avatars/avatar-claude.png"),
-        ProviderId::Codex => Some("avatars/avatar-codex.png"),
-        ProviderId::GeminiCli => Some("avatars/avatar-gemini.png"),
-        _ => None,
-    }
+    resident_of(provider).map(|who| match who {
+        ResidentId::Claude => "avatars/avatar-claude.png",
+        ResidentId::Codex => "avatars/avatar-codex.png",
+        ResidentId::Gemini => "avatars/avatar-gemini.png",
+    })
 }
 
 /// 倒计时：不足一天沿用 `format::countdown` 的 `HH:MM:SS`，否则 `Nd HHh`。

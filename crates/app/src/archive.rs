@@ -30,9 +30,7 @@ use gpui_kit::{
     Window, div, px, uniform_list,
 };
 
-use crate::assets::{
-    FONT_PIXEL_MONO, FONT_PIXEL_SANS, PixelMono as _, body_size_for_pixel, has_cjk,
-};
+use crate::assets::{MonoText as _, has_cjk};
 use crate::data::{DataSource, ProjectRow};
 use crate::format::{DayGroup, now_ms, relative_time, short_cost, short_datetime, short_tokens};
 use crate::message_row::{
@@ -173,13 +171,9 @@ fn native_id(session_id: &str) -> &str {
 
 /// 「用 X 继续」要复制的命令；没有对应 CLI 的来源返回 None。
 fn resume_command(session: &SessionSummary) -> Option<String> {
-    use agenthome_core::model::ProviderId;
     let native = native_id(&session.id);
-    match session.provider {
-        ProviderId::ClaudeCode => Some(format!("claude --resume {native}")),
-        ProviderId::Codex => Some(format!("codex resume {native}")),
-        _ => None,
-    }
+    let template = agenthome_core::providers::registry::spec(&session.provider)?.resume_command?;
+    Some(template.replace("{id}", native))
 }
 
 /// 把会话导出成 Markdown 正文。
@@ -880,13 +874,7 @@ impl ArchiveView {
             .gap_2()
             .border_b_1()
             .border_color(cx.theme().secondary)
-            .child(
-                div()
-                    .font_family(FONT_PIXEL_SANS)
-                    .text_sm()
-                    .font_semibold()
-                    .child(self.view.label()),
-            )
+            .child(div().text_sm().font_semibold().child(self.view.label()))
             .child({
                 let count_text = if self.loading_sessions {
                     "…".to_string()
@@ -908,7 +896,7 @@ impl ArchiveView {
                 };
                 // 「含子代理共」是中文：VT323 没有中文字形，含中文时退回正文字体。
                 div()
-                    .pixel_mono(&count_text, 16., cx)
+                    .mono_text(&count_text, 12., cx)
                     .text_color(cx.theme().muted_foreground)
                     .child(count_text)
             });
@@ -946,8 +934,8 @@ impl ArchiveView {
                                     .flex()
                                     .items_end()
                                     .pb_1()
-                                    .font_family(FONT_PIXEL_SANS)
                                     .text_xs()
+                                    .font_semibold()
                                     .text_color(cx.theme().muted_foreground)
                                     .child(group.label())
                                     .into_any_element(),
@@ -1055,7 +1043,7 @@ impl ArchiveView {
                 .child({
                     let text = t!("archive.tool_failures", count = tool_failures).into_owned();
                     div()
-                        .pixel_mono(&text, 16., cx)
+                        .mono_text(&text, 12., cx)
                         .text_color(cx.theme().muted_foreground)
                         .child(text)
                 })
@@ -1308,8 +1296,8 @@ impl ArchiveView {
                                     .items_center()
                                     .justify_center()
                                     .rounded(px(3.))
-                                    .font_family(FONT_PIXEL_MONO)
-                                    .text_size(px(16.))
+                                    .font_family(cx.theme().mono_font_family.clone())
+                                    .text_size(px(12.))
                                     .text_color(if on {
                                         cx.theme().primary
                                     } else {
@@ -1442,10 +1430,10 @@ fn render_session_row(
                     } else {
                         t!("archive.subagents_tag_other", count = subagents)
                     };
-                    row.child(pixel_tag(Tag::secondary(), &text))
+                    row.child(mono_tag(Tag::secondary(), &text, cx))
                 })
                 .when(active, |row| {
-                    row.child(pixel_tag(Tag::success(), &t!("archive.active")))
+                    row.child(mono_tag(Tag::success(), &t!("archive.active"), cx))
                 }),
         )
         .on_click(move |_, _, cx| {
@@ -1454,14 +1442,14 @@ fn render_session_row(
         .into_any_element()
 }
 
-/// 左栏区块标题（Pixelify Sans 小字）。
+/// 左栏区块标题（正文小字加粗）。
 fn side_head(text: SharedString, cx: &App) -> AnyElement {
     div()
         .px_4()
         .pt(px(14.))
         .pb(px(6.))
-        .font_family(FONT_PIXEL_SANS)
         .text_xs()
+        .font_semibold()
         .text_color(cx.theme().muted_foreground)
         .child(text)
         .into_any_element()
@@ -1525,18 +1513,18 @@ fn empty_hint(text: SharedString, cx: &App) -> AnyElement {
         .into_any_element()
 }
 
-/// 列表行的小标签：纯拉丁文字用 VT323；含中文（「+1 子代理」「进行中」）时保持 Tag 自带的正文字体，
-/// 否则中文会退回到按 VT323 字号画的系统字体，比旁边的字大一圈。
-fn pixel_tag(tag: Tag, text: &str) -> Tag {
+/// 列表行的小标签：纯拉丁文字（数字、成本）用等宽字体；含中文（「+1 子代理」「进行中」）时保持 Tag 自带的正文字体。
+fn mono_tag(tag: Tag, text: &str, cx: &App) -> Tag {
     let tag = tag.small();
     if has_cjk(text) {
         tag.child(text.to_string())
     } else {
-        tag.font_family(FONT_PIXEL_MONO).child(text.to_string())
+        tag.font_family(cx.theme().mono_font_family.clone())
+            .child(text.to_string())
     }
 }
 
-/// 指标块：小标题 + VT323 大数字。
+/// 指标块：小标题 + 等宽大数字。
 fn stat(label: SharedString, value: impl IntoElement, cx: &App) -> AnyElement {
     v_flex()
         .min_w(px(88.))
@@ -1549,8 +1537,8 @@ fn stat(label: SharedString, value: impl IntoElement, cx: &App) -> AnyElement {
         )
         .child(
             div()
-                .font_family(FONT_PIXEL_MONO)
-                .text_size(px(22.))
+                .font_family(cx.theme().mono_font_family.clone())
+                .text_size(px(16.))
                 .line_height(px(22.))
                 .child(value),
         )
@@ -1569,7 +1557,7 @@ fn stat_text(
         div()
             .when(has_cjk(&value), |v| {
                 v.font_family(cx.theme().font_family.clone())
-                    .text_size(px(body_size_for_pixel(22.)))
+                    .text_size(px(16.))
             })
             .when_some(color, |v, c| v.text_color(c))
             .child(value),

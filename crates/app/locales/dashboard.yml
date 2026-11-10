@@ -236,8 +236,8 @@ dashboard.quota_not_connected:
   en: "No quota source"
   zh-CN: "未接入额度"
 dashboard.gemini_quota_hint:
-  en: "Gemini / Antigravity have no readable local quota signal; only sessions and tokens are counted."
-  zh-CN: "Gemini / Antigravity 没有可读的本地额度信号，只统计会话与 token。"
+  en: "Quota appears once Antigravity CLI (agy) is installed and signed in; it is read in the background with the official agy /usage. Gemini CLI has no quota signal."
+  zh-CN: "装好并登录 Antigravity CLI（agy）后，这里显示它的额度（后台用官方 agy /usage 读取）；Gemini CLI 没有额度信号。"
 dashboard.missing_quota_hint:
   en: "No local quota snapshot for this source. Check in Settings that it is connected."
   zh-CN: "本地没有这个来源的额度快照，先在设置里确认来源已接入。"
@@ -259,6 +259,9 @@ dashboard.source_local_file:
 dashboard.quota:
   en: "Quota"
   zh-CN: "配额"
+dashboard.reset_short:
+  en: Resets
+  zh-CN: 重置
 dashboard.window_reset:
   en: "%{window} reset"
   zh-CN: "%{window} 重置"

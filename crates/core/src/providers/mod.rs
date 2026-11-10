@@ -1,8 +1,11 @@
 //! 各 agent 的会话发现与解析。`SourceProvider` 是统一入口，`ingest::ingest_all` 按它调度。
 
+pub mod antigravity_cli;
 pub mod claude_code;
 pub mod codex;
 pub mod gemini;
+pub(crate) mod proto;
+pub mod registry;
 
 use crate::model::{Message, ProviderId, Session};
 use anyhow::Result;
@@ -63,6 +66,17 @@ pub trait SourceProvider {
     /// 加密 `.pb`）不拷：每次改写都会另存一个新版本，磁盘只增不减，换不来任何可读内容。
     fn archive_raw(&self, _path: &Path) -> bool {
         true
+    }
+
+    /// 文件监听只把这些后缀的文件变化交给入库；锁文件、临时文件、SQLite 的 `-wal` 等不触发，
+    /// 否则 agent 活跃时会空转。
+    fn watch_suffixes(&self) -> &'static [&'static str] {
+        &[".jsonl"]
+    }
+
+    /// 要监听的目录。默认只有根目录；不止一个根目录的来源（Codex 的 `archived_sessions`）在这里补上。
+    fn watch_roots(&self) -> Vec<PathBuf> {
+        vec![self.root().to_path_buf()]
     }
 }
 

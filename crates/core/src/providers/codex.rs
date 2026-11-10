@@ -289,6 +289,15 @@ impl SourceProvider for CodexProvider {
     fn source_root(&self, path: &Path) -> Option<&Path> {
         self.source_root_of(path)
     }
+    fn watch_suffixes(&self) -> &'static [&'static str] {
+        &[".jsonl", ".jsonl.zst"]
+    }
+    /// 会话被归档时 rollout 挪到 `archived_sessions`，那里也要监听。
+    fn watch_roots(&self) -> Vec<PathBuf> {
+        std::iter::once(self.root.clone())
+            .chain(self.archive_root.clone())
+            .collect()
+    }
 }
 
 /// `rollout-…` 去掉 `.jsonl` / `.jsonl.zst` 后的文件名。

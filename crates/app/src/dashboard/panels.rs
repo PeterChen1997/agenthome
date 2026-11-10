@@ -6,8 +6,8 @@ use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AnyElement, Context, Div, IntoElement, ParentElement as _, SharedString, Styled as _, div, px,
-    relative, rgb,
+    AnyElement, Context, Div, FontWeight, IntoElement, ParentElement as _, SharedString,
+    Styled as _, div, px, relative, rgb,
 };
 
 use super::cards::{BarRow, Tag, TagKind, Tile, avatar, card, card_title, legend, skeleton_rows};
@@ -17,7 +17,7 @@ use super::fmt::{
 };
 use super::model::{DayPoint, TREND_DAYS};
 use super::{DashboardView, TrendMetric, segmented};
-use crate::assets::PixelMono as _;
+use crate::assets::MonoText as _;
 use crate::format::{now_ms, relative_time, short_cost, short_tokens, thousands};
 
 /// 页头周期的显示名。
@@ -174,11 +174,11 @@ impl DashboardView {
         };
         let foreground = cx.theme().foreground;
         let stat = |label: SharedString, value: String| {
-            h_flex()
-                .items_baseline()
-                .gap(px(6.))
-                .child(label)
-                .child(super::cards::vt(20.).text_color(foreground).child(value))
+            h_flex().items_baseline().gap(px(6.)).child(label).child(
+                super::cards::mono_num(14., cx)
+                    .text_color(foreground)
+                    .child(value),
+            )
         };
         panel = panel.child(
             h_flex()
@@ -197,7 +197,7 @@ impl DashboardView {
                             .items_baseline()
                             .gap(px(8.))
                             .child(
-                                super::cards::vt(30.)
+                                super::cards::mono_num(22., cx)
                                     .text_color(super::fmt::amber_text(cx))
                                     .child(short_cost(tokens.all.cost_usd)),
                             )
@@ -239,8 +239,8 @@ impl DashboardView {
                 .border_color(cx.theme().muted)
                 .child(
                     div()
-                        .font_family(crate::assets::FONT_PIXEL_SANS)
                         .text_size(px(12.))
+                        .font_weight(FontWeight::SEMIBOLD)
                         .child(t!("dashboard.output_by_resident")),
                 )
                 .child(
@@ -416,8 +416,8 @@ impl DashboardView {
                         h_flex()
                             .w(relative(0.56))
                             .justify_between()
-                            .font_family(crate::assets::FONT_PIXEL_MONO)
-                            .text_size(px(15.))
+                            .font_family(cx.theme().mono_font_family.clone())
+                            .text_size(px(11.))
                             .text_color(cx.theme().muted_foreground)
                             .children(axis),
                     ),
@@ -495,8 +495,8 @@ impl DashboardView {
                             .last_activity_ms
                             .map(|t| relative_time(t, now))
                             .unwrap_or_else(|| "--".to_string());
-                        super::cards::vt(15.)
-                            .pixel_mono(&ago, 15., cx)
+                        super::cards::mono_num(11., cx)
+                            .mono_text(&ago, 11., cx)
                             .text_color(cx.theme().muted_foreground)
                             .child(ago)
                     })
@@ -550,8 +550,8 @@ impl DashboardView {
                     .border_color(cx.theme().muted)
                     .child(
                         div()
-                            .font_family(crate::assets::FONT_PIXEL_SANS)
                             .text_size(px(12.))
+                            .font_weight(FontWeight::SEMIBOLD)
                             .child(t!("dashboard.in_progress")),
                     )
                     .when(ongoing.is_empty(), |list| {
@@ -640,7 +640,7 @@ impl DashboardView {
         let repo = agenthome_core::paths::default_data_dir();
         let repo_text = dirs_home_short(&repo.display().to_string());
         panel
-            .children(overview.health.iter().flat_map(health_rows))
+            .children(overview.health.iter().flat_map(|h| health_rows(h, cx)))
             .child(
                 h_flex()
                     .justify_between()
@@ -688,7 +688,7 @@ fn empty_hint(text: SharedString, cx: &mut Context<DashboardView>) -> Div {
 }
 
 /// 一个来源的归档健康：总数行 + 非零的子项行。
-fn health_rows(health: &ProviderHealth) -> Vec<AnyElement> {
+fn health_rows(health: &ProviderHealth, cx: &gpui_kit::App) -> Vec<AnyElement> {
     let mut rows = vec![
         h_flex()
             .items_center()
@@ -700,7 +700,7 @@ fn health_rows(health: &ProviderHealth) -> Vec<AnyElement> {
                     .flex_1()
                     .child(provider_name(&health.provider).to_string()),
             )
-            .child(super::cards::vt(18.).child(thousands(health.sessions)))
+            .child(super::cards::mono_num(13., cx).child(thousands(health.sessions)))
             .into_any_element(),
     ];
     let sub = |text: SharedString, count: u64, kind: TagKind| {

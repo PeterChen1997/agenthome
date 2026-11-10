@@ -96,6 +96,25 @@ pub fn worst_pressure<'a>(
         })
 }
 
+/// 住户行 / 菜单栏只放一个徽标时显示哪个窗口：主窗口，除非别的窗口**档位**更紧。
+/// 同档时不换成别的窗口：五个窗口都「宽裕」时把「7d Argon 宽裕」挤进窄行既占地方又没有信息。
+pub fn pressure_to_show<'a>(
+    windows: &'a [QuotaWindow],
+    primary_id: &str,
+    now_ms: i64,
+) -> Option<(&'a QuotaWindow, PressureReading)> {
+    let primary = windows
+        .iter()
+        .find(|w| w.id == primary_id)
+        .and_then(|w| pressure(w, now_ms).map(|r| (w, r)));
+    let worst = worst_pressure(windows, now_ms);
+    match (primary, worst) {
+        (Some(p), Some(w)) if w.1.level > p.1.level => Some(w),
+        (Some(p), _) => Some(p),
+        (None, w) => w,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -177,6 +196,25 @@ mod tests {
         assert_eq!(level(&window), None);
         // 重置时刻已过：快照是上个窗口的，不能拿来判断。
         assert_eq!(level(&week(50.0, -HOUR)), None);
+    }
+
+    #[test]
+    fn badge_stays_on_primary_unless_another_window_is_a_level_worse() {
+        let five_hour = QuotaWindow {
+            id: "five_hour".into(),
+            label: "5 小时".into(),
+            used_percent: 0.0,
+            resets_at_ms: Some(NOW + 5 * HOUR),
+            window_minutes: Some(300),
+        };
+        // 同为宽裕，周窗口预计用量略高：仍显示主窗口。
+        let calm = [five_hour.clone(), week(5.0, 6 * DAY)];
+        let (w, _) = pressure_to_show(&calm, "five_hour", NOW).unwrap();
+        assert_eq!(w.id, "five_hour");
+        // 周窗口紧张：换成它。
+        let tight = [five_hour, week(60.0, 6 * DAY)];
+        let (w, r) = pressure_to_show(&tight, "five_hour", NOW).unwrap();
+        assert_eq!((w.id.as_str(), r.level), ("seven_day", Pressure::Critical));
     }
 
     #[test]

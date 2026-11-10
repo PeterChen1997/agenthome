@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use agenthome_core::pressure::worst_pressure;
+use agenthome_core::pressure::pressure_to_show;
 use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, Icon, IconName, InteractiveElementExt as _, Sizable as _,
     StyledExt as _, WindowExt as _,
@@ -28,7 +28,7 @@ use gpui_kit::{
 };
 
 use crate::archive::{ArchiveView, side_item};
-use crate::assets::{FONT_PIXEL_MONO, FONT_PIXEL_SANS, PixelMono as _};
+use crate::assets::{FONT_PIXEL_SANS, MonoText as _};
 use crate::dashboard::DashboardView;
 use crate::data::DataSource;
 use crate::format::{countdown, now_ms, relative_time};
@@ -112,10 +112,12 @@ impl ResidentPanel {
         let pressure = quota
             .zip(window)
             .and_then(|(quota, primary)| {
-                worst_pressure(&quota.windows, now).map(|(worst, reading)| WindowPressure {
-                    label: (worst.id != primary.id).then(|| window_short_label(worst)),
-                    window: crate::format::quota_window_label(worst),
-                    reading,
+                pressure_to_show(&quota.windows, &primary.id, now).map(|(worst, reading)| {
+                    WindowPressure {
+                        label: (worst.id != primary.id).then(|| window_short_label(worst)),
+                        window: crate::format::quota_window_label(worst),
+                        reading,
+                    }
                 })
             })
             .filter(|_| !away);
@@ -197,9 +199,18 @@ impl ResidentPanel {
                         h_flex()
                             .items_baseline()
                             .gap_1()
-                            .child(div().text_sm().font_semibold().child(who.name()))
                             .child(
                                 div()
+                                    .flex_none()
+                                    .text_sm()
+                                    .font_semibold()
+                                    .child(who.name()),
+                            )
+                            // 套餐名可截断（英文「Subscription」较长）；右边的徽标与百分比固定不缩。
+                            .child(
+                                div()
+                                    .min_w_0()
+                                    .truncate()
                                     .text_xs()
                                     .text_color(cx.theme().muted_foreground)
                                     .child(plan),
@@ -227,8 +238,8 @@ impl ResidentPanel {
                                         })
                                         .child(
                                             div()
-                                                .font_family(FONT_PIXEL_MONO)
-                                                .text_size(px(15.))
+                                                .font_family(cx.theme().mono_font_family.clone())
+                                                .text_size(px(11.))
                                                 .line_height(px(17.))
                                                 .child(format!("{hp}%")),
                                         ),
@@ -249,7 +260,7 @@ impl ResidentPanel {
                             .text_xs()
                             .text_color(secondary(cx))
                             .child(sub_label)
-                            .child(div().pixel_mono(&sub_value, 14., cx).child(sub_value)),
+                            .child(div().mono_text(&sub_value, 11., cx).child(sub_value)),
                     ),
             )
             .into_any_element()
@@ -303,7 +314,7 @@ impl Render for ResidentPanel {
                                 .py(px(1.))
                                 .rounded(px(2.))
                                 .bg(cx.theme().background.opacity(0.78))
-                                .pixel_mono(&caption, 11., cx)
+                                .mono_text(&caption, 11., cx)
                                 .text_color(cx.theme().primary)
                                 .child(caption),
                         )
@@ -544,7 +555,8 @@ impl Workspace {
                     .child(
                         div()
                             .font_family(FONT_PIXEL_SANS)
-                            .text_size(px(14.))
+                            // 品牌字：Pixelify 在 11px 整数倍时落在整像素上。
+                            .text_size(px(11.))
                             .font_semibold()
                             .text_color(cx.theme().primary)
                             .child("AgentHome"),

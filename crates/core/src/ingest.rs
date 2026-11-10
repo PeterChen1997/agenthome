@@ -209,10 +209,14 @@ pub fn ingest_paths(
 ) -> Report {
     let start = Instant::now();
     let mut total = Report::default();
+    // 根目录可能嵌套（`~/.gemini` 里有 `antigravity-cli`）：每个路径只归包含它的最深根目录的来源。
+    let depth = |p: &dyn SourceProvider, x: &Path| p.source_root(x).map(|r| r.components().count());
     for p in providers {
         let mine: BTreeSet<&PathBuf> = paths
             .iter()
-            .filter(|x| p.source_root(x).is_some())
+            .filter(|x| {
+                depth(*p, x).is_some_and(|d| providers.iter().all(|o| depth(*o, x) <= Some(d)))
+            })
             .collect();
         if mine.is_empty() || !p.detect() {
             continue;
