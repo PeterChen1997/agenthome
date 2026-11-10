@@ -24,7 +24,7 @@ use gpui_kit::{
     AnyElement, AppContext as _, Context, Entity, FocusHandle, InteractiveElement as _,
     IntoElement, KeyBinding, Keystroke, MouseButton, ParentElement as _, Render, SharedString,
     StatefulInteractiveElement as _, Styled as _, Subscription, Task, Window, actions, div, img,
-    px,
+    px, relative,
 };
 
 use crate::archive::{ArchiveView, side_item};
@@ -80,12 +80,19 @@ impl Page {
 pub struct ResidentPanel {
     live: Entity<LiveState>,
     habitat: Entity<HabitatView>,
+    /// 真：只画住户额度行（左栏底部）；假：只画小屋（左栏顶部）。
+    bars: bool,
     _ticker: Task<()>,
     _subscription: Subscription,
 }
 
 impl ResidentPanel {
-    fn new(live: Entity<LiveState>, habitat: Entity<HabitatView>, cx: &mut Context<Self>) -> Self {
+    fn new(
+        live: Entity<LiveState>,
+        habitat: Entity<HabitatView>,
+        bars: bool,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let subscription = cx.observe(&live, |_, _, cx| cx.notify());
         let ticker = cx.spawn(async move |this, cx| {
             loop {
@@ -98,6 +105,7 @@ impl ResidentPanel {
         Self {
             live,
             habitat,
+            bars,
             _ticker: ticker,
             _subscription: subscription,
         }
@@ -125,7 +133,6 @@ impl ResidentPanel {
         let hp = window
             .map(|w| (100.0 - w.used_percent).round().clamp(0.0, 100.0) as u8)
             .unwrap_or(0);
-        let lit = usize::from(hp.div_ceil(10));
         let bar_color = if hp < 20 {
             cx.theme().danger
         } else if hp < 50 {
@@ -178,92 +185,98 @@ impl ResidentPanel {
                     .into(),
             ),
         };
+        // 一行：小头像 · 名字 · 细条 · 剩余% · 压力徽标。套餐名与重置倒计时放进悬停提示，省竖向空间。
+        let name = who.name();
+        let tip: SharedString = if sub_value.is_empty() {
+            format!("{name} · {plan}\n{sub_label}").into()
+        } else {
+            format!("{name} · {plan}\n{sub_label} {sub_value}").into()
+        };
         h_flex()
+            .id(SharedString::from(format!(
+                "sidebar-resident-{}",
+                who.slug()
+            )))
             .items_center()
-            .gap_2()
+            .gap(px(6.))
             .px_4()
-            .py_2()
+            .h(px(24.))
             .when(away, |row| row.opacity(0.55))
             .child(
                 div()
                     .flex_none()
-                    .rounded(cx.theme().radius)
-                    .border_1()
-                    .border_color(cx.theme().border)
-                    .child(provider_avatar(&who_provider(who), 28.)),
+                    .rounded(px(3.))
+                    .overflow_hidden()
+                    .child(provider_avatar(&who_provider(who), 16.)),
             )
             .child(
-                v_flex()
-                    .flex_1()
-                    .min_w_0()
-                    .child(
-                        h_flex()
-                            .items_baseline()
-                            .gap_1()
-                            .child(
-                                div()
-                                    .flex_none()
-                                    .text_sm()
-                                    .font_semibold()
-                                    .child(who.name()),
-                            )
-                            // 套餐名可截断（英文「Subscription」较长）；右边的徽标与百分比固定不缩。
-                            .child(
-                                div()
-                                    .min_w_0()
-                                    .truncate()
-                                    .text_xs()
-                                    .text_color(cx.theme().muted_foreground)
-                                    .child(plan),
-                            )
-                            .when(window.is_some(), |row| {
-                                // 压力徽标与百分比放在同一个居中对齐的组里，免得基线错位。
-                                row.child(
-                                    h_flex()
-                                        .ml_auto()
-                                        .flex_none()
-                                        .items_center()
-                                        .gap(px(6.))
-                                        .when_some(pressure, |group, pressure| {
-                                            group.child(
-                                                PressureBadge::new(
-                                                    SharedString::from(format!(
-                                                        "sidebar-pressure-{}",
-                                                        who.slug()
-                                                    )),
-                                                    pressure.reading,
-                                                    pressure.window,
-                                                )
-                                                .prefix(pressure.label),
-                                            )
-                                        })
-                                        .child(
-                                            div()
-                                                .font_family(cx.theme().mono_font_family.clone())
-                                                .text_size(px(11.))
-                                                .line_height(px(17.))
-                                                .child(format!("{hp}%")),
-                                        ),
-                                )
-                            }),
-                    )
-                    .child(h_flex().mt_1().gap(px(2.)).children((0..10).map(|ix| {
-                        div().flex_1().h(px(7.)).rounded(px(1.)).bg(if ix < lit {
-                            bar_color
-                        } else {
-                            cx.theme().border
-                        })
-                    })))
-                    .child(
-                        h_flex()
-                            .mt(px(3.))
-                            .justify_between()
-                            .text_xs()
-                            .text_color(secondary(cx))
-                            .child(sub_label)
-                            .child(div().mono_text(&sub_value, 11., cx).child(sub_value)),
-                    ),
+                div()
+                    .flex_none()
+                    .w(px(52.))
+                    .truncate()
+                    .text_size(px(12.))
+                    .font_semibold()
+                    .child(name),
             )
+            .map(|row| match window {
+                Some(_) => row
+                    // 一根连续细条：窄行里分 10 格会碎成一串点。
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .h(px(4.))
+                            .rounded(px(2.))
+                            .bg(cx.theme().border)
+                            .child(
+                                div()
+                                    .h_full()
+                                    .rounded(px(2.))
+                                    .w(relative(f32::from(hp) / 100.0))
+                                    .bg(bar_color),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .flex_none()
+                            .w(px(32.))
+                            .text_right()
+                            .font_family(cx.theme().mono_font_family.clone())
+                            .text_size(px(11.))
+                            .child(format!("{hp}%")),
+                    )
+                    // 徽标占固定宽度、靠右，三行的条才一样长。
+                    .child(h_flex().flex_none().w(px(52.)).justify_end().when_some(
+                        pressure,
+                        |slot, pressure| {
+                            slot.child(
+                                PressureBadge::new(
+                                    SharedString::from(format!("sidebar-pressure-{}", who.slug())),
+                                    pressure.reading,
+                                    pressure.window,
+                                )
+                                .prefix(pressure.label),
+                            )
+                        },
+                    )),
+                // 没有额度条时（未接入 / 无额度信号）占位写一句短说明。
+                None => row.child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .truncate()
+                        .text_size(px(11.))
+                        .text_color(secondary(cx))
+                        .child(if away {
+                            plan.clone()
+                        } else {
+                            sub_label.clone()
+                        }),
+                ),
+            })
+            .tooltip(move |window, cx| {
+                gpui_kit::component::tooltip::Tooltip::new(tip.clone()).build(window, cx)
+            })
             .into_any_element()
     }
 }
@@ -280,6 +293,15 @@ fn who_provider(who: ResidentId) -> agenthome_core::model::ProviderId {
 impl Render for ResidentPanel {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let now = now_ms();
+        if self.bars {
+            return v_flex()
+                .w_full()
+                .py(px(6.))
+                .border_t_1()
+                .border_color(cx.theme().secondary)
+                .children(ResidentId::ALL.map(|who| self.render_resident(who, now, cx)))
+                .into_any_element();
+        }
         let residents = self.habitat.read(cx).residents();
         let away = residents
             .iter()
@@ -321,11 +343,7 @@ impl Render for ResidentPanel {
                         )
                     }),
             )
-            .child(
-                v_flex()
-                    .mt_2()
-                    .children(ResidentId::ALL.map(|who| self.render_resident(who, now, cx))),
-            )
+            .into_any_element()
     }
 }
 
@@ -333,6 +351,8 @@ pub struct Workspace {
     page: Page,
     live: Entity<LiveState>,
     residents: Entity<ResidentPanel>,
+    /// 左栏底部的住户额度行。
+    resident_bars: Entity<ResidentPanel>,
     archive: Entity<ArchiveView>,
     dashboard: Entity<DashboardView>,
     settings: Entity<SettingsView>,
@@ -381,7 +401,10 @@ impl Workspace {
             live.clone(),
             cx,
         );
-        let residents = cx.new(|cx| ResidentPanel::new(live.clone(), habitat_compact.clone(), cx));
+        let residents =
+            cx.new(|cx| ResidentPanel::new(live.clone(), habitat_compact.clone(), false, cx));
+        let resident_bars =
+            cx.new(|cx| ResidentPanel::new(live.clone(), habitat_compact.clone(), true, cx));
         let archive = cx.new(|cx| ArchiveView::new(source.clone(), window, cx));
         let palette = cx.new(|cx| SearchPalette::new(source.clone(), window, cx));
         let dashboard =
@@ -505,6 +528,7 @@ impl Workspace {
             page: Page::Archive,
             live,
             residents,
+            resident_bars,
             archive,
             dashboard,
             settings,
@@ -825,6 +849,8 @@ impl Workspace {
                     })))
                     .when_some(page_sections, |col, sections| col.child(sections)),
             )
+            // 住户额度固定在底部（品牌行上方），不随中间的视图 / 项目列表滚动。
+            .child(self.resident_bars.clone())
             .child(self.render_status(cx))
             .into_any_element()
     }
