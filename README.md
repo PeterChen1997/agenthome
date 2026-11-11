@@ -194,3 +194,9 @@ The first build compiles GPUI from source and takes several minutes. See [CONTRI
 ## License
 
 [Apache License 2.0](LICENSE). Third-party notices are in [NOTICE](NOTICE) and [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
+
+## Buy me a fruit tea
+
+If AgentHome helps you and you'd like to buy me a fruit tea, scan the WeChat Pay code below. Thank you!
+
+<img src="docs/sponsor/wechat-pay.jpg" alt="WeChat Pay QR code" width="240">

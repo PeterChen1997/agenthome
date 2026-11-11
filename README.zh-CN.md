@@ -191,3 +191,9 @@ cargo build -p agenthome-app --features capture
 ## 许可
 
 [Apache License 2.0](LICENSE)。第三方声明见 [NOTICE](NOTICE) 与 [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md)。
+
+## 请我喝杯果茶
+
+如果 AgentHome 帮到了你，想请我喝杯果茶，欢迎微信扫码～
+
+<img src="docs/sponsor/wechat-pay.jpg" alt="微信收款码" width="240">
