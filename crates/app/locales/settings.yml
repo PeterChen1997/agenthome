@@ -287,3 +287,15 @@ settings.reset_consent_ok:
 settings.reset_consent_cancel:
   en: Cancel
   zh-CN: 取消
+settings.contact_title:
+  en: Contact the author
+  zh-CN: 联系作者
+settings.contact_author:
+  en: Author
+  zh-CN: 作者
+settings.contact_blog:
+  en: Blog
+  zh-CN: 博客
+settings.contact_issues:
+  en: Feedback on GitHub
+  zh-CN: 在 GitHub 反馈

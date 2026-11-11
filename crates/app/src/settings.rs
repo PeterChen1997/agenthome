@@ -893,6 +893,41 @@ impl SettingsView {
     }
 }
 
+impl SettingsView {
+    fn render_contact(&self, cx: &mut Context<Self>) -> AnyElement {
+        section(t!("settings.contact_title").to_string(), "", cx)
+            .child(kv(
+                t!("settings.contact_author"),
+                AUTHOR_NAME.to_string(),
+                cx,
+            ))
+            .child(
+                h_flex()
+                    .gap(px(8.))
+                    .child(
+                        Button::new("contact-blog")
+                            .small()
+                            .label(t!("settings.contact_blog").to_string())
+                            .on_click(|_, _, cx| cx.open_url(AUTHOR_BLOG)),
+                    )
+                    .child(
+                        Button::new("contact-github")
+                            .ghost()
+                            .small()
+                            .label(t!("settings.contact_issues").to_string())
+                            .on_click(|_, _, cx| cx.open_url(PROJECT_ISSUES)),
+                    ),
+            )
+            .child(muted(AUTHOR_BLOG, cx))
+            .into_any_element()
+    }
+}
+
+/// 作者与联系方式（设置页「联系作者」）。
+const AUTHOR_NAME: &str = "Peter Chen";
+const AUTHOR_BLOG: &str = "https://blog.peterchen97.cn";
+const PROJECT_ISSUES: &str = "https://github.com/PeterChen1997/agenthome/issues";
+
 /// 设置页发给外壳的事件。
 pub enum SettingsEvent {
     /// 界面语言变了：外壳让各页重新加载带文案的数据。
@@ -943,7 +978,8 @@ impl Render for SettingsView {
                     .child(self.render_appearance(cx))
                     .child(self.render_language(cx))
                     .child(self.render_updates(cx))
-                    .child(self.render_about(cx)),
+                    .child(self.render_about(cx))
+                    .child(self.render_contact(cx)),
             )
     }
 }
