@@ -11,7 +11,7 @@ use gpui_kit::{
     Window, div, px,
 };
 
-use crate::format::pressure_label;
+use crate::format::{pressure_label, pressure_short_label};
 
 const LEVELS: [Pressure; 5] = [
     Pressure::Relaxed,
@@ -50,6 +50,8 @@ pub struct PressureBadge {
     prefix: Option<String>,
     /// 悬停说明里的完整窗口名（「7 天」）。
     window: String,
+    /// 用短档位词（左栏住户行）；悬停说明仍是完整说法。
+    short: bool,
 }
 
 impl PressureBadge {
@@ -59,11 +61,17 @@ impl PressureBadge {
             reading,
             prefix: None,
             window,
+            short: false,
         }
     }
 
     pub fn prefix(mut self, prefix: Option<String>) -> Self {
         self.prefix = prefix;
+        self
+    }
+
+    pub fn short(mut self) -> Self {
+        self.short = true;
         self
     }
 }
@@ -72,7 +80,11 @@ impl RenderOnce for PressureBadge {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let level = self.reading.level;
         let color = pressure_color(level, cx);
-        let label = pressure_label(level);
+        let label = if self.short {
+            pressure_short_label(level)
+        } else {
+            pressure_label(level)
+        };
         let text = match &self.prefix {
             Some(prefix) => format!("{prefix} {label}"),
             None => label,

@@ -245,20 +245,28 @@ impl ResidentPanel {
                             .text_size(px(11.))
                             .child(format!("{hp}%")),
                     )
-                    // 徽标占固定宽度、靠右，三行的条才一样长。
-                    .child(h_flex().flex_none().w(px(52.)).justify_end().when_some(
-                        pressure,
-                        |slot, pressure| {
-                            slot.child(
-                                PressureBadge::new(
-                                    SharedString::from(format!("sidebar-pressure-{}", who.slug())),
-                                    pressure.reading,
-                                    pressure.window,
+                    // 徽标槽给够当前语言最长徽标的宽度、靠右，三行的条才一样长；
+                    // 用最小宽度而不是固定宽度，徽标再长也只会挤短细条，不会盖住百分比。
+                    .child(
+                        h_flex()
+                            .flex_none()
+                            .min_w(px(badge_slot_width()))
+                            .justify_end()
+                            .when_some(pressure, |slot, pressure| {
+                                slot.child(
+                                    PressureBadge::new(
+                                        SharedString::from(format!(
+                                            "sidebar-pressure-{}",
+                                            who.slug()
+                                        )),
+                                        pressure.reading,
+                                        pressure.window,
+                                    )
+                                    .prefix(pressure.label)
+                                    .short(),
                                 )
-                                .prefix(pressure.label),
-                            )
-                        },
-                    )),
+                            }),
+                    ),
                 // 没有额度条时（未接入 / 无额度信号）占位写一句短说明。
                 None => row.child(
                     div()
@@ -906,5 +914,14 @@ impl Workspace {
             self.sync.clone(),
             self.sync_engine.as_ref().map(SyncEngine::handle),
         )
+    }
+}
+
+/// 左栏住户行徽标槽的宽度：放得下当前语言里最长的短徽标（「7d 偏紧」/「7d Ample」）。
+fn badge_slot_width() -> f32 {
+    if rust_i18n::locale().starts_with("zh") {
+        52.
+    } else {
+        62.
     }
 }

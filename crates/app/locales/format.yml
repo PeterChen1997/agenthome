@@ -44,6 +44,21 @@ format.window_minutes:
 format.window_spend_limit:
   en: Spend limit
   zh-CN: 消费上限
+format.pressure_short_relaxed:
+  en: Ample
+  zh-CN: 宽裕
+format.pressure_short_steady:
+  en: OK
+  zh-CN: 正常
+format.pressure_short_tight:
+  en: Tight
+  zh-CN: 偏紧
+format.pressure_short_critical:
+  en: Risky
+  zh-CN: 紧张
+format.pressure_short_exhausted:
+  en: Out
+  zh-CN: 已用尽
 format.pressure_relaxed:
   en: Plenty
   zh-CN: 宽裕

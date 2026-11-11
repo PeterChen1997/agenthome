@@ -161,6 +161,19 @@ pub fn quota_window_label(window: &agenthome_core::model::QuotaWindow) -> String
 }
 
 /// 额度使用压力的档位名（宽裕 / 正常 / 偏紧 / 紧张 / 已用尽）。
+/// 窄处（左栏住户行）用的短档位词：英文缩成一个词，中文与 [`pressure_label`] 相同。
+pub fn pressure_short_label(level: agenthome_core::pressure::Pressure) -> String {
+    use agenthome_core::pressure::Pressure;
+    match level {
+        Pressure::Relaxed => t!("format.pressure_short_relaxed"),
+        Pressure::Steady => t!("format.pressure_short_steady"),
+        Pressure::Tight => t!("format.pressure_short_tight"),
+        Pressure::Critical => t!("format.pressure_short_critical"),
+        Pressure::Exhausted => t!("format.pressure_short_exhausted"),
+    }
+    .into()
+}
+
 pub fn pressure_label(level: agenthome_core::pressure::Pressure) -> String {
     use agenthome_core::pressure::Pressure;
     match level {
