@@ -1,6 +1,6 @@
 # AgentHome · 给接手 agent 的总索引
 
-> 最后更新 2026-11-10（v0.2.4：左栏住户额度行压成一行移到底部；v0.2.3：检查更新与新版本提醒；v0.2.2：来源插件化、Antigravity CLI 会话与额度、低分屏字体；v0.2.1：额度使用压力、ChatGPT 重置额度；v0.2.0：菜单栏、中英双语，仓库公开）。新会话先读本文件，再按「从哪里开始」挑文档，不必通读全部。
+> 最后更新 2026-11-11（v0.2.5：应用内一键更新；v0.2.4：左栏住户额度行压成一行移到底部；v0.2.3：检查更新与新版本提醒；v0.2.2：来源插件化、Antigravity CLI 会话与额度、低分屏字体；v0.2.1：额度使用压力、ChatGPT 重置额度；v0.2.0：菜单栏、中英双语，仓库公开）。新会话先读本文件，再按「从哪里开始」挑文档，不必通读全部。
 
 ## 一句话
 
@@ -10,7 +10,8 @@
 
 - **v0.2.0 已发布并公证**（2026-11-10）：https://github.com/PeterChen1997/agenthome/releases （公开仓库 `PeterChen1997/agenthome`，分支 `main`），`/Applications` 已装 0.2.0。本版新增：**macOS 菜单栏图标 + 像素风使用概要面板**（`crates/app/src/menubar.rs`；用户试过原生 NSMenu 方案后决定保留自绘面板，不要再改成原生菜单）；**界面中英双语**（rust-i18n，`crates/app/locales/*.yml` 按模块拆，设置页可切换，`--lang`）；关主窗口只隐藏、⌘Q 退出。升级前真实索引库备份在 `~/AgentHome/backup/agenthome-before-0.2.0.db`。落地页源码 `site/`，私有预览 https://claude.ai/artifact/N54TGv6kPy71Kkdo4LjhgG ；GitHub Pages 工作流只手动触发，未启用。v0.1.5 / 0.1.6 的内容：按字节偏移增量入库、⌘K 全局搜索、Gemini 接入、成本口径修正（见 `docs/12-成本口径核对.md`）、Claude 额度只走官方 /usage、开源基础文件。
 - **ChatGPT 重置额度**（2026-11-10）：rollout 快照里没有，设置页「额度来源」下手动「查询」（首次弹授权），用 ChatGPT 桌面版自带的官方 codex（0.166 起支持；独立安装的 0.140 不支持）只读查询，结果存 `~/AgentHome/signals/codex-reset-credits.json`，并进 Codex 额度快照；仪表盘、「到期与重置」卡逐张显示，菜单栏在 3 天内过期时抢先显示并着色（3 天琥珀、1 天红）。CLI：`agenthome quota --refresh-codex-reset-credits`。代码 `crates/core/src/signals/codex_reset_credits.rs`。
-- **v0.2.4 已发布并公证**（2026-11-10，`/Applications` 已装 0.2.4）：左栏住户额度行压成一行（头像 · 名字 · 细条 · 剩余% · 徽标）并固定到左栏底部。用已装的 0.2.3 实测过更新提醒：重启后弹出「0.2.4 已发布」。
+- **v0.2.5 已发布并公证**（2026-11-11，`/Applications` 已装 0.2.5）：应用内一键更新——弹窗「立即更新」或左栏「更新到 x.y.z」，后台下载并核对 sha256、签名、bundle id 与团队、公证、版本号，通过后退出、脚本替换 `.app` 并重开，旧版挪到 `~/AgentHome/backup/AgentHome-<旧版本>.app`（`crates/core/src/update.rs`、`crates/app/src/updater.rs`）。0.2.4 及更早需手动装一次。调试演练用 `AGENTHOME_PRETEND_VERSION`、`AGENTHOME_UPDATE_TARGET`、`AGENTHOME_UPDATE_NO_RELAUNCH`。
+- **v0.2.4 已发布并公证**（2026-11-10）：左栏住户额度行压成一行（头像 · 名字 · 细条 · 剩余% · 徽标）并固定到左栏底部。用已装的 0.2.3 实测过更新提醒：重启后弹出「0.2.4 已发布」。
 - **v0.2.3 已发布并公证**（2026-11-10）：检查更新——启动 8 秒后与每 24 小时查 GitHub releases/latest（`crates/core/src/update.rs`，系统 curl，只读版本号），有新版本弹一次提醒、左栏底部「新版本 x.y.z」，设置 → 软件更新可手动检查或关闭；只提醒不自动安装。这是 AgentHome 自己发起的唯一网络请求（README 隐私一节已写明）。调试构建可用 `AGENTHOME_PRETEND_VERSION=0.2.1` 假装旧版核对提醒。
 - **v0.2.2 已发布并公证**（2026-11-10，升级前索引库备份在 `~/AgentHome/backup/agenthome-before-0.2.2.db`）：来源插件化 + Antigravity CLI 会话与额度、低分屏字体与额度卡排版（像素字体只留品牌字与栖息地）、Codex 两处口径修复。发版前跑了 3 个真实数据入库基准，全过。
 - **来源插件化 + Antigravity CLI**（2026-11-10，0.2.2）：Gemini CLI 已对个人账号（含 Google AI Pro）停服，个人用户改用 Antigravity CLI（`agy`），它每个对话一个 SQLite（`~/.gemini/antigravity-cli/conversations/<id>.db`），内容是**没加密**的 protobuf，含每次请求的新鲜输入 / 缓存读 / 输出 / 思考 token；新来源 `antigravity-cli`（`crates/core/src/providers/antigravity_cli.rs` + 无 schema 读取 `proto.rs`），栖息地归猫住户。所有来源改走注册表 `crates/core/src/providers/registry.rs`（同步、命令行、仪表盘、归档都遍历它），加 OpenCode 这类来源见 `docs/13-来源插件开发指南.md`；不重新编译的外部插件留到下一步。真实数据核对：4 个 agy 对话的 token 与 `agy -p --output-format stream-json` 逐条一致。猫住户的额度来自 `agy -p /usage --output-format json`（`crates/core/src/signals/agy_usage.rs`，快照 `~/AgentHome/signals/agy-usage.json`，后台每 15 分钟，设置页「立即刷新」，CLI `agenthome quota --refresh-agy`）：Gemini 组与 Claude/GPT 组各 5 小时 + 每周，另有 Pro 套餐的 Gemini 4 Argon 周额度。同批修了 Codex 两处口径（fork 首条累计值、缓存写重复计数），见 `docs/12` 第 7 节。
