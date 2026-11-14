@@ -1,6 +1,6 @@
 # AgentHome · 给接手 agent 的总索引
 
-> 最后更新 2026-11-11（v0.2.6：设置页「联系作者」、英文左栏徽标；v0.2.5：应用内一键更新；v0.2.4：左栏住户额度行压成一行移到底部；v0.2.3：检查更新与新版本提醒；v0.2.2：来源插件化、Antigravity CLI 会话与额度、低分屏字体；v0.2.1：额度使用压力、ChatGPT 重置额度；v0.2.0：菜单栏、中英双语，仓库公开）。新会话先读本文件，再按「从哪里开始」挑文档，不必通读全部。
+> 最后更新 2026-11-14（落地页上线七牛；v0.2.6：设置页「联系作者」、英文左栏徽标；v0.2.5：应用内一键更新；v0.2.4：左栏住户额度行压成一行移到底部；v0.2.3：检查更新与新版本提醒；v0.2.2：来源插件化、Antigravity CLI 会话与额度、低分屏字体；v0.2.1：额度使用压力、ChatGPT 重置额度；v0.2.0：菜单栏、中英双语，仓库公开）。新会话先读本文件，再按「从哪里开始」挑文档，不必通读全部。
 
 ## 一句话
 
@@ -8,7 +8,8 @@
 
 ## 现状
 
-- **v0.2.0 已发布并公证**（2026-11-10）：https://github.com/PeterChen1997/agenthome/releases （公开仓库 `PeterChen1997/agenthome`，分支 `main`），`/Applications` 已装 0.2.0。本版新增：**macOS 菜单栏图标 + 像素风使用概要面板**（`crates/app/src/menubar.rs`；用户试过原生 NSMenu 方案后决定保留自绘面板，不要再改成原生菜单）；**界面中英双语**（rust-i18n，`crates/app/locales/*.yml` 按模块拆，设置页可切换，`--lang`）；关主窗口只隐藏、⌘Q 退出。升级前真实索引库备份在 `~/AgentHome/backup/agenthome-before-0.2.0.db`。落地页源码 `site/`，私有预览 https://claude.ai/artifact/N54TGv6kPy71Kkdo4LjhgG ；GitHub Pages 工作流只手动触发，未启用。v0.1.5 / 0.1.6 的内容：按字节偏移增量入库、⌘K 全局搜索、Gemini 接入、成本口径修正（见 `docs/12-成本口径核对.md`）、Claude 额度只走官方 /usage、开源基础文件。
+- **v0.2.0 已发布并公证**（2026-11-10）：https://github.com/PeterChen1997/agenthome/releases （公开仓库 `PeterChen1997/agenthome`，分支 `main`），`/Applications` 已装 0.2.0。本版新增：**macOS 菜单栏图标 + 像素风使用概要面板**（`crates/app/src/menubar.rs`；用户试过原生 NSMenu 方案后决定保留自绘面板，不要再改成原生菜单）；**界面中英双语**（rust-i18n，`crates/app/locales/*.yml` 按模块拆，设置页可切换，`--lang`）；关主窗口只隐藏、⌘Q 退出。升级前真实索引库备份在 `~/AgentHome/backup/agenthome-before-0.2.0.db`。落地页源码 `site/`（线上地址见下方「落地页」一条）。v0.1.5 / 0.1.6 的内容：按字节偏移增量入库、⌘K 全局搜索、Gemini 接入、成本口径修正（见 `docs/12-成本口径核对.md`）、Claude 额度只走官方 /usage、开源基础文件。
+- **落地页**（2026-11-14 上线）：https://blog.peterchen97.cn/agenthome/ ，源码 `site/`（纯静态，中英切换在 `site/assets/main.js`），部署在七牛 `peter-blog` 桶（= 博客根目录）的 `agenthome/` 前缀，CDN 域名 blog.peterchen97.cn。部署 `script/deploy-site.sh [--dry-run]`：增量上传 + cdnrefresh，key 必须以 `agenthome/` 开头、站内引用必须是相对路径，否则中止（防止覆盖博客根目录）。qshell 在 `~/Downloads/qshell`，凭证在 `~/.qshell`，不入库。发版后跑 `script/update-landing.sh <版本>`：核对 Release → 改 6 处版本号 → 部署 → 回读线上与本地逐字节一致。GitHub Pages 工作流 `pages.yml` 不用。跨项目总表 `~/code_hub/_hub/release-landing.md`。
 - **ChatGPT 重置额度**（2026-11-10）：rollout 快照里没有，设置页「额度来源」下手动「查询」（首次弹授权），用 ChatGPT 桌面版自带的官方 codex（0.166 起支持；独立安装的 0.140 不支持）只读查询，结果存 `~/AgentHome/signals/codex-reset-credits.json`，并进 Codex 额度快照；仪表盘、「到期与重置」卡逐张显示，菜单栏在 3 天内过期时抢先显示并着色（3 天琥珀、1 天红）。CLI：`agenthome quota --refresh-codex-reset-credits`。代码 `crates/core/src/signals/codex_reset_credits.rs`。
 - **v0.2.6 已发布并公证**（2026-11-11，`/Applications` 已装 0.2.6）：设置页底部「联系作者」（Peter Chen、博客 https://blog.peterchen97.cn 、GitHub 反馈）；左栏住户行英文用短档位词（`pressure_short_label`），徽标槽按语言给最小宽度，不再盖住百分比。**这是第一次真实的应用内更新**：已装 0.2.5 重启后弹窗「立即更新」，约 50 秒替换并重开到 0.2.6，签名与公证通过，0.2.5 进了备份目录。阮一峰周刊自荐 issue（ruanyf/weekly#13246）正文已于 2026-11-11 按 0.2.x 现状更新。
 - **v0.2.5 已发布并公证**（2026-11-11）：应用内一键更新——弹窗「立即更新」或左栏「更新到 x.y.z」，后台下载并核对 sha256、签名、bundle id 与团队、公证、版本号，通过后退出、脚本替换 `.app` 并重开，旧版挪到 `~/AgentHome/backup/AgentHome-<旧版本>.app`（`crates/core/src/update.rs`、`crates/app/src/updater.rs`）。0.2.4 及更早需手动装一次。调试演练用 `AGENTHOME_PRETEND_VERSION`、`AGENTHOME_UPDATE_TARGET`、`AGENTHOME_UPDATE_NO_RELAUNCH`。

@@ -1,6 +1,6 @@
 # AgentHome
 
-[English](README.md) | 简体中文
+[English](README.md) | 简体中文 | **官网：https://blog.peterchen97.cn/agenthome/**
 
 本机 AI 编程 agent 的家。AgentHome 把 Claude Code、Codex、Gemini 的会话收进一个长期保存、可全文搜索的归档，并把 token 用量、估算成本和订阅剩余额度放在同一块仪表盘上。
 

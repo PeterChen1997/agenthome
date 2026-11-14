@@ -1,6 +1,6 @@
 # AgentHome
 
-English | [简体中文](README.zh-CN.md)
+English | [简体中文](README.zh-CN.md) | **Website: https://blog.peterchen97.cn/agenthome/**
 
 A local home for your AI coding agents. AgentHome keeps a permanent, searchable archive of your Claude Code, Codex and Gemini sessions, and puts token usage, estimated cost and remaining subscription quota on one dashboard.
 
