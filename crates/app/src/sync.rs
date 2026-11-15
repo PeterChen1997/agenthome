@@ -347,6 +347,8 @@ fn run_worker(
     let all: HashSet<ProviderId> = roots.iter().map(|(p, _)| p.clone()).collect();
     // 续读状态（各活跃原件的解析器）跨扫描复用，增量入库不必每次重放已解析的部分。
     let mut cache = IngestCache::new();
+    // 已上报过的单文件失败；同一个坏文件每次扫描都会失败，只在第一次出现时报。
+    let mut reported = HashSet::new();
     let mut batch = Batch::default();
     batch.full.extend(all.iter().cloned());
     scan(
@@ -356,6 +358,7 @@ fn run_worker(
         &sources,
         &mut cache,
         &shared,
+        &mut reported,
     );
     let mut next_full = Instant::now() + FALLBACK_SCAN;
 
@@ -388,6 +391,7 @@ fn run_worker(
             &sources,
             &mut cache,
             &shared,
+            &mut reported,
         );
         if batch.full == all {
             next_full = Instant::now() + FALLBACK_SCAN;
@@ -425,6 +429,7 @@ fn scan(
     sources: &[&dyn SourceProvider],
     cache: &mut IngestCache,
     shared: &Mutex<SyncState>,
+    reported: &mut HashSet<(PathBuf, String)>,
 ) {
     let full: Vec<&dyn SourceProvider> = sources
         .iter()
@@ -478,6 +483,8 @@ fn scan(
         .map(|(p, _)| p.clone())
         .chain(batch.full.iter().cloned())
         .collect();
+    report_new_failures("sync: ingest failed", &report.failed, reported);
+    report_new_failures("sync: raw archive failed", &report.raw.failed, reported);
     let now = now_ms();
     let full = batch.full.len() == sources.len();
     // 统计要遍历全部清单，只在有写入或还没统计过时重算。
@@ -514,6 +521,36 @@ fn scan(
             }
         }
     });
+}
+
+/// 本次扫描里新出现的单文件失败合成一条上报（数量 + 第一条详情），不让一个坏文件每次扫描都报一遍。
+fn report_new_failures(
+    context: &'static str,
+    failed: &[(PathBuf, String)],
+    reported: &mut HashSet<(PathBuf, String)>,
+) {
+    let fresh = new_failures(failed, reported);
+    if let Some((path, error)) = fresh.first() {
+        telemetry::report_error(
+            context,
+            &format!(
+                "{} new failed file(s); first: {}: {error}",
+                fresh.len(),
+                path.display()
+            ),
+        );
+    }
+}
+
+/// `failed` 里还没报过的项，并记为已报。
+fn new_failures<'a>(
+    failed: &'a [(PathBuf, String)],
+    reported: &mut HashSet<(PathBuf, String)>,
+) -> Vec<&'a (PathBuf, String)> {
+    failed
+        .iter()
+        .filter(|item| reported.insert((*item).clone()))
+        .collect()
 }
 
 /// `full`：这次遍历了来源目录（文件数才是全量的）；只处理变化路径时保留上次全量扫描的文件数。
@@ -602,5 +639,29 @@ fn run_agy_probe(shared: Arc<Mutex<SyncState>>, receiver: mpsc::Receiver<bool>) 
         if let Err(RecvTimeoutError::Disconnected) = receiver.recv_timeout(QUOTA_PROBE_INTERVAL) {
             break;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 坏文件每次扫描（监听触发 + 每小时兜底）都会再失败一次；只有新出现的失败才上报，
+    /// 否则一个坏文件就能把 Sentry 配额刷光，真正的新问题反而被淹没。
+    #[test]
+    fn each_failure_is_reported_once() {
+        let mut reported = HashSet::new();
+        let bad = (PathBuf::from("a.jsonl"), "bad line".to_string());
+        let other = (PathBuf::from("b.jsonl"), "bad line".to_string());
+        assert_eq!(
+            new_failures(std::slice::from_ref(&bad), &mut reported).len(),
+            1
+        );
+        assert!(new_failures(std::slice::from_ref(&bad), &mut reported).is_empty());
+        let both = [bad.clone(), other.clone()];
+        assert_eq!(new_failures(&both, &mut reported), vec![&other]);
+        // 同一文件换了错误（比如改坏的位置变了）算新问题。
+        let changed = [(PathBuf::from("a.jsonl"), "io error".to_string())];
+        assert_eq!(new_failures(&changed, &mut reported).len(), 1);
     }
 }

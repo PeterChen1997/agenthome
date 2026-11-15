@@ -49,13 +49,17 @@ fi
 echo "== 1/5 release 构建"
 cargo build --release -p agenthome-app -p agenthome-cli
 
-# 符号上传：dSYM 只传 Sentry，不进 .app。sentry-cli 没装或没登录时报错但不挡发版。
+# 符号上传：dSYM 只传 Sentry，不进 .app。没传上去的包崩溃堆栈不可读，所以 sentry-cli 没装、
+# 没登录或上传失败都中止发版（与 Helmp / Friendily 一致）。
 if [ -n "${SENTRY_DSN_AGENTHOME:-}" ]; then
-  if command -v sentry-cli >/dev/null; then
-    sentry-cli debug-files upload --org own-tay --project agenthome --include-sources \
-      target/release/agenthome-app.dSYM || echo "警告：dSYM 上传失败，堆栈会不可读" >&2
-  else
-    echo "警告：没装 sentry-cli，dSYM 没上传" >&2
+  if ! command -v sentry-cli >/dev/null; then
+    echo "错误：没装 sentry-cli，dSYM 无法上传，中止发版" >&2
+    exit 1
+  fi
+  if ! sentry-cli debug-files upload --org own-tay --project agenthome --include-sources \
+    target/release/agenthome-app.dSYM; then
+    echo "错误：dSYM 上传失败（堆栈会不可读），中止发版" >&2
+    exit 1
   fi
 fi
 

@@ -184,12 +184,21 @@ pub fn save_auto_update_check(on: bool) -> anyhow::Result<()> {
     save_key("auto_update_check", if on { "on" } else { "off" })
 }
 
-/// 是否允许匿名使用统计与崩溃报告（默认开；设置页可关）。读不到按开。
+/// 是否允许匿名使用统计与崩溃报告（默认开；设置页可关）。
 pub fn telemetry_enabled() -> bool {
-    !load_key("telemetry")
-        .ok()
-        .flatten()
-        .is_some_and(|v| v == "off")
+    telemetry_enabled_from(load_key("telemetry"))
+}
+
+/// 没有偏好文件（首次启动）或没设过按开；文件在却读不了 / 解析不了按关——
+/// 读不到就不知道用户是否关过，不能替用户默认同意。
+fn telemetry_enabled_from(value: anyhow::Result<Option<String>>) -> bool {
+    match value {
+        Ok(value) => value.as_deref() != Some("off"),
+        Err(error) => {
+            eprintln!("Could not read the telemetry preference, telemetry is off: {error:#}");
+            false
+        }
+    }
 }
 
 pub fn save_telemetry(on: bool) -> anyhow::Result<()> {
@@ -236,4 +245,21 @@ fn save_key(key: &str, value: &str) -> anyhow::Result<()> {
     std::fs::write(&tmp, serde_json::to_string_pretty(&Value::Object(root))?)?;
     std::fs::rename(&tmp, &path)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 统计开关是用户的同意：偏好文件坏了时不知道用户是否关过，必须按关（fail closed）；
+    /// 只有确实没有文件 / 没设过（首次启动）才按默认开。
+    #[test]
+    fn telemetry_consent_fails_closed() {
+        assert!(telemetry_enabled_from(Ok(None)));
+        assert!(telemetry_enabled_from(Ok(Some("on".into()))));
+        assert!(!telemetry_enabled_from(Ok(Some("off".into()))));
+        assert!(!telemetry_enabled_from(Err(anyhow::anyhow!(
+            "invalid JSON"
+        ))));
+    }
 }

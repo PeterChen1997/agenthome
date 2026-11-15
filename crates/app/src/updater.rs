@@ -153,7 +153,11 @@ pub fn check_now(state: &Entity<UpdateState>, cx: &mut App) {
                     s.latest = Some(release);
                     s.last_error = None;
                 }
-                Err(error) => s.last_error = Some(format!("{error:#}")),
+                Err(error) => {
+                    let error = format!("{error:#}");
+                    telemetry::report_error("update check failed", &error);
+                    s.last_error = Some(error);
+                }
             }
             cx.notify();
         });

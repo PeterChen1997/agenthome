@@ -187,14 +187,16 @@ fn main() {
         run_habitat_demo();
         return;
     }
-    // 崩溃上报要尽早装上（panic hook）；guard 活到 main 结束，退出时把队列发完。
-    let _sentry = telemetry::init();
     // 核对上报链路与符号化用：启动即 panic（调试构建还要 AGENTHOME_TELEMETRY_DEV=1 才会发出）。
-    if std::env::var_os("AGENTHOME_TELEMETRY_TEST").is_some() {
+    let telemetry_test = std::env::var_os("AGENTHOME_TELEMETRY_TEST").is_some();
+    // 截图、演示数据、临时库、自检都不算真实使用：Sentry 记到 test 环境，Umami 不发。
+    let test_run = mock || capture.is_some() || menubar_popup || db.is_some() || telemetry_test;
+    // 崩溃上报要尽早装上（panic hook）；guard 活到 main 结束，退出时把队列发完。
+    let _sentry = telemetry::init(test_run);
+    if telemetry_test {
         panic!("AgentHome telemetry test panic");
     }
-    // 截图、演示数据不算真实使用。
-    if !mock && capture.is_none() && !menubar_popup {
+    if !test_run {
         telemetry::event("app_launch", serde_json::json!({}));
     }
     let demo = mock;
