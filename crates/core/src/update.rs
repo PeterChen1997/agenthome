@@ -39,6 +39,9 @@ pub struct Release {
 }
 
 /// 查 GitHub 上的最新正式版。`current` 只用于 User-Agent（GitHub API 要求带 UA）。
+/// curl 本身失败（断网、超时、GitHub 限流）的报错前缀。这类失败可预期，不上报 Sentry。
+pub const FETCH_FAILED_PREFIX: &str = "查询最新版本失败";
+
 pub fn fetch_latest_release(current: &str) -> Result<Release> {
     let output = Command::new("/usr/bin/curl")
         .args([
@@ -58,7 +61,7 @@ pub fn fetch_latest_release(current: &str) -> Result<Release> {
         .context("启动 curl")?;
     if !output.status.success() {
         bail!(
-            "查询最新版本失败：{}",
+            "{FETCH_FAILED_PREFIX}：{}",
             String::from_utf8_lossy(&output.stderr).trim()
         );
     }

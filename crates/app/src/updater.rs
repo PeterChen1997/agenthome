@@ -6,8 +6,8 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use agenthome_core::update::{
-    Release, can_replace, download_and_verify, fetch_latest_release, is_newer, running_app_bundle,
-    spawn_replace_and_relaunch,
+    FETCH_FAILED_PREFIX, Release, can_replace, download_and_verify, fetch_latest_release, is_newer,
+    running_app_bundle, spawn_replace_and_relaunch,
 };
 use gpui_kit::{App, AsyncApp, Entity, Task};
 
@@ -155,7 +155,10 @@ pub fn check_now(state: &Entity<UpdateState>, cx: &mut App) {
                 }
                 Err(error) => {
                     let error = format!("{error:#}");
-                    telemetry::report_error("update check failed", &error);
+                    // 断网 / 限流是常态，只报返回内容解析不了这类真问题
+                    if !error.starts_with(FETCH_FAILED_PREFIX) {
+                        telemetry::report_error("update check failed", &error);
+                    }
                     s.last_error = Some(error);
                 }
             }
