@@ -1,6 +1,6 @@
 # AgentHome · 给接手 agent 的总索引
 
-> 最后更新 2026-11-14（落地页上线七牛；v0.2.6：设置页「联系作者」、英文左栏徽标；v0.2.5：应用内一键更新；v0.2.4：左栏住户额度行压成一行移到底部；v0.2.3：检查更新与新版本提醒；v0.2.2：来源插件化、Antigravity CLI 会话与额度、低分屏字体；v0.2.1：额度使用压力、ChatGPT 重置额度；v0.2.0：菜单栏、中英双语，仓库公开）。新会话先读本文件，再按「从哪里开始」挑文档，不必通读全部。
+> 最后更新 2026-11-15。新会话先读本文件，再按「从哪里开始」挑文档，不必通读全部。
 
 ## 一句话
 
@@ -8,16 +8,12 @@
 
 ## 现状
 
-- **v0.2.0 已发布并公证**（2026-11-10）：https://github.com/PeterChen1997/agenthome/releases （公开仓库 `PeterChen1997/agenthome`，分支 `main`），`/Applications` 已装 0.2.0。本版新增：**macOS 菜单栏图标 + 像素风使用概要面板**（`crates/app/src/menubar.rs`；用户试过原生 NSMenu 方案后决定保留自绘面板，不要再改成原生菜单）；**界面中英双语**（rust-i18n，`crates/app/locales/*.yml` 按模块拆，设置页可切换，`--lang`）；关主窗口只隐藏、⌘Q 退出。升级前真实索引库备份在 `~/AgentHome/backup/agenthome-before-0.2.0.db`。落地页源码 `site/`（线上地址见下方「落地页」一条）。v0.1.5 / 0.1.6 的内容：按字节偏移增量入库、⌘K 全局搜索、Gemini 接入、成本口径修正（见 `docs/12-成本口径核对.md`）、Claude 额度只走官方 /usage、开源基础文件。
+- **版本**：最新 **v0.2.6**（2026-11-11，已公证，`/Applications` 已装 0.2.6），公开仓库 `PeterChen1997/agenthome`（分支 `main`）。各版内容以 [Releases](https://github.com/PeterChen1997/agenthome/releases) 与 `git log` 为准；`CHANGELOG.md` 目前只写到 0.2.0。升级前的索引库与旧版 `.app` 备份在 `~/AgentHome/backup/`。
+- **菜单栏与双语**（0.2.0）：菜单栏图标 + 像素风使用概要面板（`crates/app/src/menubar.rs`；用户试过原生 NSMenu 后决定保留自绘面板，不要再改成原生菜单）；界面中英双语（rust-i18n，`crates/app/locales/*.yml` 按模块拆，设置页可切换，`--lang`）；关主窗口只隐藏、⌘Q 退出。
+- **检查更新与应用内更新**（0.2.3 / 0.2.5）：启动 8 秒后与每 24 小时查 GitHub releases/latest（系统 curl，只读版本号，是 AgentHome 自己发起的唯一网络请求，README 隐私一节已写明）；弹窗「立即更新」或左栏「更新到 x.y.z」后台下载并核对 sha256、签名、bundle id 与团队、公证、版本号，通过后替换 `.app` 并重开，旧版挪到 `~/AgentHome/backup/AgentHome-<旧版本>.app`（`crates/core/src/update.rs`、`crates/app/src/updater.rs`）。0.2.5 → 0.2.6 是第一次真实的应用内更新，已成功。调试用 `AGENTHOME_PRETEND_VERSION`、`AGENTHOME_UPDATE_TARGET`、`AGENTHOME_UPDATE_NO_RELAUNCH`。
 - **落地页**（2026-11-14 上线）：https://blog.peterchen97.cn/agenthome/ ，源码 `site/`（纯静态，中英切换在 `site/assets/main.js`），部署在七牛 `peter-blog` 桶（= 博客根目录）的 `agenthome/` 前缀，CDN 域名 blog.peterchen97.cn。部署 `script/deploy-site.sh [--dry-run]`：增量上传 + cdnrefresh，key 必须以 `agenthome/` 开头、站内引用必须是相对路径，否则中止（防止覆盖博客根目录）。qshell 在 `~/Downloads/qshell`，凭证在 `~/.qshell`，不入库。发版后跑 `script/update-landing.sh <版本>`：核对 Release → 改 6 处版本号 → 部署 → 回读线上与本地逐字节一致。GitHub Pages 工作流 `pages.yml` 不用。跨项目总表 `~/code_hub/_hub/release-landing.md`。
 - **ChatGPT 重置额度**（2026-11-10）：rollout 快照里没有，设置页「额度来源」下手动「查询」（首次弹授权），用 ChatGPT 桌面版自带的官方 codex（0.166 起支持；独立安装的 0.140 不支持）只读查询，结果存 `~/AgentHome/signals/codex-reset-credits.json`，并进 Codex 额度快照；仪表盘、「到期与重置」卡逐张显示，菜单栏在 3 天内过期时抢先显示并着色（3 天琥珀、1 天红）。CLI：`agenthome quota --refresh-codex-reset-credits`。代码 `crates/core/src/signals/codex_reset_credits.rs`。
-- **v0.2.6 已发布并公证**（2026-11-11，`/Applications` 已装 0.2.6）：设置页底部「联系作者」（Peter Chen、博客 https://blog.peterchen97.cn 、GitHub 反馈）；左栏住户行英文用短档位词（`pressure_short_label`），徽标槽按语言给最小宽度，不再盖住百分比。**这是第一次真实的应用内更新**：已装 0.2.5 重启后弹窗「立即更新」，约 50 秒替换并重开到 0.2.6，签名与公证通过，0.2.5 进了备份目录。阮一峰周刊自荐 issue（ruanyf/weekly#13246）正文已于 2026-11-11 按 0.2.x 现状更新。
-- **v0.2.5 已发布并公证**（2026-11-11）：应用内一键更新——弹窗「立即更新」或左栏「更新到 x.y.z」，后台下载并核对 sha256、签名、bundle id 与团队、公证、版本号，通过后退出、脚本替换 `.app` 并重开，旧版挪到 `~/AgentHome/backup/AgentHome-<旧版本>.app`（`crates/core/src/update.rs`、`crates/app/src/updater.rs`）。0.2.4 及更早需手动装一次。调试演练用 `AGENTHOME_PRETEND_VERSION`、`AGENTHOME_UPDATE_TARGET`、`AGENTHOME_UPDATE_NO_RELAUNCH`。
-- **v0.2.4 已发布并公证**（2026-11-10）：左栏住户额度行压成一行（头像 · 名字 · 细条 · 剩余% · 徽标）并固定到左栏底部。用已装的 0.2.3 实测过更新提醒：重启后弹出「0.2.4 已发布」。
-- **v0.2.3 已发布并公证**（2026-11-10）：检查更新——启动 8 秒后与每 24 小时查 GitHub releases/latest（`crates/core/src/update.rs`，系统 curl，只读版本号），有新版本弹一次提醒、左栏底部「新版本 x.y.z」，设置 → 软件更新可手动检查或关闭；只提醒不自动安装。这是 AgentHome 自己发起的唯一网络请求（README 隐私一节已写明）。调试构建可用 `AGENTHOME_PRETEND_VERSION=0.2.1` 假装旧版核对提醒。
-- **v0.2.2 已发布并公证**（2026-11-10，升级前索引库备份在 `~/AgentHome/backup/agenthome-before-0.2.2.db`）：来源插件化 + Antigravity CLI 会话与额度、低分屏字体与额度卡排版（像素字体只留品牌字与栖息地）、Codex 两处口径修复。发版前跑了 3 个真实数据入库基准，全过。
 - **来源插件化 + Antigravity CLI**（2026-11-10，0.2.2）：Gemini CLI 已对个人账号（含 Google AI Pro）停服，个人用户改用 Antigravity CLI（`agy`），它每个对话一个 SQLite（`~/.gemini/antigravity-cli/conversations/<id>.db`），内容是**没加密**的 protobuf，含每次请求的新鲜输入 / 缓存读 / 输出 / 思考 token；新来源 `antigravity-cli`（`crates/core/src/providers/antigravity_cli.rs` + 无 schema 读取 `proto.rs`），栖息地归猫住户。所有来源改走注册表 `crates/core/src/providers/registry.rs`（同步、命令行、仪表盘、归档都遍历它），加 OpenCode 这类来源见 `docs/13-来源插件开发指南.md`；不重新编译的外部插件留到下一步。真实数据核对：4 个 agy 对话的 token 与 `agy -p --output-format stream-json` 逐条一致。猫住户的额度来自 `agy -p /usage --output-format json`（`crates/core/src/signals/agy_usage.rs`，快照 `~/AgentHome/signals/agy-usage.json`，后台每 15 分钟，设置页「立即刷新」，CLI `agenthome quota --refresh-agy`）：Gemini 组与 Claude/GPT 组各 5 小时 + 每周，另有 Pro 套餐的 Gemini 4 Argon 周额度。同批修了 Codex 两处口径（fork 首条累计值、缓存写重复计数），见 `docs/12` 第 7 节。
-- **v0.2.1 已发布并公证**（2026-11-10）：额度使用压力徽标 + ChatGPT 重置额度手动查询与到期提醒，见下两条。
 - **额度使用压力**（2026-11-10）：每个额度窗口按「已用比例 ÷ 窗口已过时间」判断照现在速度到重置前够不够用，分宽裕 / 正常 / 偏紧 / 紧张 / 已用尽，统一用 `crates/app/src/pressure_badge.rs` 的徽标（悬停有推算依据与五档说明）；仪表盘每窗口一个，偏紧和紧张时写「照此速度 X 后用完」，左栏住户行与菜单栏面板显示最紧的窗口（不是主窗口时带窗口名，如「7d 偏紧」）。计算在 `crates/core/src/pressure.rs`，阈值见 `docs/10-设计落地清单.md` 6.45。
 - **开源**：2026-11-10 用户决定直接公开现有仓库（不改写历史；git 历史里仍有私人邮箱与设计稿旧版本里的真实项目名，用户知情）。当前文件里的真实项目名与会话标题已换成虚构名。
 - 已实现：Claude Code 与 Codex 会话全量入库（本机约 2,800 会话 / 35 万条消息）；**实时同步**（app 启动即扫描、库不存在自动建库，notify / FSEvents 监听来源目录、防抖 2 秒只扫变化的来源，每小时兜底全量，标题栏显示「正在入库 x/y」/「监听中 · N 个来源 · X 同步」；新数据入库后仪表盘与归档静默刷新，打开的会话追加新消息）；仪表盘（住户额度、累计 token、到期与重置、30/90 天趋势、今天、按模型 / 项目、归档健康）；归档（按日分组列表、按父会话 id 折叠子代理、会话级成本、轮次 + Trace 折叠行的会话详情、打开即停在最新一条、中文全文搜索）；**设置页基础版**（来源与同步状态 + 立即扫描、Claude statusline 一键安装 / 卸载、归档位置与索引体积、外观跟随系统 / 浅色 / 深色并持久化、合规说明、定价表版本）；**Claude 订阅额度**（后台每 15 分钟在伪终端跑官方 `claude` 的 `/usage` 读屏，桌面版用户也有数据；套餐名读自 `~/.claude.json` 的 organizationType；与终端 statusline 两路合并）；**raw 层原件归档**（每个会话 jsonl 入库前先逐字节归档到 `~/AgentHome/raw/<provider>/<machineId>/<相对路径>/`，zstd 压缩、变长按字节段追加、被改写另存新版本、`manifest.json` 记 sha256 与来源；本机 2,603 个原件 9.8 GB → 占用 3.6 GB，首次 55 秒，之后每次扫描 0.5 秒）；会动的像素栖息地；左侧固定导航；CLI（含 `agenthome statusline status|install|uninstall`）。
@@ -74,7 +70,7 @@
 crates/core   agenthome-core，零 UI 依赖
   model.rs            规范化模型：Session / Message / ContentBlock / Usage / Period / QuotaSnapshot / ProviderActivity …
   providers/          SourceProvider trait；registry.rs（来源注册表，加来源只改这里）；claude_code.rs、codex.rs、gemini.rs、antigravity_cli.rs；proto.rs（无 schema 的 protobuf 读取）
-  ingest.rs           ingest_all：按 size+mtime 增量，一个事务写会话 + 消息 + sources
+  ingest.rs           ingest_all：按 byte offset 续读增量（截断 / 换 inode / 指纹不符时整文件重解析），一个事务写会话 + 消息 + sources
   store.rs            SQLite（WAL、busy_timeout、FTS5 trigram），SCHEMA_VERSION=4；列表 / 详情 / 仪表盘查询 / 归档健康 / 活动
   watch.rs            notify（FSEvents）监听来源根目录，只认 .jsonl / .jsonl.zst
   statusline_setup.rs Claude statusline 包装脚本安装 / 卸载（改 ~/.claude/settings.json，改前备份）
@@ -138,7 +134,7 @@ cargo fmt --all --check && cargo clippy --workspace --all-targets && cargo test 
 本轮遗留（批次 1 / 3 / 6 的尾巴）：
 - 批次 1：10.31 Codex 工具失败与退出码、10.16 每会话原件状态、5.6 工具输出进全文索引、6.16 估算与真值并列。
 - 批次 2：4.12「在 Finder 显示」只差接按钮（`source_path` 已有）；4.8 详情成本标签要区分真值 / 估算；其余 3.12、3.13、4.2、4.3、4.9、4.25、2.11、2.13、2.14、6.36。
-- 批次 3：10.13 按 byte offset 增量（现在变化文件整文件重解析）、11.8 CLI `watch`、7.14–7.16 栖息地触发规则（数据已实时，working 待目视确认）、7.23–7.28 toast 走真实事件。
+- 批次 3：11.8 CLI `watch`、7.14–7.16 栖息地触发规则（数据已实时，working 待目视确认）、7.23–7.28 toast 走真实事件。
 - 批次 6：9.2 来源启停与 ToS 风险标签、9.3 改归档位置 / 重建索引、9.9 theme.json 热加载、7.19、6.10。
 - 「从 raw 层重建索引 / 导出 284 个重建副本」2026-11-08 用户判定**不做**（只为在 app 里继续浏览已被清理的会话，没有必要）；代价是升 `SCHEMA_VERSION` 或删库后这 284 个会话会从 app 里消失，升级前要提醒用户。优先做 10.47 附属文件、10.16 每会话「仅归档」状态。
 - Claude 额度：设置页「立即刷新」与仪表盘额度卡已截图核对（2026-11-08）；`/usage` 读屏依赖 CLI 2.1.x 的文字格式与未公开的 `CLAUDE_CODE_CHILD_SESSION` 标记，CLI 升级后先跑 `agenthome quota --refresh-claude` 验证。
