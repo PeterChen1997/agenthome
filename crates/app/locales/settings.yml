@@ -131,6 +131,12 @@ settings.about_quota:
 settings.about_credentials:
   en: "· No login credentials are read or stored. Only session files are read: originals are copied into ~/AgentHome/raw and parsed into the index; agent folders are never modified."
   zh-CN: "· 不读取、不保存任何登录凭据；只读取会话文件：原件拷贝进 ~/AgentHome/raw、解析进索引，不改动 agent 原目录。"
+settings.about_telemetry:
+  en: "· Anonymous usage stats and crash reports: which pages are opened, launches and update results go to our own Umami, crashes and internal errors go to Sentry. Never sent: session content, file paths, project names or token details. Update checks also contact GitHub. Turn it off below at any time."
+  zh-CN: "· 匿名使用统计与崩溃报告：打开了哪些页面、启动与更新结果发到自建的 Umami，崩溃和内部错误发到 Sentry。不发送会话内容、文件路径、项目名与 token 明细。另外检查更新会访问 GitHub。可随时在下面关闭。"
+settings.telemetry_switch:
+  en: Send anonymous usage stats and crash reports
+  zh-CN: 发送匿名使用统计与崩溃报告
 settings.pricing_table:
   en: Price table
   zh-CN: 定价表

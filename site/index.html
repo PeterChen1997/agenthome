@@ -53,7 +53,7 @@
         <h1 data-i18n="hero.title">A home for your AI coding agents.</h1>
         <p class="lede" data-i18n="hero.lede">AgentHome copies every Claude Code, Codex and Gemini CLI session into a local archive you can keep and search for good, and puts tokens, cost and remaining quota on one dashboard. Up in the cabin, three residents change with what your agents are really doing.</p>
         <div class="cta">
-          <a class="btn btn-primary" href="https://github.com/PeterChen1997/agenthome/releases/latest">
+          <a class="btn btn-primary" href="https://github.com/PeterChen1997/agenthome/releases/latest" data-umami-event="download" data-umami-event-location="hero">
             <svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M7 1h2v8h2v-2h2v2h-2v2H9v2H7v-2H5V9H3V7h2v2h2z M2 13h12v2H2z"/></svg>
             <span data-i18n="hero.download">Download for macOS</span>
           </a>
@@ -203,7 +203,7 @@
         <div><dt data-i18n="priv.1.t">Local-first</dt><dd data-i18n="priv.1.p">The archive, index and settings live under <code>~/AgentHome</code> on your machine.</dd></div>
         <div><dt data-i18n="priv.2.t">Read-only sources</dt><dd data-i18n="priv.2.p">Agent directories are read and copied. AgentHome never edits, moves or symlinks them.</dd></div>
         <div><dt data-i18n="priv.3.t">No credentials</dt><dd data-i18n="priv.3.p">It does not read tokens, API keys or login files. Claude quota is read by running the official <code>claude /usage</code>.</dd></div>
-        <div><dt data-i18n="priv.4.t">No telemetry</dt><dd data-i18n="priv.4.p">No analytics, no usage reporting. The source is open for you to check.</dd></div>
+        <div><dt data-i18n="priv.4.t">Anonymous stats, and you can turn them off</dt><dd data-i18n="priv.4.p">The app sends anonymous usage stats (launches, which pages you open, update results) and crash reports. It never sends session content, file paths, project names or token details. Turn it off in Settings. The source is open for you to check.</dd></div>
       </dl>
     </div>
   </section>
@@ -232,7 +232,7 @@
         </li>
       </ol>
       <div class="install-cta">
-        <a class="btn btn-primary" href="https://github.com/PeterChen1997/agenthome/releases/latest"><span data-i18n="inst.cta">Download v0.2.6</span></a>
+        <a class="btn btn-primary" href="https://github.com/PeterChen1997/agenthome/releases/latest" data-umami-event="download" data-umami-event-location="install"><span data-i18n="inst.cta">Download v0.2.6</span></a>
         <p class="req" data-i18n="inst.req">Requires macOS 15 or later on Apple Silicon. The interface comes in English and Simplified Chinese and follows your macOS language.</p>
       </div>
     </div>
@@ -258,5 +258,6 @@
 </footer>
 
 <script src="assets/main.js"></script>
+<script defer src="https://a.hweb.peterchen97.cn/script.js" data-website-id="5bc30eaf-ce3e-4e80-a6d5-86eb219da3a7"></script>
 </body>
 </html>

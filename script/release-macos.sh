@@ -36,8 +36,28 @@ APP=dist/AgentHome.app
 ZIP="dist/AgentHome-${VERSION}-macos-arm64.zip"
 ICON_SRC=docs/design/logo/app-icon.png   # 1024，已按 macOS 图标网格留边、圆角外透明（logo 选定 D，2026-11-09）
 
+# Sentry DSN 构建时注入（开源仓库里不放）；没有就不启用崩溃上报，照样能发版但要知道。
+if [ -z "${SENTRY_DSN_AGENTHOME:-}" ] && [ -f "$HOME/.config/sentry-dsns.env" ]; then
+  SENTRY_DSN_AGENTHOME="$(grep -m1 '^SENTRY_DSN_AGENTHOME=' "$HOME/.config/sentry-dsns.env" | cut -d= -f2-)"
+fi
+if [ -n "${SENTRY_DSN_AGENTHOME:-}" ]; then
+  export SENTRY_DSN_AGENTHOME
+else
+  echo "警告：没有 SENTRY_DSN_AGENTHOME，这个包不会上报崩溃" >&2
+fi
+
 echo "== 1/5 release 构建"
 cargo build --release -p agenthome-app -p agenthome-cli
+
+# 符号上传：dSYM 只传 Sentry，不进 .app。sentry-cli 没装或没登录时报错但不挡发版。
+if [ -n "${SENTRY_DSN_AGENTHOME:-}" ]; then
+  if command -v sentry-cli >/dev/null; then
+    sentry-cli debug-files upload --org own-tay --project agenthome --include-sources \
+      target/release/agenthome-app.dSYM || echo "警告：dSYM 上传失败，堆栈会不可读" >&2
+  else
+    echo "警告：没装 sentry-cli，dSYM 没上传" >&2
+  fi
+fi
 
 echo "== 2/5 组装 .app"
 rm -rf dist && mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"

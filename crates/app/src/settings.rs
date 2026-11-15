@@ -64,6 +64,7 @@ pub struct SettingsView {
     live: Entity<LiveState>,
     update: Entity<UpdateState>,
     auto_update: bool,
+    telemetry: bool,
     index_db: Option<PathBuf>,
     disk: DiskInfo,
     appearance: Appearance,
@@ -115,6 +116,7 @@ impl SettingsView {
             live,
             update,
             auto_update: config::auto_update_check(),
+            telemetry: config::telemetry_enabled(),
             index_db,
             disk: DiskInfo::default(),
             appearance: config::current_appearance(),
@@ -880,6 +882,27 @@ impl SettingsView {
         section(t!("settings.about_title").to_string(), "", cx)
             .child(muted(t!("settings.about_quota").to_string(), cx))
             .child(muted(t!("settings.about_credentials").to_string(), cx))
+            .child(muted(t!("settings.about_telemetry").to_string(), cx))
+            .child(
+                Switch::new("telemetry")
+                    .checked(self.telemetry)
+                    .label(t!("settings.telemetry_switch").to_string())
+                    .on_click(cx.listener(|this, on: &bool, _, cx| {
+                        match config::save_telemetry(*on) {
+                            Ok(()) => {
+                                this.telemetry = *on;
+                                crate::telemetry::set_enabled(*on);
+                            }
+                            Err(error) => {
+                                this.notice = Some(Notice {
+                                    ok: false,
+                                    text: format!("{error:#}").into(),
+                                });
+                            }
+                        }
+                        cx.notify();
+                    })),
+            )
             .child(kv(
                 t!("settings.pricing_table"),
                 t!(

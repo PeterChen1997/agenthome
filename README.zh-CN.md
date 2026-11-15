@@ -74,7 +74,7 @@ CLI 随应用附带，位于 `AgentHome.app/Contents/MacOS/agenthome`，可以�
 - **对 agent 只读。** AgentHome 读取 agent 的会话目录，绝不修改、移动或软链其中任何文件。只拷贝，不链接。
 - **不读凭据。** 不读 API key、OAuth token、凭据文件或 macOS 钥匙串。
 - **不调私有端点。** 不调用 Claude OAuth usage 端点，也不调用 Codex 的私有用量端点。
-- **无遥测、不上传。** 没有统计，没有云同步，会话数据不会离开本机。
+- **匿名统计与崩溃报告，默认开，可以关。** AgentHome 会把匿名使用统计（启动、打开了哪些页面、更新结果）发到自建的 [Umami](https://umami.is)，把崩溃和内部错误发到 [Sentry](https://sentry.io)（路径里的主目录会去掉）。不发送会话内容、文件路径、项目名与 token 明细，也没有云同步，会话数据不会离开本机。在「设置 → 合规与定价 → 发送匿名使用统计与崩溃报告」里关闭。自己从源码构建、没注入 Sentry DSN 时不会发崩溃报告。另外检查更新会访问 GitHub。
 - **额度怎么读。**
   - Claude：每 15 分钟在后台伪终端运行一次官方 `claude` CLI 的 `/usage`，读取它打印的文字。不发对话、不耗 token。需要本机装有 `claude` CLI 并已登录。
   - Codex：读 Codex 自己写进 rollout 文件的 `rate_limits` 快照。

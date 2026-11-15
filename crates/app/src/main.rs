@@ -21,6 +21,7 @@ mod search_palette;
 mod settings;
 mod sqlite_source;
 mod sync;
+mod telemetry;
 mod updater;
 mod workspace;
 
@@ -185,6 +186,16 @@ fn main() {
     if habitat_demo {
         run_habitat_demo();
         return;
+    }
+    // 崩溃上报要尽早装上（panic hook）；guard 活到 main 结束，退出时把队列发完。
+    let _sentry = telemetry::init();
+    // 核对上报链路与符号化用：启动即 panic（调试构建还要 AGENTHOME_TELEMETRY_DEV=1 才会发出）。
+    if std::env::var_os("AGENTHOME_TELEMETRY_TEST").is_some() {
+        panic!("AgentHome telemetry test panic");
+    }
+    // 截图、演示数据不算真实使用。
+    if !mock && capture.is_none() && !menubar_popup {
+        telemetry::event("app_launch", serde_json::json!({}));
     }
     let demo = mock;
     // 真实数据源同时启动同步引擎（启动扫描 + 文件监听 + 兜底扫描）；mock 不同步。

@@ -9,7 +9,7 @@ AgentHome is a local-only desktop app and CLI. Its security model:
 - **Reads local files only.** It reads agent session transcripts (for example `~/.claude/projects/`, `~/.codex/sessions/`) and a small set of agent metadata files (for example the plan type in `~/.claude.json`). It never modifies, moves or symlinks anything inside an agent's own directories.
 - **Writes only under `~/AgentHome/`**: the raw archive (byte-for-byte copies of transcripts), the SQLite index, quota signals and app preferences.
 - **Never reads credentials.** It does not read API keys, OAuth tokens, `.credentials.json`, or the macOS Keychain, and it does not call undocumented usage endpoints.
-- **Never uploads your data.** There is no telemetry, analytics or cloud sync. AgentHome itself makes no network requests with your session data.
+- **Never uploads your data.** There is no cloud sync. AgentHome itself makes no network requests with your session data. Anonymous usage stats and crash reports (no session content, paths, project names or token details) are on by default and can be turned off in Settings.
 - **Two opt-in / visible exceptions:**
   - Claude subscription quota is read by running the official `claude` CLI's `/usage` command in a background pseudo-terminal. That CLI talks to Anthropic with its own login, exactly as when you run it yourself; AgentHome only reads the text it prints.
   - Installing the Claude statusline helper from Settings (or `agenthome statusline install`) edits `~/.claude/settings.json`. This only happens when you click it, and the original file is backed up first.
@@ -23,7 +23,7 @@ AgentHome 是纯本地的桌面应用与 CLI，安全模型如下：
 - **只读本地文件**：读取 agent 的会话转录（如 `~/.claude/projects/`、`~/.codex/sessions/`）和少量元数据文件（如 `~/.claude.json` 里的套餐类型）。绝不修改、移动或软链 agent 自己目录里的任何文件。
 - **只在 `~/AgentHome/` 下写入**：raw 原件归档（转录的逐字节拷贝）、SQLite 索引、额度信号与应用偏好。
 - **不读取任何凭据**：不读 API key、OAuth token、`.credentials.json` 或 macOS 钥匙串，也不调用未公开的用量端点。
-- **不上传你的数据**：没有遥测、统计或云同步，AgentHome 自身不会把会话数据发到网络。
+- **不上传你的数据**：没有云同步，AgentHome 自身不会把会话数据发到网络。匿名使用统计与崩溃报告（不含会话内容、路径、项目名与 token 明细）默认开，可在设置里关闭。
 - **两处可见 / 需主动开启的例外**：
   - Claude 订阅额度通过在后台伪终端运行官方 `claude` CLI 的 `/usage` 获得。该 CLI 用它自己的登录态与 Anthropic 通信，和你手动运行时完全一样；AgentHome 只读取它打印的文字。
   - 在设置页（或 `agenthome statusline install`）安装 Claude statusline 包装脚本会修改 `~/.claude/settings.json`，只在你点击时发生，改前先备份原文件。

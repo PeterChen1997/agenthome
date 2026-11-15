@@ -13,6 +13,7 @@ use gpui_kit::{App, AsyncApp, Entity, Task};
 
 use crate::config;
 use crate::format::now_ms;
+use crate::telemetry;
 
 /// 当前版本（编进程序的 Cargo 版本号）。调试构建可用环境变量 `AGENTHOME_PRETEND_VERSION`
 /// 假装成旧版本，用来核对「有新版本」的提醒；正式包里不读它。
@@ -95,6 +96,13 @@ pub fn install_now(state: &Entity<UpdateState>, cx: &mut App) {
     cx.spawn(async move |cx: &mut AsyncApp| {
         let result = job.await;
         let ok = result.is_ok();
+        telemetry::event(
+            "update_install",
+            serde_json::json!({ "result": if ok { "ok" } else { "failed" } }),
+        );
+        if let Err(error) = &result {
+            telemetry::report_error("update install failed", &format!("{error:#}"));
+        }
         state.update(cx, |s, cx| {
             s.install = match result {
                 Ok(()) => InstallPhase::Installing,

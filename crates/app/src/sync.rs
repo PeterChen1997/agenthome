@@ -26,6 +26,7 @@ use agenthome_core::{
 use gpui_kit::{App, AsyncApp, Entity, Task};
 
 use crate::format::now_ms;
+use crate::telemetry;
 
 /// 合并文件变化：首个事件后至少等这么久，期间安静了就入库。活跃会话每秒都在追加，没必要每行都入一次库。
 const QUIET: Duration = Duration::from_secs(2);
@@ -277,6 +278,7 @@ fn run_worker(
     let mut store = match Store::open(&db_path) {
         Ok(store) => store,
         Err(error) => {
+            telemetry::report_error("sync: open index failed", &format!("{error:#}"));
             update(&shared, |s| {
                 s.error =
                     Some(t!("sync.open_index_failed", error = format!("{error:#}")).to_string());
@@ -293,6 +295,7 @@ fn run_worker(
     let raw = match RawArchive::open(raw_root.clone()) {
         Ok(raw) => Some(raw),
         Err(error) => {
+            telemetry::report_error("sync: open raw archive failed", &format!("{error:#}"));
             update(&shared, |s| {
                 s.raw.open_error = Some(format!("{error:#}"));
             });
@@ -309,7 +312,8 @@ fn run_worker(
         WatchEvent::Changed { provider, paths } => {
             let _ = watch_sender.send(Command::Changed(provider, paths));
         }
-        WatchEvent::Error(_) => {
+        WatchEvent::Error(error) => {
+            telemetry::report_error("sync: watcher error", &error);
             // FSEvents 可能丢事件；补一次全量扫描追上，不让数据悄悄落后。
             let _ = error_sender.send(Command::ScanAll);
         }
@@ -332,9 +336,12 @@ fn run_worker(
                 }
             }
         }),
-        Err(error) => update(&shared, |s| {
-            s.error = Some(t!("sync.watch_failed", error = format!("{error:#}")).to_string());
-        }),
+        Err(error) => {
+            telemetry::report_error("sync: start watcher failed", &format!("{error:#}"));
+            update(&shared, |s| {
+                s.error = Some(t!("sync.watch_failed", error = format!("{error:#}")).to_string());
+            })
+        }
     }
 
     let all: HashSet<ProviderId> = roots.iter().map(|(p, _)| p.clone()).collect();

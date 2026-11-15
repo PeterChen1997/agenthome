@@ -40,6 +40,7 @@ use crate::pressure_badge::PressureBadge;
 use crate::search_palette::{PaletteEvent, SearchPalette};
 use crate::settings::{SettingsEvent, SettingsView};
 use crate::sync::{SyncEngine, SyncState};
+use crate::telemetry;
 use crate::updater::{InstallPhase, UpdateState};
 
 actions!(agenthome, [OpenSearch]);
@@ -64,6 +65,15 @@ impl Page {
             Page::Dashboard => t!("workspace.page_dashboard").into(),
             Page::Archive => t!("workspace.page_archive").into(),
             Page::Settings => t!("workspace.page_settings").into(),
+        }
+    }
+
+    /// 匿名统计里的页面名（固定英文，不随界面语言变）。
+    fn key(self) -> &'static str {
+        match self {
+            Page::Dashboard => "dashboard",
+            Page::Archive => "archive",
+            Page::Settings => "settings",
         }
     }
 
@@ -445,6 +455,7 @@ impl Workspace {
                         session_id,
                         message_id,
                     } => {
+                        telemetry::event("search_open_result", serde_json::json!({}));
                         this.page = Page::Archive;
                         this.archive.update(cx, |archive, cx| {
                             archive.open_session_at(
@@ -861,6 +872,7 @@ impl Workspace {
                             cx.listener(move |this, _, _, cx| {
                                 if this.page != page {
                                     this.page = page;
+                                    telemetry::page_view(page.key());
                                     cx.notify();
                                 }
                             }),

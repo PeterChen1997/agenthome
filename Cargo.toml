@@ -28,6 +28,11 @@ vt100 = "0.18"
 # 精确锁定：gpui-kit 每周一版，minor 常带 breaking。0.9.0 对应 gpui-pre =0.3.11。
 gpui-kit = "=0.9.0"
 
+# 发版包保留行号级调试信息，单独打成 dSYM（不进 .app），由 release-macos.sh 上传 Sentry 做符号化。
+[profile.release]
+debug = "line-tables-only"
+split-debuginfo = "packed"
+
 # GPUI 全源码编译，debug 不开优化会慢到不可用。
 [profile.dev]
 opt-level = 1
