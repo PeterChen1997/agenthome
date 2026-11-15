@@ -60,4 +60,4 @@ URL="https://blog.peterchen97.cn/agenthome/"
 for f in index.html assets/main.js; do
   [[ "$(curl -fsS -m 30 "$URL$f" | shasum)" == "$(shasum <"site/$f")" ]] || fail "线上 $URL$f 与本地不一致（CDN 可能还没刷新，稍后重跑）"
 done
-echo "✓ 线上 ${URL} 已是 $version（记得提交 site/ 的改动）"
+echo "✓ 线上 ${URL} 已是 ${version}（记得提交 site/ 的改动）"
