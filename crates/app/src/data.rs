@@ -785,13 +785,14 @@ impl DataSource for MockDataSource {
     fn by_model(&self, period: Period) -> anyhow::Result<Vec<CostBreakdown>> {
         let k = self.totals(period, None)?.cost_usd / 67.4;
         let rows = [
-            ("claude-opus-5-5", ProviderId::ClaudeCode, 0.58),
+            ("claude-opus-5-5", ProviderId::ClaudeCode, 0.55),
             ("claude-fable-5-1", ProviderId::ClaudeCode, 0.24),
             ("claude-sonnet-5-5", ProviderId::ClaudeCode, 0.07),
             ("gpt-5.5", ProviderId::Codex, 0.09),
             ("gpt-5-mini", ProviderId::Codex, 0.02),
+            ("gemini-4-hydrogen", ProviderId::AntigravityCli, 0.03),
         ];
-        Ok(rows
+        let mut breakdown: Vec<_> = rows
             .iter()
             .map(|(m, p, share)| CostBreakdown {
                 key: (*m).to_string(),
@@ -803,7 +804,19 @@ impl DataSource for MockDataSource {
                 cost_usd: 67.4 * k * share,
                 unpriced_tokens: 0,
             })
-            .collect())
+            .collect();
+        let unpriced_tokens = (12_000.0 * k) as u64;
+        breakdown.push(CostBreakdown {
+            key: "codex-auto-review".into(),
+            provider: ProviderId::Codex,
+            usage: Usage {
+                input_tokens: unpriced_tokens,
+                ..Usage::default()
+            },
+            cost_usd: 0.0,
+            unpriced_tokens,
+        });
+        Ok(breakdown)
     }
 
     fn by_project(&self, period: Period, limit: usize) -> anyhow::Result<Vec<CostBreakdown>> {

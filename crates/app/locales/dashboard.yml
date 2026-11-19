@@ -30,6 +30,9 @@ dashboard.period_90d:
 dashboard.period_30d:
   en: "30 days"
   zh-CN: "30 天"
+dashboard.period_7d:
+  en: "7 days"
+  zh-CN: "7 天"
 dashboard.period_all:
   en: "All"
   zh-CN: "全部"
@@ -175,16 +178,60 @@ dashboard.no_active_sessions:
   en: "No active sessions in the last 10 minutes"
   zh-CN: "最近 10 分钟没有活跃会话"
 
-# 按模型 / 按项目 / 归档健康
+# 花费
+dashboard.cost_title:
+  en: "Spending"
+  zh-CN: "花费"
+dashboard.cost_equivalent:
+  en: "API equivalent"
+  zh-CN: "等价 API 花费"
+dashboard.cost_paid:
+  en: "Paid"
+  zh-CN: "实付"
+dashboard.cost_equivalent_hint:
+  en: "Estimated at API list prices"
+  zh-CN: "等价 API 花费（按 API 单价折算）"
+dashboard.cost_paid_hint:
+  en: "Configured monthly fees, prorated for this range"
+  zh-CN: "已填订阅月费，按所选范围折算"
+dashboard.cost_missing_fee:
+  en: "Set monthly fee ›"
+  zh-CN: "未填月费 ›"
+dashboard.cost_other_vendor:
+  en: "Other"
+  zh-CN: "其他"
+dashboard.cost_unpriced:
+  en: "Unpriced"
+  zh-CN: "未计价"
+dashboard.cost_partly_unpriced:
+  en: "Partly priced"
+  zh-CN: "部分未计价"
+dashboard.cost_unpriced_note:
+  en: "Models with unpriced usage (%{count} · %{tokens} tok): %{models}. These tokens are excluded from the total."
+  zh-CN: "%{count} 个模型未计价（%{tokens} tok）：%{models}——不计入上面的金额"
+dashboard.cost_paid_models_hint:
+  en: "Subscriptions are billed per account, with no per-model breakdown."
+  zh-CN: "订阅按账号计费，不分模型。"
+dashboard.cost_model_top:
+  en: "Top 8 · colors by vendor"
+  zh-CN: "前 8 · 按厂商着色"
+dashboard.cost_models_expand:
+  en: "Expand more models (%{count})"
+  zh-CN: "还有 %{count} 个模型 · 展开"
+dashboard.cost_models_collapse:
+  en: "Show fewer models"
+  zh-CN: "收起模型"
+dashboard.cost_load_failed:
+  en: "Could not load spending for this range"
+  zh-CN: "无法加载所选范围的花费"
 dashboard.model_title:
   en: "By model"
   zh-CN: "按模型"
-dashboard.model_subtitle:
-  en: "%{period} cost · follows token card"
-  zh-CN: "%{period}成本 · 跟随累计 token 周期"
 dashboard.model_empty:
-  en: "No priced usage in this period"
-  zh-CN: "这个周期没有可计价的用量"
+  en: "No model usage in this range"
+  zh-CN: "所选范围没有模型用量"
+
+# 按项目 / 归档健康
 dashboard.project_title:
   en: "By project"
   zh-CN: "按项目"

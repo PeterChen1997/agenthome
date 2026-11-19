@@ -4,6 +4,7 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU8, Ordering};
 
+use agenthome_core::cost::Vendor;
 use gpui_kit::component::{Theme, ThemeMode};
 use gpui_kit::{App, Window};
 use serde_json::{Map, Value};
@@ -205,18 +206,15 @@ pub fn save_telemetry(on: bool) -> anyhow::Result<()> {
     save_key("telemetry", if on { "on" } else { "off" })
 }
 
+pub const SUBSCRIPTION_VENDORS: [Vendor; 3] = [Vendor::Anthropic, Vendor::OpenAI, Vendor::Google];
+
 /// 某个模型厂商的订阅月费（USD），首页「实付」按它折算。没填、填的不是正数都按没填（界面显示「未填月费」，不猜）。
-#[expect(dead_code, reason = "CARM-283 首页花费卡接入后删掉")]
-pub fn subscription_fee(vendor: agenthome_core::cost::Vendor) -> Option<f64> {
+pub fn subscription_fee(vendor: Vendor) -> Option<f64> {
     parse_fee(load_key(&fee_key(vendor)).ok().flatten().as_deref())
 }
 
 /// `None` 清掉月费。
-#[expect(dead_code, reason = "CARM-283 设置页月费输入接入后删掉")]
-pub fn save_subscription_fee(
-    vendor: agenthome_core::cost::Vendor,
-    monthly_usd: Option<f64>,
-) -> anyhow::Result<()> {
+pub fn save_subscription_fee(vendor: Vendor, monthly_usd: Option<f64>) -> anyhow::Result<()> {
     let value = monthly_usd
         .filter(|v| v.is_finite() && *v > 0.0)
         .map(|v| v.to_string())
@@ -224,11 +222,11 @@ pub fn save_subscription_fee(
     save_key(&fee_key(vendor), &value)
 }
 
-fn fee_key(vendor: agenthome_core::cost::Vendor) -> String {
+fn fee_key(vendor: Vendor) -> String {
     format!("subscription_fee_{}", vendor.as_str())
 }
 
-fn parse_fee(value: Option<&str>) -> Option<f64> {
+pub fn parse_fee(value: Option<&str>) -> Option<f64> {
     value
         .and_then(|v| v.trim().parse::<f64>().ok())
         .filter(|v| v.is_finite() && *v > 0.0)

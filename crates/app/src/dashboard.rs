@@ -1,9 +1,9 @@
-//! 仪表盘页：页头工具行 + 四行卡片。
+//! 仪表盘页：页头工具行与各数据卡片。
 //!
-//! 数据分三路加载，各带 revision 防过期：页头周期（趋势 / 按模型 / 按项目 / 归档 / 今天）、
-//! 累计 token 卡自己的周期、额度快照（`QuotaState`，含每秒倒计时）。
+//! 趋势与概览、累计 token、花费独立查询，各带 revision 防过期；额度快照由 `QuotaState` 管理。
 
 mod cards;
+mod cost;
 mod fmt;
 mod model;
 mod panels;
@@ -17,7 +17,7 @@ use gpui_kit::component::tab::{Tab, TabBar};
 use gpui_kit::component::{ActiveTheme as _, IconName, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    App, AppContext as _, Context, Entity, InteractiveElement as _, IntoElement,
+    App, AppContext as _, Context, Entity, EventEmitter, InteractiveElement as _, IntoElement,
     ParentElement as _, Render, SharedString, StatefulInteractiveElement as _, Styled as _, Task,
     Window, div, px, rgb,
 };
@@ -25,6 +25,7 @@ use gpui_kit::{
 use crate::data::DataSource;
 use crate::habitat::HabitatView;
 use crate::live::LiveState;
+use cost::CostCard;
 use model::{Overview, TokenTotals};
 use quota::{DueCard, QuotaState, ResidentsCard};
 
@@ -59,10 +60,17 @@ pub struct DashboardView {
     overview_revision: u64,
     tokens: Option<Arc<TokenTotals>>,
     tokens_revision: u64,
+    cost: CostCard,
     _overview_task: Task<()>,
     _tokens_task: Task<()>,
     _quota_task: Task<()>,
 }
+
+pub enum DashboardEvent {
+    OpenSubscriptionSettings,
+}
+
+impl EventEmitter<DashboardEvent> for DashboardView {}
 
 impl DashboardView {
     const TOKEN_PERIODS: [Period; 4] = [Period::Today, Period::Week, Period::Month, Period::All];
@@ -92,12 +100,12 @@ impl DashboardView {
             overview_revision: 0,
             tokens: None,
             tokens_revision: 0,
+            cost: CostCard::new(),
             _overview_task: Task::ready(()),
             _tokens_task: Task::ready(()),
             _quota_task: Task::ready(()),
         };
-        this.load_overview(cx);
-        this.load_tokens(cx);
+        this.refresh_data(cx);
         this.refresh_quota(cx);
         this
     }
@@ -106,6 +114,7 @@ impl DashboardView {
     pub fn refresh_data(&mut self, cx: &mut Context<Self>) {
         self.load_overview(cx);
         self.load_tokens(cx);
+        self.load_cost(cx);
     }
 
     /// 外壳每 5 秒拉到的额度快照直接写进 `QuotaState`，不再各拉一份，也不显示加载态。
@@ -135,7 +144,7 @@ impl DashboardView {
             return;
         }
         self.token_period = period;
-        // 「按模型 / 按项目」跟随这个周期，一起重拉。
+        // 「按项目」跟随这个周期，一起重拉。
         self.load_tokens(cx);
         self.load_overview(cx);
     }
@@ -306,6 +315,7 @@ impl Render for DashboardView {
                             })
                             // 栖息地常驻左栏，这里不再重复；第一行是额度详情（三位住户各一列）。
                             .child(self.residents.clone())
+                            .child(self.render_cost_card(cx))
                             .child(
                                 row()
                                     .child(wide(self.render_token_card(cx)))
@@ -318,8 +328,7 @@ impl Render for DashboardView {
                             )
                             .child(
                                 row()
-                                    .child(narrow(self.render_model_card(cx)))
-                                    .child(narrow(self.render_project_card(cx)))
+                                    .child(wide(self.render_project_card(cx)))
                                     .child(narrow(self.render_health_card(cx))),
                             ),
                     ),
