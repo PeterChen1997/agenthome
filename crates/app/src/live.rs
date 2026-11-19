@@ -380,7 +380,7 @@ mod tests {
             .collect();
         let five_hour = quota(0.0)
             .windows
-            .at(0)
+            .first()
             .cloned()
             .expect("测试快照里有一个窗口");
         assert_eq!(
