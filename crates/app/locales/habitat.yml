@@ -25,7 +25,7 @@ habitat.demo_session_done:
   zh-CN: Claude 完成了一个会话 · $3.21
 habitat.demo_low:
   en: Codex 5h window down to 18%
-  zh-CN: Codex 5h 窗口只剩 18%
+  zh-CN: Codex 5 小时窗口只剩 18%
 habitat.demo_exhausted:
   en: Codex is out of quota; resets in 03:41
   zh-CN: Codex 额度用尽，03:41 后重置
@@ -34,4 +34,10 @@ habitat.demo_codex_reset:
   zh-CN: Codex 窗口已重置，体力全满
 habitat.demo_claude_reset:
   en: Claude 5h window reset
-  zh-CN: Claude 5h 窗口已重置
+  zh-CN: Claude 5 小时窗口已重置
+habitat.live_session_started:
+  en: "%{who} started a new session"
+  zh-CN: "%{who} 开始了新会话"
+habitat.live_window_reset:
+  en: "%{who} %{window} window reset"
+  zh-CN: "%{who} %{window}窗口已重置"

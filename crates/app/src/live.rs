@@ -157,7 +157,9 @@ fn diff_events(
             });
         }
         if last.is_some_and(|p| current.active_sessions > p.active_sessions) {
-            events.push(HabitatEvent::Toast(format!("{} 开始了新会话", who.name())));
+            events.push(HabitatEvent::Toast(
+                t!("habitat.live_session_started", who = who.name()).to_string(),
+            ));
         }
         if current.detected && !quota.iter().any(|q| q.provider == current.provider) {
             // 没装 statusline 脚本时拿不到额度；按满体力喂，否则住户会一直「休息中」。
@@ -184,11 +186,14 @@ fn diff_events(
                 .find(|w| w.id == window.id)
                 .is_some_and(|w| w.used_percent - window.used_percent >= RESET_DROP_PERCENT);
             if dropped {
-                events.push(HabitatEvent::Toast(format!(
-                    "{} {}窗口已重置",
-                    who.name(),
-                    window.label
-                )));
+                events.push(HabitatEvent::Toast(
+                    t!(
+                        "habitat.live_window_reset",
+                        who = who.name(),
+                        window = crate::format::quota_window_label(window)
+                    )
+                    .to_string(),
+                ));
             }
         }
     }
@@ -373,7 +378,23 @@ mod tests {
                 _ => None,
             })
             .collect();
-        assert_eq!(toasts, ["Claude 开始了新会话", "Claude 5 小时窗口已重置"]);
+        let five_hour = quota(0.0)
+            .windows
+            .at(0)
+            .cloned()
+            .expect("测试快照里有一个窗口");
+        assert_eq!(
+            toasts,
+            [
+                t!("habitat.live_session_started", who = "Claude").to_string(),
+                t!(
+                    "habitat.live_window_reset",
+                    who = "Claude",
+                    window = crate::format::quota_window_label(&five_hour)
+                )
+                .to_string(),
+            ]
+        );
         assert!(events.iter().any(|e| matches!(
             e,
             HabitatEvent::Activity {
