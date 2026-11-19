@@ -392,6 +392,9 @@ pub struct CostBreakdown {
     pub provider: ProviderId,
     pub usage: Usage,
     pub cost_usd: f64,
+    /// 没算进 `cost_usd` 的 token（定价表里没有这个模型的那些消息）。不为 0 时金额偏低，界面要单独标出来。
+    #[serde(default)]
+    pub unpriced_tokens: u64,
 }
 
 /// 归档健康：原件还在不在、快不快到清理期、压没压缩。

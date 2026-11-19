@@ -159,6 +159,14 @@ fn 本机出现的模型全部可定价() {
         // Gemini CLI 会话里出现过的模型（LiteLLM 只有 vertex_ai/ 前缀的条目，生成价表时去掉了前缀）。
         "gemini-3-pro-preview",
         "gemini-2.5-pro",
+        // CARM-283 补的：Antigravity 记下的 Gemini 4 系列，以及 Claude Fable 5.2、GPT-6.2。
+        // 缺任何一个，那个模型的全部用量都会在首页消失（2026-11-19 前 Hydrogen 2,287 次请求全是未计价）。
+        "gemini-4-hydrogen",
+        "gemini-4-neon",
+        "gemini-4-carbon",
+        "claude-fable-5-2",
+        "gpt-6.2-sol",
+        "gpt-6.2-astra",
     ] {
         assert!(lookup(m).is_some(), "{m}");
     }
@@ -167,4 +175,46 @@ fn 本机出现的模型全部可定价() {
         estimate_usd("some-unknown-model-x", &Usage::default()),
         None
     );
+}
+
+/// Antigravity 和 Multica 配置里的模型名带推理档位后缀（`gemini-4-hydrogen-xhigh`、
+/// `gemini-4-hydrogen-tiered-high`、`gemini-4-neon-xhigh`）。档位不改单价，必须落到基础型号的价；
+/// 落不到就整段用量变成「未计价」，Gemini 花费又会回到 $0。
+#[test]
+fn gemini_档位后缀落到基础型号价() {
+    for (name, base) in [
+        ("gemini-4-hydrogen-xhigh", "gemini-4-hydrogen"),
+        ("gemini-4-hydrogen-tiered-high", "gemini-4-hydrogen"),
+        ("gemini-4-hydrogen-tiered-xhigh", "gemini-4-hydrogen"),
+        ("gemini-4-neon-xhigh", "gemini-4-neon"),
+    ] {
+        assert_eq!(lookup(name), lookup(base), "{name}");
+        assert!(lookup(name).is_some(), "{name}");
+    }
+    // Hydrogen 与 Neon 不同价（1.5 vs 3.0 /M 输入）：名字归错型号会差一倍。
+    assert!(lookup("gemini-4-neon").unwrap().input > lookup("gemini-4-hydrogen").unwrap().input);
+}
+
+/// Gemini 4 的缓存读按 cache_read 单价（输入的 0.05×）。Antigravity 会话里缓存读占 token 的 96%，
+/// 按输入价算会把 Gemini 花费放大约 15 倍。
+#[test]
+fn gemini_4_缓存读按缓存单价计() {
+    let u = Usage {
+        input_tokens: 100_000,
+        cache_read_tokens: 1_000_000,
+        output_tokens: 10_000,
+        ..Usage::default()
+    };
+    // hydrogen: 0.1M*1.5 + 1M*0.075 + 0.01M*7.5
+    assert!(close(
+        estimate_usd("gemini-4-hydrogen-xhigh", &u).unwrap(),
+        0.15 + 0.075 + 0.075
+    ));
+}
+
+/// `codex-auto-review` 是 Codex 内部的自动审批审查模型（models_cache 里 visibility=hide），
+/// 没有公开 API 单价。它必须保持「未计价」并在界面单独标出，不能借用某个 GPT 的价猜一个数。
+#[test]
+fn codex_内部审查模型没有公开价_保持未计价() {
+    assert_eq!(lookup("codex-auto-review"), None);
 }

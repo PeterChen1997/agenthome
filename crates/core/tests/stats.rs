@@ -295,6 +295,21 @@ fn 按模型_按项目_每日() {
         keys.iter().any(|(k, c)| k == "mystery-9" && *c == 0.0),
         "未知模型成本 0 但 token 仍列出"
     );
+    // 首页要把「没算进金额的 token」单独标出来；0 元和「没有价」必须分得开（CARM-283：
+    // Gemini 4 Hydrogen 2,287 次请求就是这样被当成 0 元、在首页上看不见的）。
+    let mystery = by_model.iter().find(|b| b.key == "mystery-9").unwrap();
+    assert!(mystery.unpriced_tokens > 0);
+    assert_eq!(
+        mystery.unpriced_tokens,
+        mystery.usage.input_tokens
+            + mystery.usage.output_tokens
+            + mystery.usage.cache_read_tokens
+            + mystery.usage.cache_write_tokens
+    );
+    assert_eq!(by_model[0].unpriced_tokens, 0, "有价的模型没有缺口");
+    let summary = agenthome_core::cost::CostSummary::from_breakdown(&by_model);
+    assert_eq!(summary.unpriced_models().count(), 1);
+    assert!((summary.total_usd - 9.25).abs() < 1e-9);
 
     let by_project = store.stats_by_project(Period::All, 2).unwrap();
     assert_eq!(by_project.len(), 2);

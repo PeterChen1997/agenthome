@@ -7,12 +7,14 @@
 //! - `ingest`：扫描 + 解析 + 入库的调度。
 //! - `pressure`：额度使用压力（已用比例对照窗口已过时间）。
 //! - `pricing`：内嵌定价表与成本估算。
+//! - `cost`：首页花费卡的口径（按厂商 / 模型汇总、未计价单列、订阅月费折算）。
 //! - `signals`：额度信号（Claude statusline 文件、Codex rollout 快照）。
 //! - `paths`：默认目录。
 //! - `statusline_setup`：Claude statusline 包装脚本的一键安装 / 卸载（改 ~/.claude/settings.json）。
 //! - `raw`：raw 层原件归档（逐字节保存、只增不改、zstd 压缩）。
 //! - `watch`：来源目录的文件监听（notify / FSEvents）。
 
+pub mod cost;
 pub mod ingest;
 pub mod model;
 pub mod paths;

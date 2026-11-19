@@ -826,7 +826,9 @@ const USAGE_SUM_COLS: &str =
      COALESCE(SUM(m.cache_write_5m_tokens),0), COALESCE(SUM(m.cache_write_1h_tokens),0),
      COALESCE(SUM(m.reasoning_tokens),0), COUNT(*), MAX(s.input_includes_cache),
      COALESCE(SUM(m.cost_usd),0) AS cost,
-     COALESCE(SUM(m.input_tokens + m.output_tokens + m.cache_read_tokens + m.cache_write_tokens),0) AS total";
+     COALESCE(SUM(m.input_tokens + m.output_tokens + m.cache_read_tokens + m.cache_write_tokens),0) AS total,
+     COALESCE(SUM(CASE WHEN m.cost_usd IS NULL
+         THEN m.input_tokens + m.output_tokens + m.cache_read_tokens + m.cache_write_tokens END),0)";
 
 /// 周期 + provider 过滤子句（以 ` AND` 开头）及其参数。
 fn period_filter(
@@ -862,6 +864,7 @@ fn row_to_breakdown(r: &Row) -> rusqlite::Result<CostBreakdown> {
             input_includes_cache: get_u64(r, 10) != 0,
         },
         cost_usd: r.get::<_, f64>(11)?,
+        unpriced_tokens: get_u64(r, 13),
     })
 }
 

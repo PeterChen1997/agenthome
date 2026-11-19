@@ -556,6 +556,7 @@ fn stats(db: Option<PathBuf>, period: Option<PeriodArg>, days: Option<u32>) -> R
         Some(ProviderId::ClaudeCode),
         Some(ProviderId::Codex),
         Some(ProviderId::GeminiCli),
+        Some(ProviderId::AntigravityCli),
     ] {
         let t = store.stats_totals(period, p.as_ref())?;
         if p.is_some() && t.messages == 0 {

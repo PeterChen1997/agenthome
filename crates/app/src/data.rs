@@ -801,6 +801,7 @@ impl DataSource for MockDataSource {
                     ..Usage::default()
                 },
                 cost_usd: 67.4 * k * share,
+                unpriced_tokens: 0,
             })
             .collect())
     }
@@ -815,12 +816,14 @@ impl DataSource for MockDataSource {
                 provider: ProviderId::ClaudeCode,
                 usage: Usage::default(),
                 cost_usd: 67.4 * k * share * 0.88,
+                unpriced_tokens: 0,
             });
             out.push(CostBreakdown {
                 key: (*p).to_string(),
                 provider: ProviderId::Codex,
                 usage: Usage::default(),
                 cost_usd: 67.4 * k * share * 0.12,
+                unpriced_tokens: 0,
             });
         }
         Ok(out)
