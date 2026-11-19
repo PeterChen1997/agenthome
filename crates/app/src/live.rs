@@ -185,7 +185,7 @@ fn diff_events(
                 .is_some_and(|w| w.used_percent - window.used_percent >= RESET_DROP_PERCENT);
             if dropped {
                 events.push(HabitatEvent::Toast(format!(
-                    "{} {} 窗口已重置",
+                    "{} {}窗口已重置",
                     who.name(),
                     window.label
                 )));
@@ -373,7 +373,7 @@ mod tests {
                 _ => None,
             })
             .collect();
-        assert_eq!(toasts, ["Claude 开始了新会话", "Claude 5 小时 窗口已重置"]);
+        assert_eq!(toasts, ["Claude 开始了新会话", "Claude 5 小时窗口已重置"]);
         assert!(events.iter().any(|e| matches!(
             e,
             HabitatEvent::Activity {

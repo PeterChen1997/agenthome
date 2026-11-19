@@ -80,8 +80,8 @@ archive.count_with_subagents:
   en: "%{shown} · %{total} incl. sub-agents"
   zh-CN: "%{shown} · 含子代理共 %{total}"
 archive.archive_filter_pending:
-  en: "Filtering by archive status needs per-session original status from core (not yet available)"
-  zh-CN: "按归档状态筛选待 core 提供每会话原件状态"
+  en: "Archive status filtering isn't available yet"
+  zh-CN: "暂不支持按归档状态筛选：尚未记录每个会话的归档状态"
 archive.no_sessions:
   en: "No matching sessions"
   zh-CN: "没有匹配的会话"
