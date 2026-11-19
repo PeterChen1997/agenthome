@@ -140,6 +140,24 @@ settings.telemetry_switch:
 settings.pricing_table:
   en: Price table
   zh-CN: 定价表
+settings.subscription_fee_title:
+  en: "Subscription fees (USD/month)"
+  zh-CN: "订阅月费（USD / 月）"
+settings.subscription_fee_hint:
+  en: "Used only to calculate Paid spending on the dashboard. AgentHome does not read bills. Save an empty field to clear it."
+  zh-CN: "只用于首页「实付」折算，不读账单。清空输入框后保存即可取消设置。"
+settings.subscription_fee_label:
+  en: "%{vendor} monthly fee in USD"
+  zh-CN: "%{vendor} 订阅月费（美元）"
+settings.subscription_fee_save:
+  en: "Save"
+  zh-CN: "保存"
+settings.subscription_fee_invalid:
+  en: "Enter a positive amount in USD or leave the field empty."
+  zh-CN: "请输入大于 0 的美元金额，或留空。"
+settings.subscription_fee_save_failed:
+  en: "Could not save the monthly fee. Try again."
+  zh-CN: "未能保存订阅月费，请重试。"
 settings.pricing_value:
   en: "%{version} (bundled snapshot; costs are estimates, and Claude's official cost wins when available)"
   zh-CN: "%{version}（内嵌快照，成本为估算；Claude 有官方成本时以官方为准）"

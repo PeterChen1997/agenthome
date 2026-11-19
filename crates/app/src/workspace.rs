@@ -29,7 +29,7 @@ use gpui_kit::{
 
 use crate::archive::{ArchiveView, side_item};
 use crate::assets::{FONT_PIXEL_SANS, MonoText as _};
-use crate::dashboard::DashboardView;
+use crate::dashboard::{DashboardEvent, DashboardView};
 use crate::data::DataSource;
 use crate::format::{countdown, now_ms, quota_window_label, relative_time};
 use crate::habitat::{HabitatSize, HabitatView, ResidentId, ResidentState};
@@ -430,6 +430,7 @@ impl Workspace {
                 live.clone(),
                 update.clone(),
                 sync_db,
+                window,
                 cx,
             )
         });
@@ -458,6 +459,19 @@ impl Workspace {
                 },
             ),
             cx.subscribe(
+                &dashboard,
+                |this, _, event: &DashboardEvent, cx| match event {
+                    DashboardEvent::OpenSubscriptionSettings => {
+                        this.page = Page::Settings;
+                        telemetry::page_view(Page::Settings.key());
+                        this.settings.update(cx, |settings, cx| {
+                            settings.scroll_to_subscription_fees(cx);
+                        });
+                        cx.notify();
+                    }
+                },
+            ),
+            cx.subscribe(
                 &settings,
                 |this, _, event: &SettingsEvent, cx| match event {
                     SettingsEvent::LanguageChanged => {
@@ -466,6 +480,11 @@ impl Workspace {
                         this.archive
                             .update(cx, |archive, cx| archive.refresh_data(cx));
                         cx.notify();
+                    }
+                    SettingsEvent::SubscriptionFeeChanged(vendor, fee) => {
+                        this.dashboard.update(cx, |dashboard, cx| {
+                            dashboard.set_subscription_fee(*vendor, *fee, cx);
+                        });
                     }
                 },
             ),

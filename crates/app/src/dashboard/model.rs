@@ -12,10 +12,9 @@ use crate::data::{DataSource, resident_totals};
 use crate::format::{absolute_date, now_ms};
 use crate::habitat::ResidentId;
 
-/// 页头周期（今天 / 30 天 / 90 天 / 全部）驱动的一整页数据。
+/// 趋势、项目与归档概览。
 pub struct Overview {
     pub daily: Vec<DayPoint>,
-    pub by_model: Vec<CostBreakdown>,
     pub projects: Vec<ProjectCost>,
     pub health: Vec<ProviderHealth>,
     pub activity: Vec<ProviderActivity>,
@@ -70,7 +69,7 @@ pub struct DueItem {
 /// 趋势卡可选的天数。
 pub const TREND_DAYS: [u32; 2] = [30, 90];
 
-/// `trend_days` 只管趋势图；`breakdown` 是「按模型 / 按项目」的周期，跟随累计 token 卡。
+/// `trend_days` 只管趋势图；`breakdown` 是「按项目」的周期，跟随累计 token 卡。
 pub fn load_overview(
     source: &dyn DataSource,
     trend_days: u32,
@@ -87,7 +86,6 @@ pub fn load_overview(
         });
     Ok(Overview {
         daily: aggregate_daily(source.daily(trend_days)?),
-        by_model: source.by_model(breakdown)?,
         projects: group_projects(source.by_project(breakdown, 5)?, 5),
         health: source.archive_health()?,
         activity: source.activity()?,
@@ -236,7 +234,6 @@ mod tests {
                 .all(|w| w[0].total_usd >= w[1].total_usd),
             "项目按成本降序"
         );
-        assert_eq!(overview.by_model.len(), 5);
         assert!(!overview.health.is_empty());
         assert!(overview.today.totals.cost_usd > 0.0);
     }

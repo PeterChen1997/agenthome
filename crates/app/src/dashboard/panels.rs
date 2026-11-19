@@ -1,4 +1,4 @@
-//! 仪表盘各数据卡片的渲染（累计 token / 趋势 / 今天 / 按模型 / 按项目 / 归档健康）。
+//! 仪表盘各数据卡片的渲染（累计 token / 趋势 / 今天 / 按项目 / 归档健康）。
 //! 都是 `DashboardView` 的只读渲染方法，状态在 `dashboard.rs`。
 
 use agenthome_core::model::{CostSource, Period, ProviderHealth, ProviderId};
@@ -26,6 +26,7 @@ pub fn period_label(period: Period) -> SharedString {
         Period::Today => t!("dashboard.period_today"),
         Period::Week => t!("dashboard.period_week"),
         Period::Month => t!("dashboard.period_month"),
+        Period::Days(7) => t!("dashboard.period_7d"),
         Period::Days(90) => t!("dashboard.period_90d"),
         Period::Days(_) => t!("dashboard.period_30d"),
         Period::All => t!("dashboard.period_all"),
@@ -34,7 +35,7 @@ pub fn period_label(period: Period) -> SharedString {
 }
 
 /// 周期副标题：`本月 · 11-01 至今` / `全部时间`。
-fn period_subtitle(period: Period) -> String {
+pub(super) fn period_subtitle(period: Period) -> String {
     match period.since_ms() {
         Some(since) => t!(
             "dashboard.period_since",
@@ -190,30 +191,11 @@ impl DashboardView {
                 .items_end()
                 .text_size(px(12.))
                 .text_color(cx.theme().muted_foreground)
-                // 估算成本是这张卡真正该看的数：放大放在最前，并按住户拆开。
                 .child(
                     v_flex().gap(px(4.)).child(cost_label).child(
-                        h_flex()
-                            .items_baseline()
-                            .gap(px(8.))
-                            .child(
-                                super::cards::mono_num(22., cx)
-                                    .text_color(super::fmt::amber_text(cx))
-                                    .child(short_cost(tokens.all.cost_usd)),
-                            )
-                            .child({
-                                let mut parts = vec![
-                                    format!("Claude {}", short_cost(tokens.claude.cost_usd)),
-                                    format!("Codex {}", short_cost(tokens.codex.cost_usd)),
-                                ];
-                                if tokens.gemini.usage.output_tokens > 0 {
-                                    parts.push(format!(
-                                        "Gemini {}",
-                                        short_cost(tokens.gemini.cost_usd)
-                                    ));
-                                }
-                                parts.join(" · ")
-                            }),
+                        super::cards::mono_num(22., cx)
+                            .text_color(super::fmt::amber_text(cx))
+                            .child(short_cost(tokens.all.cost_usd)),
                     ),
                 )
                 .child(stat(
@@ -564,35 +546,6 @@ impl DashboardView {
                     })
                     .children(ongoing),
             )
-    }
-
-    /// 「按模型」卡：成本横条。
-    pub(super) fn render_model_card(&self, cx: &mut Context<Self>) -> Div {
-        let panel = card(cx).child(card_title(
-            t!("dashboard.model_title"),
-            t!(
-                "dashboard.model_subtitle",
-                period = period_label(self.token_period)
-            ),
-        ));
-        let Some(overview) = self.overview.as_deref() else {
-            return panel.child(skeleton_rows(5));
-        };
-        let mut rows = overview.by_model.clone();
-        rows.sort_by(|a, b| b.cost_usd.total_cmp(&a.cost_usd));
-        let max = rows
-            .iter()
-            .map(|r| r.cost_usd)
-            .fold(0.0_f64, f64::max)
-            .max(f64::EPSILON);
-        panel
-            .when(rows.is_empty(), |p| {
-                p.child(empty_hint(t!("dashboard.model_empty").into(), cx))
-            })
-            .children(rows.iter().map(|row| {
-                BarRow::new(row.key.clone(), short_cost(row.cost_usd))
-                    .segment((row.cost_usd / max) as f32, provider_color(&row.provider))
-            }))
     }
 
     /// 「按项目」卡：Top 5，同一项目按来源分段。

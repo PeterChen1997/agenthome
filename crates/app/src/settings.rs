@@ -9,11 +9,13 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
+use agenthome_core::cost::Vendor;
 use agenthome_core::model::{Freshness, ProviderId};
 use agenthome_core::signals::ResetCreditsSnapshot;
 use agenthome_core::statusline_setup::{self, StatuslinePaths, StatuslineStatus};
 use agenthome_core::{paths, pricing};
 use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::switch::Switch;
 use gpui_kit::component::tab::{Tab, TabBar};
 use gpui_kit::component::{
@@ -22,9 +24,11 @@ use gpui_kit::component::{
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, AppContext as _, Context, Entity, EventEmitter, FontWeight, Hsla,
-    InteractiveElement as _, IntoElement, ParentElement as _, Render, SharedString,
-    StatefulInteractiveElement as _, Styled as _, Subscription, Task, Window, div, px,
+    InteractiveElement as _, IntoElement, ParentElement as _, Render, ScrollAnchor, ScrollHandle,
+    SharedString, StatefulInteractiveElement as _, Styled as _, Subscription, Task, Window, div,
+    px,
 };
+use serde_json::json;
 
 use crate::config::{self, Appearance, Language};
 use crate::format::{now_ms, relative_time};
@@ -32,6 +36,13 @@ use crate::live::LiveState;
 use crate::message_row::provider_avatar;
 use crate::sync::{ProviderSync, RawSync, SyncHandle, SyncState};
 use crate::updater::{InstallPhase, UpdateState};
+
+struct SubscriptionFeeField {
+    vendor: Vendor,
+    input: Entity<InputState>,
+    saved: Option<f64>,
+    error: Option<SharedString>,
+}
 
 /// 库体积等慢变化信息的刷新间隔。
 const DISK_POLL: Duration = Duration::from_secs(30);
@@ -69,6 +80,10 @@ pub struct SettingsView {
     disk: DiskInfo,
     appearance: Appearance,
     language: Language,
+    subscription_fees: [SubscriptionFeeField; config::SUBSCRIPTION_VENDORS.len()],
+    scroll: ScrollHandle,
+    subscription_anchor: ScrollAnchor,
+    scroll_to_subscription: bool,
     notice: Option<Notice>,
     busy: bool,
     reset: ResetCreditsState,
@@ -84,13 +99,41 @@ impl SettingsView {
         live: Entity<LiveState>,
         update: Entity<UpdateState>,
         index_db: Option<PathBuf>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let subscriptions = vec![
+        let mut subscriptions = vec![
             cx.observe(&sync, |_, _, cx| cx.notify()),
             cx.observe(&live, |_, _, cx| cx.notify()),
             cx.observe(&update, |_, _, cx| cx.notify()),
         ];
+        let subscription_fees = config::SUBSCRIPTION_VENDORS.map(|vendor| {
+            let saved = config::subscription_fee(vendor);
+            let text = saved.map(|value| value.to_string()).unwrap_or_default();
+            let input = cx.new(|cx| InputState::new(window, cx).default_value(text));
+            subscriptions.push(cx.subscribe(&input, move |this, _, event, cx| match event {
+                InputEvent::PressEnter { .. } => this.save_subscription_fee(vendor, cx),
+                InputEvent::Change => {
+                    let field = this
+                        .subscription_fees
+                        .iter_mut()
+                        .find(|field| field.vendor == vendor);
+                    if let Some(field) = field {
+                        field.error = None;
+                    }
+                    cx.notify();
+                }
+                _ => {}
+            }));
+            SubscriptionFeeField {
+                vendor,
+                input,
+                saved,
+                error: None,
+            }
+        });
+        let scroll = ScrollHandle::new();
+        let subscription_anchor = ScrollAnchor::for_handle(scroll.clone());
         let db = index_db.clone();
         let disk_task = cx.spawn(async move |this, cx| {
             loop {
@@ -121,6 +164,10 @@ impl SettingsView {
             disk: DiskInfo::default(),
             appearance: config::current_appearance(),
             language: config::load_language().unwrap_or_default(),
+            subscription_fees,
+            scroll,
+            subscription_anchor,
+            scroll_to_subscription: false,
             notice: None,
             busy: false,
             reset: ResetCreditsState {
@@ -912,7 +959,109 @@ impl SettingsView {
                 .to_string(),
                 cx,
             ))
+            .child(self.render_subscription_fees(cx))
             .into_any_element()
+    }
+
+    pub fn scroll_to_subscription_fees(&mut self, cx: &mut Context<Self>) {
+        self.scroll_to_subscription = true;
+        cx.notify();
+    }
+
+    fn save_subscription_fee(&mut self, vendor: Vendor, cx: &mut Context<Self>) {
+        let Some(field) = self
+            .subscription_fees
+            .iter_mut()
+            .find(|field| field.vendor == vendor)
+        else {
+            return;
+        };
+        let value = field.input.read(cx).value();
+        let fee = config::parse_fee(Some(&value));
+        if fee.is_none() && !value.trim().is_empty() {
+            field.error = Some(t!("settings.subscription_fee_invalid").into());
+        } else if fee == field.saved {
+            field.error = None;
+        } else {
+            match config::save_subscription_fee(vendor, fee) {
+                Ok(()) => {
+                    field.saved = fee;
+                    field.error = None;
+                    crate::telemetry::event(
+                        "settings_subscription_fee_save",
+                        json!({"vendor": vendor.as_str(), "set": fee.is_some()}),
+                    );
+                    cx.emit(SettingsEvent::SubscriptionFeeChanged(vendor, fee));
+                }
+                Err(error) => {
+                    crate::telemetry::report_error(
+                        "Subscription fee save failed",
+                        &format!("{error:#}"),
+                    );
+                    field.error = Some(t!("settings.subscription_fee_save_failed").into());
+                }
+            }
+        }
+        cx.notify();
+    }
+
+    fn render_subscription_fees(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        v_flex()
+            .id("subscription-fees")
+            .anchor_scroll(Some(self.subscription_anchor.clone()))
+            .gap(px(8.))
+            .pt(px(12.))
+            .border_t_1()
+            .border_color(cx.theme().border)
+            .child(
+                div()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child(t!("settings.subscription_fee_title")),
+            )
+            .child(muted(t!("settings.subscription_fee_hint"), cx))
+            .children(self.subscription_fees.iter().map(|field| {
+                let vendor = field.vendor;
+                let name = match vendor {
+                    Vendor::Anthropic => "Anthropic",
+                    Vendor::OpenAI => "OpenAI",
+                    Vendor::Google => "Google",
+                    Vendor::Other => vendor.as_str(),
+                };
+                let value = field.input.read(cx).value();
+                let fee = config::parse_fee(Some(&value));
+                let unchanged = fee == field.saved && (fee.is_some() || value.trim().is_empty());
+                v_flex()
+                    .gap(px(4.))
+                    .child(
+                        h_flex()
+                            .gap(px(10.))
+                            .child(div().w(px(100.)).child(name))
+                            .child(div().w(px(112.)).child(
+                                Input::new(&field.input).small().aria_label(t!(
+                                    "settings.subscription_fee_label",
+                                    vendor = name
+                                )),
+                            ))
+                            .child(
+                                Button::new(format!("save-subscription-fee-{}", vendor.as_str()))
+                                    .outline()
+                                    .small()
+                                    .label(t!("settings.subscription_fee_save"))
+                                    .disabled(unchanged)
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.save_subscription_fee(vendor, cx)
+                                    })),
+                            ),
+                    )
+                    .when_some(field.error.clone(), |row, error| {
+                        row.child(
+                            div()
+                                .text_size(px(12.))
+                                .text_color(cx.theme().danger)
+                                .child(error),
+                        )
+                    })
+            }))
     }
 }
 
@@ -955,17 +1104,24 @@ const PROJECT_ISSUES: &str = "https://github.com/PeterChen1997/agenthome/issues"
 pub enum SettingsEvent {
     /// 界面语言变了：外壳让各页重新加载带文案的数据。
     LanguageChanged,
+    SubscriptionFeeChanged(Vendor, Option<f64>),
 }
 
 impl EventEmitter<SettingsEvent> for SettingsView {}
 
 impl Render for SettingsView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if std::mem::take(&mut self.scroll_to_subscription) {
+            // 等首次布局记下锚点位置，再滚到月费区域。
+            self.subscription_anchor.scroll_to(window, cx);
+            window.request_animation_frame();
+        }
         let notice = self.notice.clone();
         div()
             .id("settings-scroll")
             .size_full()
             .overflow_y_scroll()
+            .track_scroll(&self.scroll)
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
             .text_size(px(13.))
