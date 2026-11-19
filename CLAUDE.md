@@ -97,7 +97,7 @@ crates/app    agenthome-app（gpui-kit =0.9.0）
 script/       bundle-dev.sh（开发用 .app）、release-macos.sh（发版）、agenthome-statusline.sh
 ```
 
-数据位置：索引库 `~/AgentHome/index/agenthome.db`（可随时删了重建）；额度信号 `~/AgentHome/signals/`（`claude-statusline.json`、`claude-usage.json`）；app 偏好 `~/AgentHome/config/app.json`；statusline 包装脚本装到 `~/AgentHome/bin/`。
+数据位置：索引库 `~/AgentHome/index/agenthome.db`（可随时删了重建）；本机设备身份 `~/AgentHome/device.json`（安装 UUID、固定的会话机器标签、事件键密钥，0600，**不能删**，删了本机在远程汇总里会变成新机器；`crates/core/src/device.rs`，远程用量协议 v1 在 `usage_v1.rs`）；额度信号 `~/AgentHome/signals/`（`claude-statusline.json`、`claude-usage.json`）；app 偏好 `~/AgentHome/config/app.json`；statusline 包装脚本装到 `~/AgentHome/bin/`。
 
 ## 常用命令
 

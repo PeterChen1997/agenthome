@@ -13,8 +13,11 @@
 //! - `statusline_setup`：Claude statusline 包装脚本的一键安装 / 卸载（改 ~/.claude/settings.json）。
 //! - `raw`：raw 层原件归档（逐字节保存、只增不改、zstd 压缩）。
 //! - `watch`：来源目录的文件监听（notify / FSEvents）。
+//! - `device`：本机设备身份（安装 UUID、固定的会话标签、事件键密钥）。
+//! - `usage_v1`：远程用量同步 v1 的记录、分页与事件键。
 
 pub mod cost;
+pub mod device;
 pub mod ingest;
 pub mod model;
 pub mod paths;
@@ -26,6 +29,7 @@ pub mod signals;
 pub mod statusline_setup;
 pub mod store;
 pub mod update;
+pub mod usage_v1;
 pub mod watch;
 
 pub use ingest::{

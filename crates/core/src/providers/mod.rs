@@ -185,13 +185,9 @@ pub(crate) fn feed_whole(
     Ok(read_errors)
 }
 
-/// 本机主机名，作为 `machine_id`。
+/// 会话 id 里的 `machine_id` 段：本机身份文件里固定的会话标签，改主机名后不变（`device.rs`）。
 pub(crate) fn machine_id() -> String {
-    hostname::get()
-        .ok()
-        .and_then(|h| h.into_string().ok())
-        .filter(|h| !h.is_empty())
-        .unwrap_or_else(|| "unknown-host".to_string())
+    crate::device::local_session_label()
 }
 
 /// 读文件元数据生成 `SourceInfo`。

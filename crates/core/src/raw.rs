@@ -184,7 +184,7 @@ impl RawArchive {
             Ok(text) if !text.trim().is_empty() => text.trim().to_string(),
             Ok(_) => bail!("{} 是空的", id_path.display()),
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                let id = sanitize_component(&crate::providers::machine_id());
+                let id = sanitize_component(&crate::device::current_hostname());
                 fs::write(&id_path, format!("{id}\n"))
                     .with_context(|| format!("写入 {}", id_path.display()))?;
                 id

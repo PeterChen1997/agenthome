@@ -286,6 +286,10 @@ fn run_worker(
             return;
         }
     };
+    // 先固定本机身份再实例化来源：会话 id 里的机器标签以身份文件为准，不随主机名变。
+    if let Err(error) = agenthome_core::device::ensure_local(&store) {
+        telemetry::report_error("sync: device identity failed", &format!("{error:#}"));
+    }
     let providers = registry::instantiate_all();
     let sources: Vec<&dyn SourceProvider> = providers
         .iter()

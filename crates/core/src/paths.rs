@@ -14,6 +14,11 @@ pub fn default_index_db() -> PathBuf {
     default_data_dir().join("index").join("agenthome.db")
 }
 
+/// `~/AgentHome/device.json`：本机设备身份（安装 UUID、会话标签、事件键密钥），见 `device.rs`。
+pub fn device_identity_path() -> PathBuf {
+    default_data_dir().join("device.json")
+}
+
 /// `~/AgentHome/raw`：raw 层原件归档。
 pub fn raw_dir() -> PathBuf {
     default_data_dir().join("raw")

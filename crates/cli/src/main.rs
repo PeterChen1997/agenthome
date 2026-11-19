@@ -238,6 +238,10 @@ fn scan(
         )
     };
     let mut store = open_store(Some(db))?;
+    // 会话 id 的机器标签在身份文件第一次创建时取主机名，和上面各来源已用的值相同；之后固定。
+    if let Err(error) = agenthome_core::device::ensure_local(&store) {
+        eprintln!("警告：本机设备身份初始化失败（会话标签沿用主机名）：{error:#}");
+    }
     let stderr = std::io::stderr();
     let mut progress = |p: agenthome_core::Progress| {
         if p.done.is_multiple_of(50) || p.done == p.total {

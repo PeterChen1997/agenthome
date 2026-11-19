@@ -711,6 +711,16 @@ impl Store {
         self.conn.total_changes()
     }
 
+    /// 索引里出现过的全部 `machine_id`（会话 id 中间那段）。本地索引只收本机会话，
+    /// `device::ensure_local` 把它们都记为本机标签。
+    pub fn machine_labels(&self) -> Result<Vec<String>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT DISTINCT machine_id FROM sessions ORDER BY machine_id")?;
+        let rows = stmt.query_map([], |r| r.get(0))?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
     /// (会话数, 消息数)
     pub fn counts(&self) -> Result<(u64, u64)> {
         let s: i64 = self

@@ -19,6 +19,8 @@ walkdir = "2"
 sha2 = "0.10"
 clap = { version = "4", features = ["derive"] }
 hostname = "0.4"
+# 设备身份的随机 UUID 与事件键密钥（device.rs）。
+getrandom = "0.3"
 unicode-width = "0.2"
 zstd = "0.14"
 tempfile = "3"

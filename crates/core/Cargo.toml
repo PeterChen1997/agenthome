@@ -16,6 +16,7 @@ dirs.workspace = true
 walkdir.workspace = true
 sha2.workspace = true
 hostname.workspace = true
+getrandom.workspace = true
 zstd.workspace = true
 notify.workspace = true
 portable-pty.workspace = true

@@ -500,7 +500,7 @@ fn write_settings(settings: &Path, root: &Map<String, Value>, raw: Option<&[u8]>
 }
 
 /// 同目录临时文件 + fsync + rename。`mode` 为 `None` 时沿用目标文件现有权限。
-fn atomic_write(path: &Path, bytes: &[u8], mode: Option<u32>) -> Result<()> {
+pub(crate) fn atomic_write(path: &Path, bytes: &[u8], mode: Option<u32>) -> Result<()> {
     let dir = parent_dir(path);
     let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("file");
     let nanos = std::time::SystemTime::now()
