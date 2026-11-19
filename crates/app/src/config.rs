@@ -205,6 +205,35 @@ pub fn save_telemetry(on: bool) -> anyhow::Result<()> {
     save_key("telemetry", if on { "on" } else { "off" })
 }
 
+/// 某个模型厂商的订阅月费（USD），首页「实付」按它折算。没填、填的不是正数都按没填（界面显示「未填月费」，不猜）。
+#[expect(dead_code, reason = "CARM-283 首页花费卡接入后删掉")]
+pub fn subscription_fee(vendor: agenthome_core::cost::Vendor) -> Option<f64> {
+    parse_fee(load_key(&fee_key(vendor)).ok().flatten().as_deref())
+}
+
+/// `None` 清掉月费。
+#[expect(dead_code, reason = "CARM-283 设置页月费输入接入后删掉")]
+pub fn save_subscription_fee(
+    vendor: agenthome_core::cost::Vendor,
+    monthly_usd: Option<f64>,
+) -> anyhow::Result<()> {
+    let value = monthly_usd
+        .filter(|v| v.is_finite() && *v > 0.0)
+        .map(|v| v.to_string())
+        .unwrap_or_default();
+    save_key(&fee_key(vendor), &value)
+}
+
+fn fee_key(vendor: agenthome_core::cost::Vendor) -> String {
+    format!("subscription_fee_{}", vendor.as_str())
+}
+
+fn parse_fee(value: Option<&str>) -> Option<f64> {
+    value
+        .and_then(|v| v.trim().parse::<f64>().ok())
+        .filter(|v| v.is_finite() && *v > 0.0)
+}
+
 fn load_key(key: &str) -> anyhow::Result<Option<String>> {
     let path = config_path();
     let text = match std::fs::read_to_string(&path) {
@@ -250,6 +279,23 @@ fn save_key(key: &str, value: &str) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn 月费只认正数_其余按没填() {
+        // 填错（负数、文字、0）时「实付」显示「未填月费」，而不是算出 $0 让人以为订阅免费。
+        assert_eq!(parse_fee(Some("200")), Some(200.0));
+        assert_eq!(parse_fee(Some(" 19.99 ")), Some(19.99));
+        for bad in [
+            None,
+            Some(""),
+            Some("0"),
+            Some("-5"),
+            Some("abc"),
+            Some("NaN"),
+        ] {
+            assert_eq!(parse_fee(bad), None, "{bad:?}");
+        }
+    }
 
     /// 统计开关是用户的同意：偏好文件坏了时不知道用户是否关过，必须按关（fail closed）；
     /// 只有确实没有文件 / 没设过（首次启动）才按默认开。

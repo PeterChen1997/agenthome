@@ -78,6 +78,25 @@ pub fn report_error(context: &'static str, error: &str) {
     );
 }
 
+/// 首页花费里出现了定价表没有的模型：每个模型名每次运行只报一次。
+/// 有意不计价的（没有公开 API 单价，见 `cost::has_no_public_price`）不报。模型名不含个人信息。
+#[expect(dead_code, reason = "CARM-283 首页花费卡接入后删掉")]
+pub fn report_unpriced_models(summary: &agenthome_core::cost::CostSummary) {
+    static REPORTED: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+    let Ok(mut reported) = REPORTED.lock() else {
+        return;
+    };
+    for model in summary.unpriced_models() {
+        if agenthome_core::cost::has_no_public_price(&model.model)
+            || reported.contains(&model.model)
+        {
+            continue;
+        }
+        reported.push(model.model.clone());
+        report_error("Model missing from pricing table", &model.model);
+    }
+}
+
 /// 页面浏览（Umami pageview）。`page` 是固定的页面名。
 pub fn page_view(page: &'static str) {
     send(json!({ "url": format!("/{page}"), "title": page }));
