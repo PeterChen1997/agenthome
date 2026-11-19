@@ -50,7 +50,7 @@ pub struct PressureBadge {
     prefix: Option<String>,
     /// 悬停说明里的完整窗口名（「7 天」）。
     window: String,
-    /// 用短档位词（左栏住户行）；悬停说明仍是完整说法。
+    /// 左栏住户行使用短档位词，并在宽度不足时截断。
     short: bool,
 }
 
@@ -89,6 +89,11 @@ impl RenderOnce for PressureBadge {
             Some(prefix) => format!("{prefix} {label}"),
             None => label,
         };
+        let label = if self.short {
+            div().min_w_0().truncate().child(text).into_any_element()
+        } else {
+            text.into_any_element()
+        };
         let reading = self.reading;
         let window = self.window;
         div()
@@ -107,7 +112,8 @@ impl RenderOnce for PressureBadge {
             .line_height(px(15.))
             .font_weight(FontWeight::SEMIBOLD)
             .whitespace_nowrap()
-            .child(text)
+            .when(self.short, |badge| badge.max_w_full())
+            .child(label)
             .tooltip(move |window_cx, cx| {
                 let window = window.clone();
                 Tooltip::element(move |_, cx| tip(&window, reading, cx)).build(window_cx, cx)

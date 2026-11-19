@@ -31,10 +31,9 @@ use crate::archive::{ArchiveView, side_item};
 use crate::assets::{FONT_PIXEL_SANS, MonoText as _};
 use crate::dashboard::DashboardView;
 use crate::data::DataSource;
-use crate::format::{countdown, now_ms, relative_time};
+use crate::format::{countdown, now_ms, quota_window_label, relative_time};
 use crate::habitat::{HabitatSize, HabitatView, ResidentId, ResidentState};
 use crate::live::{LiveFeed, LiveState, primary_window};
-use crate::menubar::{WindowPressure, window_short_label};
 use crate::message_row::{provider_avatar, secondary};
 use crate::pressure_badge::PressureBadge;
 use crate::search_palette::{PaletteEvent, SearchPalette};
@@ -126,20 +125,13 @@ impl ResidentPanel {
         // 「接入」只看本机有没有这个来源的数据，与仪表盘额度卡、菜单栏弹窗同一判定（`LiveState::connected`）。
         let away = !live.connected(who);
         let quota = live.quota_for(who);
-        let window = quota.and_then(primary_window);
-        // 使用压力看最紧的窗口（可能是 7 天而不是左栏显示的 5 小时）。
+        let primary = quota.and_then(primary_window);
         let pressure = quota
-            .zip(window)
-            .and_then(|(quota, primary)| {
-                pressure_to_show(&quota.windows, &primary.id, now).map(|(worst, reading)| {
-                    WindowPressure {
-                        label: (worst.id != primary.id).then(|| window_short_label(worst)),
-                        window: crate::format::quota_window_label(worst),
-                        reading,
-                    }
-                })
-            })
-            .filter(|_| !away);
+            .zip(primary)
+            .filter(|_| !away)
+            .and_then(|(quota, primary)| pressure_to_show(&quota.windows, &primary.id, now));
+        // 细条、百分比与徽标共用同一个窗口。没有可计算的压力时仍显示主窗口剩余量。
+        let window = pressure.map(|(window, _)| window).or(primary);
         let hp = window
             .map(|w| (100.0 - w.used_percent).round().clamp(0.0, 100.0) as u8)
             .unwrap_or(0);
@@ -183,12 +175,9 @@ impl ResidentPanel {
                 "".into(),
             ),
             (false, Some(w)) => (
-                t!(
-                    "workspace.window_resets",
-                    window = crate::format::quota_window_label(w)
-                )
-                .to_string()
-                .into(),
+                t!("workspace.window_resets", window = quota_window_label(w))
+                    .to_string()
+                    .into(),
                 w.resets_at_ms
                     .map(|at| countdown(at - now))
                     .unwrap_or_else(|| "—".to_string())
@@ -207,6 +196,7 @@ impl ResidentPanel {
                 "sidebar-resident-{}",
                 who.slug()
             )))
+            .w_full()
             .items_center()
             .gap(px(6.))
             .px_4()
@@ -255,24 +245,22 @@ impl ResidentPanel {
                             .text_size(px(11.))
                             .child(format!("{hp}%")),
                     )
-                    // 徽标槽给够当前语言最长徽标的宽度、靠右，三行的条才一样长；
-                    // 用最小宽度而不是固定宽度，徽标再长也只会挤短细条，不会盖住百分比。
+                    // 固定徽标槽，保证三行的细条与百分比对齐。窗口名显示在悬停提示里。
                     .child(
                         h_flex()
                             .flex_none()
-                            .min_w(px(badge_slot_width()))
+                            .w(px(badge_slot_width()))
                             .justify_end()
-                            .when_some(pressure, |slot, pressure| {
+                            .when_some(pressure, |slot, (window, reading)| {
                                 slot.child(
                                     PressureBadge::new(
                                         SharedString::from(format!(
                                             "sidebar-pressure-{}",
                                             who.slug()
                                         )),
-                                        pressure.reading,
-                                        pressure.window,
+                                        reading,
+                                        quota_window_label(window),
                                     )
-                                    .prefix(pressure.label)
                                     .short(),
                                 )
                             }),
@@ -929,7 +917,7 @@ impl Workspace {
     }
 }
 
-/// 左栏住户行徽标槽的宽度：放得下当前语言里最长的短徽标（「7d 偏紧」/「7d Ample」）。
+/// 左栏住户行徽标槽的固定宽度，容纳当前语言的短档位词。
 fn badge_slot_width() -> f32 {
     if rust_i18n::locale().starts_with("zh") {
         52.
