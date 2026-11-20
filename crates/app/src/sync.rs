@@ -4,7 +4,7 @@
 //! - 启动即增量扫描一次（10.11）；索引库不存在时这一次就是首次全量建库。
 //! - notify 监听各来源根目录（10.10），只处理变了的那几个文件（`ingest_paths`，按字节偏移增量续读），
 //!   不为每次变化遍历来源目录。合并策略见 [`QUIET`] / [`MAX_DELAY`]。
-//! - 每 [`FALLBACK_SCAN`] 兜底扫一次全部来源（10.12），监听丢事件也能追上；监听报错时立即补一次全量。
+//! - 每 [`FALLBACK_SCAN`] 兜底扫一次全部来源（10.12）；监听要求重扫或报错时也会补一次全量。
 //!
 //! 每个原件先归档到 raw 层（10.1–10.3，`agenthome_core::raw`）再入库，归档失败不挡入库但会展示。
 //!
@@ -45,7 +45,7 @@ const UI_POLL: Duration = Duration::from_millis(500);
 enum Command {
     /// 某来源目录下这些文件有变化（来自文件监听）。
     Changed(ProviderId, Vec<PathBuf>),
-    /// 扫全部来源（设置页「立即扫描」、监听报错后的补救）。
+    /// 扫全部来源（设置页「立即扫描」、监听要求重扫或报错后的补救）。
     ScanAll,
 }
 
@@ -268,6 +268,22 @@ fn update(shared: &Mutex<SyncState>, f: impl FnOnce(&mut SyncState)) {
     }
 }
 
+fn handle_watch_event(
+    event: WatchEvent,
+    sender: &Sender<Command>,
+    report_error: impl FnOnce(&'static str, &str),
+) {
+    let command = match event {
+        WatchEvent::Changed { provider, paths } => Command::Changed(provider, paths),
+        WatchEvent::Rescan => Command::ScanAll,
+        WatchEvent::Error(error) => {
+            report_error("sync: watcher error", &error);
+            Command::ScanAll
+        }
+    };
+    let _ = sender.send(command);
+}
+
 fn run_worker(
     db_path: PathBuf,
     roots: Vec<(ProviderId, PathBuf)>,
@@ -311,16 +327,8 @@ fn run_worker(
     // 先挂监听再扫：扫描期间发生的变化会排进通道，扫完立刻补一轮。
     // 各来源自己声明要监听的目录（Codex 还有归档目录）；目录不存在属正常，不算没挂上。
     let watch_list: Vec<WatchRoot> = sources.iter().flat_map(|p| WatchRoot::of(*p)).collect();
-    let error_sender = watch_sender.clone();
-    let watcher = watch_roots(&watch_list, move |event| match event {
-        WatchEvent::Changed { provider, paths } => {
-            let _ = watch_sender.send(Command::Changed(provider, paths));
-        }
-        WatchEvent::Error(error) => {
-            telemetry::report_error("sync: watcher error", &error);
-            // FSEvents 可能丢事件；补一次全量扫描追上，不让数据悄悄落后。
-            let _ = error_sender.send(Command::ScanAll);
-        }
+    let watcher = watch_roots(&watch_list, move |event| {
+        handle_watch_event(event, &watch_sender, telemetry::report_error);
     });
     match &watcher {
         Ok(watcher) => update(&shared, |s| {
@@ -649,6 +657,31 @@ fn run_agy_probe(shared: Arc<Mutex<SyncState>>, receiver: mpsc::Receiver<bool>) 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn watcher_rescan_queues_scan_all_without_reporting_an_error() {
+        let (sender, receiver) = mpsc::channel();
+        handle_watch_event(WatchEvent::Rescan, &sender, |context, error| {
+            panic!("unexpected error report: {context}: {error}");
+        });
+        assert!(matches!(receiver.try_recv(), Ok(Command::ScanAll)));
+    }
+
+    #[test]
+    fn watcher_error_is_reported_and_queues_scan_all() {
+        let (sender, receiver) = mpsc::channel();
+        let mut reports = Vec::new();
+        handle_watch_event(
+            WatchEvent::Error("backend failed".into()),
+            &sender,
+            |context, error| reports.push((context, error.to_string())),
+        );
+        assert_eq!(
+            reports,
+            vec![("sync: watcher error", "backend failed".to_string())]
+        );
+        assert!(matches!(receiver.try_recv(), Ok(Command::ScanAll)));
+    }
 
     /// 坏文件每次扫描（监听触发 + 每小时兜底）都会再失败一次；只有新出现的失败才上报，
     /// 否则一个坏文件就能把 Sentry 配额刷光，真正的新问题反而被淹没。

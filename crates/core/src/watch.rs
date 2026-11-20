@@ -2,7 +2,7 @@
 //! 会话文件有变化时告诉调用方「哪个来源的哪些文件变了」。
 //!
 //! 只负责发现变化，不入库：调用方对变了的路径跑 `ingest_paths`（按字节偏移增量续读），
-//! 不再为每次变化遍历整个来源目录；后端要求重扫时报 `Error`，调用方退回全量扫描。
+//! 不再为每次变化遍历整个来源目录；后端要求重扫时发出 `Rescan`，调用方退回全量扫描。
 
 use std::path::{Path, PathBuf};
 
@@ -10,7 +10,7 @@ use notify::{EventKind, RecursiveMode, Watcher as _};
 
 use crate::model::ProviderId;
 
-/// 回调收到的事件。错误不吞，交给调用方展示。
+/// 回调收到的文件变化、重扫请求或监听错误。
 #[derive(Clone, Debug, PartialEq)]
 pub enum WatchEvent {
     /// 该来源根目录下这些会话文件被创建、修改、改名或删除。
@@ -18,7 +18,9 @@ pub enum WatchEvent {
         provider: ProviderId,
         paths: Vec<PathBuf>,
     },
-    /// 监听后端报告的错误（例如 FSEvents 丢事件）。调用方应退回全量扫描。
+    /// 监听后端要求重新扫描（例如 FSEvents 合并或丢了事件）。调用方应退回全量扫描。
+    Rescan,
+    /// 监听后端报告的错误。调用方应退回全量扫描。
     Error(String),
 }
 
@@ -62,34 +64,7 @@ pub fn watch_roots(
     let owned: Vec<WatchRoot> = roots.to_vec();
     let lookup = owned.clone();
     let mut inner =
-        notify::recommended_watcher(move |result: notify::Result<notify::Event>| match result {
-            Ok(event) => {
-                if event.need_rescan() {
-                    // FSEvents 合并或丢了事件，具体哪些文件变了已不可知。
-                    on_event(WatchEvent::Error(
-                        "文件监听要求重新扫描（事件被合并或丢失）".into(),
-                    ));
-                    return;
-                }
-                if matches!(event.kind, EventKind::Access(_)) {
-                    return;
-                }
-                let mut hit: Vec<(ProviderId, Vec<PathBuf>)> = Vec::new();
-                for path in &event.paths {
-                    let Some(provider) = classify(&lookup, path) else {
-                        continue;
-                    };
-                    match hit.iter_mut().find(|(p, _)| *p == provider) {
-                        Some((_, paths)) => paths.push(path.clone()),
-                        None => hit.push((provider, vec![path.clone()])),
-                    }
-                }
-                for (provider, paths) in hit {
-                    on_event(WatchEvent::Changed { provider, paths });
-                }
-            }
-            Err(error) => on_event(WatchEvent::Error(error.to_string())),
-        })?;
+        notify::recommended_watcher(move |result| dispatch_event(&lookup, result, &mut on_event))?;
 
     let mut watched = Vec::new();
     let mut unwatched = Vec::new();
@@ -108,6 +83,38 @@ pub fn watch_roots(
         watched,
         unwatched,
     })
+}
+
+fn dispatch_event(
+    roots: &[WatchRoot],
+    result: notify::Result<notify::Event>,
+    on_event: &mut impl FnMut(WatchEvent),
+) {
+    match result {
+        Ok(event) => {
+            if event.need_rescan() {
+                on_event(WatchEvent::Rescan);
+                return;
+            }
+            if matches!(event.kind, EventKind::Access(_)) {
+                return;
+            }
+            let mut hit: Vec<(ProviderId, Vec<PathBuf>)> = Vec::new();
+            for path in &event.paths {
+                let Some(provider) = classify(roots, path) else {
+                    continue;
+                };
+                match hit.iter_mut().find(|(p, _)| *p == provider) {
+                    Some((_, paths)) => paths.push(path.clone()),
+                    None => hit.push((provider, vec![path.clone()])),
+                }
+            }
+            for (provider, paths) in hit {
+                on_event(WatchEvent::Changed { provider, paths });
+            }
+        }
+        Err(error) => on_event(WatchEvent::Error(error.to_string())),
+    }
 }
 
 /// 路径属于哪个来源：取包含它的**最深**根目录（`~/.gemini` 与 `~/.gemini/antigravity-cli` 是嵌套的），
@@ -149,6 +156,16 @@ mod tests {
                 &[".db"],
             ),
         ]
+    }
+
+    #[test]
+    fn rescan_flag_emits_only_rescan_even_with_a_transcript_path() {
+        let event = notify::Event::new(EventKind::Any)
+            .add_path(PathBuf::from("/h/.codex/sessions/rollout-x.jsonl"))
+            .set_flag(notify::event::Flag::Rescan);
+        let mut events = Vec::new();
+        dispatch_event(&roots(), Ok(event), &mut |event| events.push(event));
+        assert_eq!(events, vec![WatchEvent::Rescan]);
     }
 
     #[test]
