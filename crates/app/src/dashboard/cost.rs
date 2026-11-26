@@ -35,6 +35,7 @@ pub(super) struct CostCard {
     machines: Vec<(String, String)>,
     /// 调试 / 截图用：`AGENTHOME_COST_MACHINE=local|<连接名>` 指定启动时的机器筛选，首次加载后清掉。
     pending_machine: Option<String>,
+    /// 调试 / 截图用：`AGENTHOME_COST_PAID=1` 启动时选「实付」（CARM-303，本机没有辅助功能权限，没法模拟点击）。
     paid: bool,
     expanded: bool,
     fees: BTreeMap<Vendor, f64>,
@@ -50,7 +51,7 @@ impl CostCard {
             machine: MachineFilter::All,
             machines: Vec::new(),
             pending_machine: std::env::var("AGENTHOME_COST_MACHINE").ok(),
-            paid: false,
+            paid: std::env::var("AGENTHOME_COST_PAID").is_ok_and(|v| v == "1"),
             expanded: false,
             fees: SUBSCRIPTION_VENDORS
                 .into_iter()
