@@ -17,7 +17,9 @@
 //! - `usage_v1`：远程用量同步 v1 的记录、分页与事件键。
 //! - `usage_store`：采集端本地用量库（用量与读取进度同事务、单调 `seq`、修订与撤回）。
 //! - `usage_import`：Mac 端远程用量导入库（按 `(machine_id, source, event_key)` 取最新修订，用量与游标同事务）。
+//! - `collector`：采集服务的一轮调度（并发 1、分片续采、源读取限速、状态目录预算）。
 
+pub mod collector;
 pub mod cost;
 pub mod device;
 pub mod ingest;

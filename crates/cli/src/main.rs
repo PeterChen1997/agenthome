@@ -1,10 +1,13 @@
-//! agenthome 命令行：scan / sessions / show / stats / quota / activity / statusline。
+//! agenthome 命令行：scan / sessions / show / stats / quota / activity / statusline / collect。
 
+use agenthome_core::collector::{Collector, Limits, RoundReport};
 use agenthome_core::model::{
     ContentBlock, CostSource, Freshness, Period, ProviderId, Role, SessionQuery,
 };
+use agenthome_core::providers::opencode::OpenCodeProvider;
 use agenthome_core::providers::registry;
 use agenthome_core::statusline_setup::{self, StatuslinePaths, StatuslineStatus};
+use agenthome_core::usage_store::FailureKind;
 use agenthome_core::{
     RawArchive, SourceProvider, Store, claude_statusline, codex_rollout_quota, ingest_all, paths,
     pricing,
@@ -13,6 +16,7 @@ use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand, ValueEnum};
 use std::io::Write;
 use std::path::PathBuf;
+use std::time::Duration;
 use unicode_width::UnicodeWidthStr;
 
 #[derive(Parser)]
@@ -113,6 +117,39 @@ enum Cmd {
         #[arg(long)]
         gemini_root: Option<PathBuf>,
     },
+    /// 采集服务：把本机 agent 用量增量写进用量库（供 Mac 端拉取）。并发 1、源读取限速、状态目录有预算
+    Collect {
+        /// 只跑一轮就退出（默认常驻，按间隔循环）
+        #[arg(long)]
+        once: bool,
+        /// AgentHome 数据目录（身份文件 device.json 与 usage/ 状态目录），默认 ~/AgentHome
+        #[arg(long)]
+        data_dir: Option<PathBuf>,
+        /// 常态两轮间隔（秒）
+        #[arg(long, default_value_t = 60)]
+        interval_secs: u64,
+        /// 源读取限速（KiB/s）
+        #[arg(long, default_value_t = 2048)]
+        read_kib_per_sec: u64,
+        /// 一轮最多读多少（MiB），首扫 / 回填按它分片
+        #[arg(long, default_value_t = 64)]
+        shard_mib: u64,
+        /// 状态目录（用量库、WAL、临时文件）预算（MiB），接近上限暂停采集
+        #[arg(long, default_value_t = 512)]
+        state_budget_mib: u64,
+        /// Claude Code projects 根目录，默认 ~/.claude/projects
+        #[arg(long)]
+        root: Option<PathBuf>,
+        /// Codex sessions 根目录，默认 ~/.codex/sessions
+        #[arg(long)]
+        codex_root: Option<PathBuf>,
+        /// Gemini 根目录，默认 ~/.gemini
+        #[arg(long)]
+        gemini_root: Option<PathBuf>,
+        /// OpenCode 数据目录，默认 $XDG_DATA_HOME/opencode（~/.local/share/opencode）
+        #[arg(long)]
+        opencode_root: Option<PathBuf>,
+    },
     /// Claude statusline 包装脚本：查看 / 安装 / 卸载（改 ~/.claude/settings.json，改前自动备份）
     Statusline {
         #[command(subcommand)]
@@ -179,6 +216,32 @@ fn main() -> Result<()> {
             settings,
             bin_dir,
         } => statusline(action, settings, bin_dir),
+        Cmd::Collect {
+            once,
+            data_dir,
+            interval_secs,
+            read_kib_per_sec,
+            shard_mib,
+            state_budget_mib,
+            root,
+            codex_root,
+            gemini_root,
+            opencode_root,
+        } => {
+            // 用量采集比会话索引多一个 OpenCode：它只接了用量，没登记在来源注册表里（CARM-293）。
+            let mut sources = providers(root, codex_root, gemini_root);
+            sources.push(Box::new(OpenCodeProvider::new(
+                opencode_root.unwrap_or_else(paths::opencode_dir),
+            )));
+            let limits = Limits {
+                interval: Duration::from_secs(interval_secs),
+                read_bytes_per_sec: read_kib_per_sec * 1024,
+                shard_bytes: shard_mib * 1024 * 1024,
+                state_budget_bytes: state_budget_mib * 1024 * 1024,
+                ..Limits::default()
+            };
+            collect(data_dir, sources, limits, once)
+        }
     }
 }
 
@@ -339,6 +402,86 @@ fn scan(
         std::process::exit(1);
     }
     Ok(())
+}
+
+fn collect(
+    data_dir: Option<PathBuf>,
+    sources: Vec<Box<dyn SourceProvider + Send + Sync>>,
+    limits: Limits,
+    once: bool,
+) -> Result<()> {
+    let data_dir = data_dir.unwrap_or_else(paths::default_data_dir);
+    let mut collector = Collector::open(
+        &data_dir.join("device.json"),
+        &data_dir.join("usage").join("usage.db"),
+        sources,
+        limits,
+    )?;
+    loop {
+        // 日志只有计数和错误类别，不写路径和报错原文（方案：路径不进传输和诊断）。
+        let delay = match collector.run_round() {
+            Ok(r) => {
+                let busy = r.read_files > 0
+                    || r.failed() > 0
+                    || r.pending_files > 0
+                    || r.hidden + r.revived > 0;
+                if once || busy {
+                    eprintln!("{}", round_line(&r));
+                }
+                if let Err(e) = collector.write_status(&r) {
+                    eprintln!(
+                        "agenthome collect: 状态文件写入失败 kind={}",
+                        FailureKind::of(&e)
+                    );
+                }
+                if once {
+                    return if r.failed() > 0 {
+                        bail!("{} 个文件采集失败", r.failed())
+                    } else {
+                        Ok(())
+                    };
+                }
+                collector.next_delay(&r)
+            }
+            Err(e) => {
+                eprintln!("agenthome collect: 本轮失败 kind={}", FailureKind::of(&e));
+                if once {
+                    return Err(e);
+                }
+                collector.limits().interval
+            }
+        };
+        std::thread::sleep(delay);
+    }
+}
+
+fn round_line(r: &RoundReport) -> String {
+    let mib = |b: u64| format!("{:.1}", b as f64 / (1024.0 * 1024.0));
+    let failures: Vec<String> = r.failures.iter().map(|(k, n)| format!("{k}:{n}")).collect();
+    format!(
+        "agenthome collect: files={} unchanged={} read={}({}MiB) throttled={:.1}s elapsed={:.1}s \
+         inserted={} revised={} unchanged_rows={} warnings={} failures=[{}] pending={}({}MiB) \
+         paused_for_budget={} state={}/{}MiB high_water={} hidden={} revived={}",
+        r.files,
+        r.unchanged,
+        r.read_files,
+        mib(r.read_bytes),
+        r.throttled_ms as f64 / 1000.0,
+        r.elapsed_ms as f64 / 1000.0,
+        r.stats.inserted,
+        r.stats.revised,
+        r.stats.unchanged,
+        r.warnings,
+        failures.join(","),
+        r.pending_files,
+        mib(r.pending_bytes),
+        r.paused_for_budget,
+        mib(r.state_bytes),
+        mib(r.state_budget_bytes),
+        r.high_water,
+        r.hidden,
+        r.revived,
+    )
 }
 
 fn human_bytes(bytes: u64) -> String {

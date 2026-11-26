@@ -24,7 +24,7 @@ use crate::usage_projection;
 use crate::usage_v1::{self, Op, UsageRecord};
 use anyhow::{Context, Result, bail, ensure};
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
@@ -101,7 +101,7 @@ impl SourceProgress {
 }
 
 /// 一次提交里每条记录的去向。
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize)]
 pub struct CommitStats {
     /// 新键。
     pub inserted: usize,
@@ -116,12 +116,75 @@ pub struct CommitStats {
 }
 
 impl CommitStats {
-    fn add(&mut self, other: CommitStats) {
+    pub fn add(&mut self, other: CommitStats) {
         self.inserted += other.inserted;
         self.revised += other.revised;
         self.unchanged += other.unchanged;
         self.kept_earlier += other.kept_earlier;
         self.kept_retracted += other.kept_retracted;
+    }
+}
+
+/// 一个文件采集失败的类别。日志、状态文件和以后上报 Mac 都只用它，不带路径和原始报错
+/// （报错里常有路径、甚至行内容）。失败的文件进度不前移，下一轮重试。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FailureKind {
+    /// 发现之后、读之前文件没了（agent 轮转 / 清理），下一轮按不可见处理。
+    Vanished,
+    PermissionDenied,
+    /// 用量库或其所在磁盘写满。
+    DiskFull,
+    /// 其他读文件的 I/O 错误。
+    Io,
+    /// 来源还没接入用量投影。
+    Unsupported,
+    /// 解析 / 投影失败。
+    Parse,
+    /// 写用量库失败（含记录不合规整笔回滚）。
+    Store,
+}
+
+impl FailureKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Vanished => "vanished",
+            Self::PermissionDenied => "permission_denied",
+            Self::DiskFull => "disk_full",
+            Self::Io => "io",
+            Self::Unsupported => "unsupported",
+            Self::Parse => "parse",
+            Self::Store => "store",
+        }
+    }
+
+    /// 给错误归类：先看错误链里的 I/O 与 SQLite 错误码（文件没了、无权限、磁盘满），
+    /// 再看 `collect_file` 按阶段打的标记；都没有算 `Io`。
+    pub fn of(error: &anyhow::Error) -> Self {
+        for cause in error.chain() {
+            if let Some(io) = cause.downcast_ref::<std::io::Error>() {
+                match io.kind() {
+                    std::io::ErrorKind::NotFound => return Self::Vanished,
+                    std::io::ErrorKind::PermissionDenied => return Self::PermissionDenied,
+                    std::io::ErrorKind::StorageFull => return Self::DiskFull,
+                    _ => {}
+                }
+            }
+            if let Some(rusqlite::Error::SqliteFailure(e, _)) =
+                cause.downcast_ref::<rusqlite::Error>()
+                && e.code == rusqlite::ErrorCode::DiskFull
+            {
+                return Self::DiskFull;
+            }
+        }
+        // `collect_file` 的阶段标记是最外层的 context，anyhow 能直接取回。
+        error.downcast_ref::<Self>().copied().unwrap_or(Self::Io)
+    }
+}
+
+impl std::fmt::Display for FailureKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
     }
 }
 
@@ -353,6 +416,14 @@ impl UsageStore {
         .collect()
     }
 
+    /// 把 WAL 合并回主库并截断（`wal_checkpoint(TRUNCATE)`），状态目录接近预算时先腾出 WAL 占的空间。
+    /// 有读者占着时合并不完整，不报错，按实际剩下的大小算。
+    pub fn checkpoint(&self) -> Result<()> {
+        self.conn
+            .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()))?;
+        Ok(())
+    }
+
     /// 运行中做一致的整库备份（`VACUUM INTO`）。`dest` 必须不存在。
     pub fn backup_to(&self, dest: &Path) -> Result<()> {
         ensure!(!dest.exists(), "备份目标已存在");
@@ -375,6 +446,7 @@ pub struct FileOutcome {
 /// 增量采集一个文件：进度没变就跳过，否则整文件投影、文件内去重后与进度一起提交。
 ///
 /// 先取进度再解析：解析期间文件又被追加，记下的是旧进度，下一轮会再读一次，不会漏。
+/// 出错时按阶段带上 [`FailureKind`]，调用方用 `FailureKind::of` 归类。
 pub fn collect_file(
     store: &mut UsageStore,
     identity: &DeviceIdentity,
@@ -382,20 +454,23 @@ pub fn collect_file(
     path: &Path,
 ) -> Result<FileOutcome> {
     let source = provider.id();
-    let progress = SourceProgress::of(path)?;
-    if store.progress(&source, path)? == Some(progress) {
+    let progress = SourceProgress::of(path).context(FailureKind::Io)?;
+    if store.progress(&source, path).context(FailureKind::Store)? == Some(progress) {
         return Ok(FileOutcome {
             skipped: true,
             ..FileOutcome::default()
         });
     }
-    let Some(file) = provider.usage_events(path)? else {
-        bail!("来源 {} 还没接入用量投影", source.as_str());
+    let Some(file) = provider.usage_events(path).context(FailureKind::Parse)? else {
+        return Err(anyhow::anyhow!("来源 {} 还没接入用量投影", source.as_str())
+            .context(FailureKind::Unsupported));
     };
     let (records, mut warnings) = usage_projection::records(identity, &source, &file);
     warnings.splice(0..0, file.warnings);
     let records = usage_projection::dedup(records);
-    let stats = store.commit_file(&source, path, progress, &records)?;
+    let stats = store
+        .commit_file(&source, path, progress, &records)
+        .context(FailureKind::Store)?;
     Ok(FileOutcome {
         skipped: false,
         stats,
@@ -410,14 +485,14 @@ pub struct SourceReport {
     pub skipped: usize,
     pub stats: CommitStats,
     pub warnings: usize,
-    /// 读失败的文件数；失败的文件进度不前移，下一轮重试。
-    pub failed: usize,
+    /// 读失败的文件按类别计数（不含路径）；失败的文件进度不前移，下一轮重试。
+    pub failures: BTreeMap<FailureKind, usize>,
     pub hidden: usize,
     pub revived: usize,
 }
 
-/// 采集一个来源：发现文件、逐个 `collect_file`、更新可见性。单个文件失败计入 `failed` 继续下一个。
-/// 调度、限流和资源上限在单元 10（采集服务）里做，这里只是一轮。
+/// 采集一个来源：发现文件、逐个 `collect_file`、更新可见性。单个文件失败按类别计入 `failures` 继续下一个。
+/// 不限流、不看磁盘预算；采集服务用 `collector::Collector`（分片、限速、状态目录预算）。
 pub fn collect_source(
     store: &mut UsageStore,
     identity: &DeviceIdentity,
@@ -435,13 +510,20 @@ pub fn collect_source(
                 report.stats.add(outcome.stats);
                 report.warnings += outcome.warnings.len();
             }
-            Err(_) => report.failed += 1,
+            Err(e) => *report.failures.entry(FailureKind::of(&e)).or_default() += 1,
         }
     }
     let (hidden, revived) = store.refresh_visibility(&provider.id(), &discovery.files)?;
     report.hidden = hidden;
     report.revived = revived;
     Ok(report)
+}
+
+impl SourceReport {
+    /// 失败的文件总数。
+    pub fn failed(&self) -> usize {
+        self.failures.values().sum()
+    }
 }
 
 fn path_key(path: &Path) -> Result<String> {

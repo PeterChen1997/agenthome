@@ -214,7 +214,7 @@ fn resume_after_stop_neither_duplicates_nor_drops() {
 
     let mut store = fx.open();
     let report = collect_source(&mut store, &fx.id, &provider).unwrap();
-    assert_eq!(report.failed, 0);
+    assert_eq!(report.failed(), 0);
     assert_eq!(report.stats.unchanged, 2, "A 里已采过的两条重读不算新的");
     assert_eq!(report.stats.inserted, 2, "A 新追加的一条 + B 的一条");
     assert_eq!(store_totals(&store), fx.expected());

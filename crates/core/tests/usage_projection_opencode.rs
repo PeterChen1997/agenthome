@@ -471,7 +471,10 @@ fn incremental_collect_sees_wal_growth() {
     let mut store = UsageStore::in_memory(&id).unwrap();
 
     let first = collect_source(&mut store, &id, &provider).unwrap();
-    assert_eq!((first.files, first.failed, first.stats.inserted), (1, 0, 2));
+    assert_eq!(
+        (first.files, first.failed(), first.stats.inserted),
+        (1, 0, 2)
+    );
     let again = collect_source(&mut store, &id, &provider).unwrap();
     assert_eq!(again.skipped, 1, "没变就跳过");
 
