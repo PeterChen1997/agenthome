@@ -121,6 +121,25 @@ systemctl --user --machine COLLECTOR_USER@.host status agenthome-collector.servi
 
 采集参数、状态目录、日志、备份与恢复见[远程用量库](14-远程用量库.md#采集服务调度与资源上限单元-10)。服务沿用 `agenthome collect` 的默认参数，无界面、无行为埋点，通过本地 journal 和状态文件诊断。
 
+## 同机服务影响实测
+
+采集端和数据库、缓存或 API 服务装在同一台机器上时，建议在首次回填时做一次对照：
+
+1. 采集端不运行，测 10 分钟基线。
+2. 用全新状态目录启动服务，测 10 分钟首次回填。
+3. 停掉采集端，再测 10 分钟基线，用来排除流量漂移。
+
+每个服务每秒做一次轻量只读探测，例如 HTTP 健康检查、Redis `PING`、PostgreSQL `select 1`，并记录超时。采集进程的 CPU、RSS、线程数和读写量按秒读 `/proc/<pid>/{stat,status,io}`。混合 cgroup 下单元没有独立的 cpu、memory 计数，`systemctl show` 给不出峰值，所以也要用这个办法。任一服务的 p95 恶化超过 10%，或出现新增超时，就停止回填，调低 `--read-kib-per-sec` 或 `--shard-mib`。如果真实请求太少，记录样本量，不要据此宣称没有影响。
+
+参考结果（2026-11，12 vCPU、混合 cgroup 的 Linux 虚拟机，同机有 PostgreSQL、Redis 和一个 HTTP API 服务，源数据约 437 MiB、139 个文件，页缓存已热）：
+
+- 默认参数下，首次回填约 220 秒完成。
+- 回填期间三个服务的探测 p95 变化在 −1% 到 +4% 之间，没有超时。
+- 采集进程 CPU 峰值为单核的 6%，整次回填共约 0.6 CPU 秒；RSS 峰值 16 MiB；1 个线程。
+- 块设备读 0 MiB，写 18.5 MiB。
+- 读限速按每轮平均计算：每轮平均约 2 MiB/s，但单秒最高读到约 24 MiB/s。
+- I/O 调度器为 `mq-deadline` 时，`IOSchedulingClass=idle` 不起作用；冷缓存下的突发读未测。
+
 ## SSH 授权和撤销
 
 用采集端的 `"$HOME/.local/bin/agenthome" remote list` 检查 AgentHome 的专用 SSH 授权，空输出表示当前没有授权。需要拉取时，按[受限 SSH 导出与配对](15-远程SSH导出与配对.md#配对步骤)核对主机指纹，在 Mac 生成专用公钥后再在采集端授权。采集端执行该文档的 `remote authorize` 命令时，用 `"$HOME/.local/bin/agenthome"` 调用，使 sshd 的固定命令指向已安装的二进制。
