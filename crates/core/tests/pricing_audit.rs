@@ -1,7 +1,6 @@
 //! 成本口径回归测试（审计记录见 docs/12-成本口径核对.md）。
 //!
-//! 每条都对应一个「算错了会差多少」的事实，数值取自 2026-11-09 的 LiteLLM 快照，
-//! 与 ccusage 20.0.48 的算法逐项对齐过。
+//! 每条都对应一个「算错了会差多少」的事实，来源快照与历史对账见成本口径文档。
 
 use agenthome_core::model::Usage;
 use agenthome_core::pricing::{estimate_usd, lookup};
@@ -210,6 +209,60 @@ fn gemini_4_缓存读按缓存单价计() {
         estimate_usd("gemini-4-hydrogen-xhigh", &u).unwrap(),
         0.15 + 0.075 + 0.075
     ));
+}
+
+/// 漏掉价表中的付费模型会让整组请求排除在首页与 CLI 金额之外。
+/// Runner 中这三个模型之前共有 1,072 次未计价请求，缓存读占用量大头。
+#[test]
+fn runner_付费模型单价与_litellm_快照一致() {
+    // 2026-11-26 LiteLLM 快照：input / output / cache_read / cache_write_5m / cache_write_1h。
+    for (model, rates) in [
+        // opencode_go/deepseek-v4.1-flash
+        ("deepseek-v4.1-flash", [0.3, 1.2, 0.006, 0.0, 0.0]),
+        // moonshot/kimi-k3.1-pro
+        ("kimi-k3.1-pro", [2.0, 10.0, 0.2, 2.0, 4.0]),
+        // dashscope/qwen4-max
+        ("qwen4-max", [1.5, 4.5, 0.075, 1.875, 3.0]),
+    ] {
+        let price = lookup(model).unwrap_or_else(|| panic!("{model} 必须可计价"));
+        assert_eq!(
+            [
+                price.input,
+                price.output,
+                price.cache_read,
+                price.cache_write_5m,
+                price.cache_write_1h,
+            ],
+            rates,
+            "{model}"
+        );
+        let usage = Usage {
+            input_tokens: 100_000,
+            output_tokens: 20_000,
+            cache_read_tokens: 50_000,
+            ..Usage::default()
+        };
+        assert!(close(
+            estimate_usd(model, &usage).unwrap(),
+            0.1 * rates[0] + 0.02 * rates[1] + 0.05 * rates[2]
+        ));
+    }
+}
+
+/// models.dev 的 OpenCode 免费档明确为 $0。漏价会让免费用量显示成「未计价」，
+/// 剥掉 -free 则会误用付费单价。
+#[test]
+fn runner_免费档已计价且成本为零() {
+    let usage = Usage {
+        input_tokens: 100_000,
+        output_tokens: 20_000,
+        cache_read_tokens: 50_000,
+        cache_write_5m_tokens: 10_000,
+        cache_write_1h_tokens: 10_000,
+        ..Usage::default()
+    };
+    assert_eq!(estimate_usd("deepseek-v4.1-flash-free", &usage), Some(0.0));
+    assert_eq!(lookup("deepseek-v4.1-flash-other-free"), None);
 }
 
 /// `codex-auto-review` 是 Codex 内部的自动审批审查模型（models_cache 里 visibility=hide），

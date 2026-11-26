@@ -276,6 +276,69 @@ fn 汇总_成本口径() {
 }
 
 #[test]
+fn 重开旧库后首页已计入补价模型和免费档() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("agenthome.db");
+    let now = now_ms();
+    let mut store = Store::open(&path).unwrap();
+    let sid = "opencode:m:pricing";
+    let mut session = session(sid, ProviderId::OpenCode, "/w/project", now, None);
+    let models = [
+        Some("deepseek-v4.1-flash"),
+        Some("deepseek-v4.1-flash-free"),
+        Some("kimi-k3.1-pro"),
+        Some("qwen4-max"),
+        None,
+    ];
+    let messages: Vec<_> = models
+        .into_iter()
+        .enumerate()
+        .map(|(i, model)| {
+            msg(
+                sid,
+                &format!("request-{i}"),
+                Role::Assistant,
+                now,
+                model,
+                Some(one_m_input(false)),
+                vec![],
+            )
+        })
+        .collect();
+    session.message_count = messages.len() as u32;
+    store.store_parsed(&session, &messages).unwrap();
+    drop(store);
+
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    conn.execute_batch(
+        "UPDATE messages SET cost_usd = NULL;
+         UPDATE meta SET value = 'old-table' WHERE key = 'pricing_stamp';",
+    )
+    .unwrap();
+    drop(conn);
+
+    let store = Store::open(&path).unwrap();
+    let rows = store.stats_by_model(Period::All).unwrap();
+    let summary = agenthome_core::cost::CostSummary::from_breakdown(&rows);
+    let free = summary
+        .models
+        .iter()
+        .find(|row| row.model == "deepseek-v4.1-flash-free")
+        .unwrap();
+    assert_eq!(free.cost_usd, 0.0);
+    assert_eq!(free.unpriced_tokens, 0);
+    assert_eq!(summary.unpriced_tokens, 1_000_000);
+    assert_eq!(
+        summary
+            .unpriced_models()
+            .map(|row| row.model.as_str())
+            .collect::<Vec<_>>(),
+        ["unknown"]
+    );
+    assert!((summary.total_usd - 3.8).abs() < 1e-9);
+}
+
+#[test]
 fn 按模型_按项目_每日() {
     let mut store = Store::in_memory().unwrap();
     seed(&mut store);

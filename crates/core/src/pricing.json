@@ -1,9 +1,9 @@
 {
- "_source": "LiteLLM model_prices_and_context_window.json (raw.githubusercontent.com/BerriAI/litellm/main)",
- "_fetched": "2026-11-09",
- "_patched": "2026-11-19 (CARM-283): added gemini-4-hydrogen/neon/carbon (LiteLLM gemini/*), claude-fable-5-2, gpt-6.2-sol, gpt-6.2-astra from LiteLLM main; other entries unchanged",
- "_unit": "USD per 1M tokens; cache_write_1h=0 means the provider has no 1h tier (OpenAI); cache_read falls back to input when LiteLLM has no cached price",
- "_long_context": "long_context: when one request's prompt (input + cache_read + cache_write) exceeds above_tokens, every component of that request uses these rates (LiteLLM *_above_<N>k_tokens, standard tier only)",
+ "_source": "LiteLLM model_prices_and_context_window.json (raw.githubusercontent.com/BerriAI/litellm/main; SHA-256 83d9e0a8887766256ead5a65761cc09974ec21aae87ea2b9ce649bc957b7faac); models.dev/api.json (SHA-256 92056f8058d04005d60c3c824d517819d0cf7a3ef25108a2bc9fef9c33d67005)",
+ "_fetched": "2026-11-26",
+ "_patched": "preserved earlier prices (AgentHome table SHA-256 a6749d305ce29154210c7982afeda0a2f1dd5ec81c20cafeef986d15eba6f320); deepseek-v4.1-flash = LiteLLM/opencode_go/deepseek-v4.1-flash; deepseek-v4.1-flash-free = models.dev/opencode/deepseek-v4.1-flash-free; free tier ($0); kimi-k3.1-pro = LiteLLM/moonshot/kimi-k3.1-pro; qwen4-max = LiteLLM/dashscope/qwen4-max",
+ "_unit": "USD per 1M tokens; cache_write_1h=0 means the provider has no 1h tier (OpenAI); cache_read falls back to input when no cached price is available",
+ "_long_context": "long_context: when one request's prompt (input + cache_read + cache_write) exceeds above_tokens, every component of that request uses these rates (standard tier only)",
  "models": {
   "claude-fable-5": {
    "input": 10.0,
@@ -138,6 +138,20 @@
    "cache_read": 0.1,
    "cache_write_5m": 2.5,
    "cache_write_1h": 4.0
+  },
+  "deepseek-v4.1-flash": {
+   "input": 0.3,
+   "output": 1.2,
+   "cache_read": 0.006,
+   "cache_write_5m": 0.0,
+   "cache_write_1h": 0.0
+  },
+  "deepseek-v4.1-flash-free": {
+   "input": 0.0,
+   "output": 0.0,
+   "cache_read": 0.0,
+   "cache_write_5m": 0.0,
+   "cache_write_1h": 0.0
   },
   "gemini-2.0-flash": {
    "input": 0.15,
@@ -847,6 +861,13 @@
     "cache_write_1h": 0.0
    }
   },
+  "kimi-k3.1-pro": {
+   "input": 2.0,
+   "output": 10.0,
+   "cache_read": 0.2,
+   "cache_write_5m": 2.0,
+   "cache_write_1h": 4.0
+  },
   "o1": {
    "input": 15.0,
    "output": 60.0,
@@ -902,6 +923,13 @@
    "cache_read": 0.5,
    "cache_write_5m": 0.0,
    "cache_write_1h": 0.0
+  },
+  "qwen4-max": {
+   "input": 1.5,
+   "output": 4.5,
+   "cache_read": 0.075,
+   "cache_write_5m": 1.875,
+   "cache_write_1h": 3.0
   }
  }
 }

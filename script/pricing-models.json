@@ -1,0 +1,141 @@
+{
+  "claude-fable-5": {},
+  "claude-fable-5-1": {},
+  "claude-fable-5-2": {},
+  "claude-haiku-4-5": {},
+  "claude-haiku-5-5": {},
+  "claude-mythos-5": {},
+  "claude-mythos-5-1": {},
+  "claude-mythos-preview": {},
+  "claude-opus-4-5": {},
+  "claude-opus-4-6": {},
+  "claude-opus-4-7": {},
+  "claude-opus-4-8": {},
+  "claude-opus-5": {},
+  "claude-opus-5-5": {},
+  "claude-sonnet-4-5": {},
+  "claude-sonnet-4-6": {},
+  "claude-sonnet-5": {},
+  "claude-sonnet-5-5": {},
+  "deepseek-v4.1-flash": {
+    "litellm": "opencode_go/deepseek-v4.1-flash",
+    "models_dev": "opencode-go"
+  },
+  "deepseek-v4.1-flash-free": {
+    "models_dev": "opencode"
+  },
+  "gemini-2.0-flash": {
+    "litellm": "vertex_ai/gemini-2.0-flash"
+  },
+  "gemini-2.0-flash-lite": {
+    "litellm": "vertex_ai/gemini-2.0-flash-lite"
+  },
+  "gemini-2.5-flash": {},
+  "gemini-2.5-flash-lite": {},
+  "gemini-2.5-flash-lite-preview-09-2025": {},
+  "gemini-2.5-flash-preview-09-2025": {},
+  "gemini-2.5-pro": {},
+  "gemini-3-flash-preview": {},
+  "gemini-3-pro-preview": {
+    "litellm": "vertex_ai/gemini-3-pro-preview"
+  },
+  "gemini-3.1-flash-lite": {},
+  "gemini-3.1-flash-lite-preview": {},
+  "gemini-3.1-pro-preview": {},
+  "gemini-3.1-pro-preview-customtools": {},
+  "gemini-3.5-flash": {},
+  "gemini-3.5-flash-lite": {},
+  "gemini-3.6-flash": {},
+  "gemini-3.7-flash": {},
+  "gemini-3.8-flash": {},
+  "gemini-3.8-flash-cyber": {},
+  "gemini-4-argon": {
+    "litellm": "gemini/gemini-4-argon"
+  },
+  "gemini-4-argon-cyber-permissive": {
+    "litellm": "vertex_ai/gemini-4-argon-cyber-permissive"
+  },
+  "gemini-4-carbon": {
+    "litellm": "gemini/gemini-4-carbon"
+  },
+  "gemini-4-hydrogen": {
+    "litellm": "gemini/gemini-4-hydrogen"
+  },
+  "gemini-4-neon": {
+    "litellm": "gemini/gemini-4-neon"
+  },
+  "gemini-exp-1206": {},
+  "gemini-flash-latest": {},
+  "gemini-flash-lite-latest": {},
+  "gemini-omni-1.1-flash": {
+    "litellm": "gemini/gemini-omni-1.1-flash"
+  },
+  "gemini-omni-1.1-flash-preview": {
+    "litellm": "vertex_ai/gemini-omni-1.1-flash-preview"
+  },
+  "gemini-omni-1.2-flash": {
+    "litellm": "gemini/gemini-omni-1.2-flash"
+  },
+  "gemini-omni-flash-preview": {},
+  "gemini-pro-latest": {},
+  "gemini-robotics-er-1.5-preview": {},
+  "gemini-robotics-er-2-preview": {},
+  "gpt-5": {},
+  "gpt-5-chat": {},
+  "gpt-5-chat-latest": {},
+  "gpt-5-codex": {},
+  "gpt-5-mini": {},
+  "gpt-5-nano": {},
+  "gpt-5-pro": {},
+  "gpt-5-search-api": {},
+  "gpt-5.1": {},
+  "gpt-5.1-chat-latest": {},
+  "gpt-5.1-codex": {},
+  "gpt-5.1-codex-max": {},
+  "gpt-5.1-codex-mini": {},
+  "gpt-5.2": {},
+  "gpt-5.2-chat-latest": {},
+  "gpt-5.2-codex": {},
+  "gpt-5.2-pro": {},
+  "gpt-5.3-chat-latest": {},
+  "gpt-5.3-codex": {},
+  "gpt-5.4": {},
+  "gpt-5.4-mini": {},
+  "gpt-5.4-nano": {},
+  "gpt-5.4-pro": {},
+  "gpt-5.5": {},
+  "gpt-5.5-cyber": {},
+  "gpt-5.5-cyber-preview": {},
+  "gpt-5.5-pro": {},
+  "gpt-5.6": {},
+  "gpt-5.6-cyber": {},
+  "gpt-5.6-luna": {},
+  "gpt-5.6-sol": {},
+  "gpt-5.6-terra": {},
+  "gpt-6-astra": {},
+  "gpt-6-astra-law": {},
+  "gpt-6-cyber": {},
+  "gpt-6-luna": {},
+  "gpt-6-rosalind": {},
+  "gpt-6-sol": {},
+  "gpt-6.1-sol": {},
+  "gpt-6.1-terra": {},
+  "gpt-6.2-astra": {},
+  "gpt-6.2-sol": {},
+  "kimi-k3.1-pro": {
+    "litellm": "moonshot/kimi-k3.1-pro",
+    "models_dev": "moonshotai"
+  },
+  "o1": {},
+  "o1-pro": {},
+  "o3": {},
+  "o3-deep-research": {},
+  "o3-mini": {},
+  "o3-pro": {},
+  "o4-mini": {},
+  "o4-mini-deep-research": {},
+  "qwen4-max": {
+    "litellm": "dashscope/qwen4-max",
+    "models_dev": "alibaba"
+  }
+}

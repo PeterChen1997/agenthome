@@ -142,7 +142,7 @@ pub fn normalize_model(model: &str) -> String {
 }
 
 /// 查表。精确命中优先；否则去掉非数字的尾段（`-spark` / `-preview` / `-latest`）再试，
-/// 数字尾段（版本号）不剥，避免把新版本算成旧价。
+/// 数字尾段（版本号）和免费档尾段不剥，避免用另一个型号或付费档的单价。
 pub fn lookup(model: &str) -> Option<Price> {
     let models = &table().models;
     let mut key = normalize_model(model);
@@ -152,7 +152,7 @@ pub fn lookup(model: &str) -> Option<Price> {
         }
         let idx = key.rfind('-')?;
         let tail = &key[idx + 1..];
-        if tail.chars().any(|c| c.is_ascii_digit()) {
+        if tail == "free" || tail.chars().any(|c| c.is_ascii_digit()) {
             return None;
         }
         key.truncate(idx);
@@ -269,6 +269,21 @@ mod tests {
         // 这些不等式是厂商定价的结构性事实；一旦被破坏，多半是生成 pricing.json 时字段映射错位
         // （例如把 cache_creation 填进了 cache_read），会让缓存读被放大十几倍。
         for (name, p) in &table().models {
+            if name.ends_with("-free") {
+                assert_eq!(
+                    [
+                        p.input,
+                        p.output,
+                        p.cache_read,
+                        p.cache_write_5m,
+                        p.cache_write_1h
+                    ],
+                    [0.0; 5],
+                    "{name}: 免费档所有单价应为 0"
+                );
+                assert!(p.long_context.is_none(), "{name}: 免费档无高价分档");
+                continue;
+            }
             assert!(p.input > 0.0 && p.output > 0.0, "{name}");
             assert!(p.cache_read <= p.input, "{name}: 缓存读不应贵于输入");
             if p.cache_write_1h > 0.0 {
