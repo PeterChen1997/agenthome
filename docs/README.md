@@ -6,6 +6,7 @@
 |---|---|
 | [features.md](features.md) / [features.zh-CN.md](features.zh-CN.md) | 逐页面的功能说明（英文 / 中文），配截图 |
 | [12-成本口径核对.md](12-成本口径核对.md) | 成本怎么算：单价、缓存读写分价、长上下文分档、跨会话去重，以及与 ccusage 的逐项对照 |
+| [16-Linux采集端安装.md](16-Linux采集端安装.md) | Linux 采集端的二进制打包、用户服务安装与 SSH 授权管理 |
 | [screenshots/](screenshots/) | 截图（全部为演示数据） |
 | [../CHANGELOG.md](../CHANGELOG.md) | 版本变更记录 |
 

@@ -1,0 +1,19 @@
+[Unit]
+Description=AgentHome usage collector
+
+[Service]
+ExecStart=%h/.local/bin/agenthome collect
+Restart=on-failure
+RestartSec=15s
+UMask=0077
+Nice=19
+IOSchedulingClass=idle
+LimitNPROC=512
+CPUQuota=10%
+MemoryHigh=96M
+MemoryMax=128M
+TasksMax=16
+IOWeight=10
+
+[Install]
+WantedBy=default.target
