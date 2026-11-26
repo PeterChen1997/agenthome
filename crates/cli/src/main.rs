@@ -1,15 +1,18 @@
-//! agenthome 命令行：scan / sessions / show / stats / quota / activity / statusline / collect。
+//! agenthome 命令行：scan / sessions / show / stats / quota / activity / statusline / collect / report。
 
 use agenthome_core::collector::{Collector, Limits, RoundReport};
 mod remote;
 
+use agenthome_core::device::DeviceIdentity;
 use agenthome_core::model::{
     ContentBlock, CostSource, Freshness, Period, ProviderId, Role, SessionQuery,
 };
 use agenthome_core::providers::opencode::OpenCodeProvider;
 use agenthome_core::providers::registry;
 use agenthome_core::statusline_setup::{self, StatuslinePaths, StatuslineStatus};
-use agenthome_core::usage_store::FailureKind;
+use agenthome_core::usage_import::ImportStore;
+use agenthome_core::usage_report::{self, MachineFilter};
+use agenthome_core::usage_store::{FailureKind, UsageStore};
 use agenthome_core::{
     RawArchive, SourceProvider, Store, claude_statusline, codex_rollout_quota, ingest_all, paths,
     pricing,
@@ -152,6 +155,22 @@ enum Cmd {
         #[arg(long)]
         opencode_root: Option<PathBuf>,
     },
+    /// 对账表：按明确起止时间输出 机器 × 来源 × 供应商 × 模型 的用量与等价花费（JSON）。
+    /// 逐请求计价；本机读采集用量库（先跑过 collect），远端读 Mac 导入库
+    Report {
+        /// 起始（含）：RFC 3339（如 2026-11-01T00:00:00+08:00），或 YYYY-MM-DD 表示本地时区当天 0 点
+        #[arg(long)]
+        from: String,
+        /// 结束（不含），格式同 --from
+        #[arg(long)]
+        to: String,
+        /// all（本机 + 全部远端）、local，或远端配对时起的连接名
+        #[arg(long, default_value = "all")]
+        machine: String,
+        /// AgentHome 数据目录（device.json、usage/、remote/），默认 ~/AgentHome
+        #[arg(long)]
+        data_dir: Option<PathBuf>,
+    },
     /// Claude statusline 包装脚本：查看 / 安装 / 卸载（改 ~/.claude/settings.json，改前自动备份）
     Statusline {
         #[command(subcommand)]
@@ -256,6 +275,12 @@ fn main() -> Result<()> {
             };
             collect(data_dir, sources, limits, once)
         }
+        Cmd::Report {
+            from,
+            to,
+            machine,
+            data_dir,
+        } => report(&from, &to, &machine, data_dir),
         Cmd::Remote { action } => remote::run(action),
         Cmd::SshExport { data_dir } => remote::ssh_export(data_dir),
     }
@@ -468,6 +493,79 @@ fn collect(
             }
         };
         std::thread::sleep(delay);
+    }
+}
+
+/// 对账表。只读：本机用量库、导入库不存在时不创建（「全部」缺本机库时在 stderr 说明，只算远端）。
+fn report(from: &str, to: &str, machine: &str, data_dir: Option<PathBuf>) -> Result<()> {
+    let window = usage_report::Window::new(parse_instant(from)?, parse_instant(to)?)?;
+    let data = data_dir.unwrap_or_else(paths::default_data_dir);
+    let identity = DeviceIdentity::load(&data.join("device.json"))?;
+    let usage_db = data.join("usage").join("usage.db");
+    let local = match &identity {
+        Some(id) if usage_db.exists() => Some(UsageStore::open(&usage_db, id)?),
+        _ => None,
+    };
+    let remote_db = data.join("remote").join("usage.db");
+    let remote = match &identity {
+        Some(id) if remote_db.exists() => Some(ImportStore::open(&remote_db, id)?),
+        _ => None,
+    };
+    let filter = match machine {
+        "all" => MachineFilter::All,
+        "local" => MachineFilter::Local,
+        label => match remote
+            .as_ref()
+            .map(|r| r.peer(label))
+            .transpose()?
+            .flatten()
+        {
+            Some(id) => MachineFilter::Remote(id),
+            None => bail!("没有名为「{label}」的已配对远端"),
+        },
+    };
+    if local.is_none() && filter == MachineFilter::All {
+        eprintln!(
+            "agenthome report: 本机还没有用量库（先运行 agenthome collect --once），本表只含远端"
+        );
+    }
+    let r = usage_report::query(local.as_ref(), remote.as_ref(), &filter, window)?;
+    let mut out = serde_json::to_value(&r)?;
+    let iso = |ms: i64| {
+        chrono::DateTime::from_timestamp_millis(ms)
+            .map(|t| t.to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
+    };
+    out["from"] = serde_json::json!(iso(window.from_ms));
+    out["to"] = serde_json::json!(iso(window.to_ms));
+    out["machine_filter"] = serde_json::json!(machine);
+    // 本机采集进度：对账前看一眼有没有积压，免得拿没采完的数去对。
+    let status = std::fs::read(data.join("usage").join("collector-status.json"))
+        .ok()
+        .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok());
+    out["local_collector"] = match status {
+        Some(s) => serde_json::json!({
+            "finished_at": s["finished_at_ms"].as_i64().and_then(iso),
+            "pending_files": s["pending_files"],
+        }),
+        None => serde_json::Value::Null,
+    };
+    println!("{}", serde_json::to_string_pretty(&out)?);
+    Ok(())
+}
+
+/// RFC 3339 时刻，或 `YYYY-MM-DD`（本地时区当天 0 点），转 UTC 毫秒。
+fn parse_instant(s: &str) -> Result<i64> {
+    if let Ok(t) = chrono::DateTime::parse_from_rfc3339(s) {
+        return Ok(t.timestamp_millis());
+    }
+    let day = chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")
+        .with_context(|| format!("时间「{s}」不是 RFC 3339 或 YYYY-MM-DD"))?;
+    let midnight = day.and_hms_opt(0, 0, 0).context("无效日期")?;
+    match midnight.and_local_timezone(chrono::Local) {
+        chrono::LocalResult::Single(t) | chrono::LocalResult::Ambiguous(t, _) => {
+            Ok(t.timestamp_millis())
+        }
+        chrono::LocalResult::None => bail!("本地时区里没有 {s} 0 点（夏令时跳过），请写 RFC 3339"),
     }
 }
 

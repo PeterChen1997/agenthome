@@ -519,6 +519,35 @@ impl ImportStore {
         Ok(page)
     }
 
+    /// 全部配对过的采集端：`(machine_id, 连接名)`，按连接名排序。
+    pub fn peers(&self) -> Result<Vec<(String, String)>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT machine_id, label FROM peers ORDER BY label")?;
+        let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// `[from_ms, to_ms)` 内仍计入的远端用量（撤回的不算）；`machine_id` 为 `None` 时是全部远端机器。
+    pub fn records_in(
+        &self,
+        from_ms: i64,
+        to_ms: i64,
+        machine_id: Option<&str>,
+    ) -> Result<Vec<UsageRecord>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT machine_id, source, event_key, revision, op, vendor, model, ts_ms, requests,
+                    input_tokens, output_tokens, cache_read_tokens, cache_write_5m_tokens,
+                    cache_write_1h_tokens, reasoning_tokens
+             FROM usage WHERE op = 'upsert' AND ts_ms >= ?1 AND ts_ms < ?2
+                   AND (?3 IS NULL OR machine_id = ?3)",
+        )?;
+        let rows = stmt.query_map(params![from_ms, to_ms, machine_id], |r| {
+            crate::usage_store::row_record(r, 1, &r.get::<_, String>(0)?)
+        })?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
     /// 合计；`machine_id` 为 `None` 时是全部远端机器。撤回的事件不计。
     pub fn totals(&self, machine_id: Option<&str>) -> Result<Totals> {
         Ok(self.conn.query_row(

@@ -416,6 +416,20 @@ impl UsageStore {
         .collect()
     }
 
+    /// `[from_ms, to_ms)` 内仍计入的用量（撤回的不算），供按机器统计（`usage_report`）。
+    pub fn records_in(&self, from_ms: i64, to_ms: i64) -> Result<Vec<UsageRecord>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT source, event_key, revision, op, vendor, model, ts_ms, requests,
+                    input_tokens, output_tokens, cache_read_tokens, cache_write_5m_tokens,
+                    cache_write_1h_tokens, reasoning_tokens
+             FROM usage WHERE op = 'upsert' AND ts_ms >= ?1 AND ts_ms < ?2",
+        )?;
+        let rows = stmt.query_map(params![from_ms, to_ms], |r| {
+            row_record(r, 0, &self.machine_id)
+        })?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
     /// 把 WAL 合并回主库并截断（`wal_checkpoint(TRUNCATE)`），状态目录接近预算时先腾出 WAL 占的空间。
     /// 有读者占着时合并不完整，不报错，按实际剩下的大小算。
     pub fn checkpoint(&self) -> Result<()> {
@@ -559,7 +573,11 @@ fn op_str(op: Op) -> &'static str {
     }
 }
 
-fn row_record(r: &rusqlite::Row<'_>, at: usize, machine_id: &str) -> rusqlite::Result<UsageRecord> {
+pub(crate) fn row_record(
+    r: &rusqlite::Row<'_>,
+    at: usize,
+    machine_id: &str,
+) -> rusqlite::Result<UsageRecord> {
     let op = match r.get::<_, String>(at + 3)?.as_str() {
         "retract" => Op::Retract,
         _ => Op::Upsert,

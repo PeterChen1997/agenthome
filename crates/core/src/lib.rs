@@ -37,6 +37,7 @@ pub mod store;
 pub mod update;
 pub mod usage_import;
 pub mod usage_projection;
+pub mod usage_report;
 pub mod usage_store;
 pub mod usage_v1;
 pub mod watch;
