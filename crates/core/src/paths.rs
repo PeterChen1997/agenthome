@@ -19,6 +19,11 @@ pub fn device_identity_path() -> PathBuf {
     default_data_dir().join("device.json")
 }
 
+/// `~/AgentHome/usage/usage.db`：采集端本地用量库（`usage_store.rs`）。和索引库不同，不能删了重建。
+pub fn default_usage_db() -> PathBuf {
+    default_data_dir().join("usage").join("usage.db")
+}
+
 /// `~/AgentHome/raw`：raw 层原件归档。
 pub fn raw_dir() -> PathBuf {
     default_data_dir().join("raw")
