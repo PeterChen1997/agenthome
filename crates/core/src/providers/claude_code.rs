@@ -5,7 +5,9 @@
 use crate::model::{
     ContentBlock, Message, ProviderId, Role, Session, SessionKind, SourceInfo, Usage,
 };
-use crate::providers::{CostSum, LineParser, LoadMessage, Restart, SourceProvider};
+use crate::providers::{
+    CostSum, FileUsage, LineParser, LoadMessage, Restart, SourceProvider, UsageBasis, UsageEvent,
+};
 pub use crate::providers::{Discovery, Parsed};
 use anyhow::{Context, Result};
 use serde_json::Value;
@@ -95,6 +97,40 @@ impl ClaudeCodeProvider {
             messages,
             warnings,
             ignored_records: parser.take_ignored(),
+        })
+    }
+
+    /// 只产出用量：整文件解析后取带 usage 的 assistant 消息。同一 `message.id` 的多行在解析器里
+    /// 已并成一条（usage 只留一份），所以每条就是一次请求；fork 复制进别的文件的同一响应 id 相同，
+    /// 由下游按事件键只计一次（与 `store.rs` 的 `CLAUDE_DEDUP` 同口径）。
+    pub fn usage_events(&self, path: &Path) -> Result<FileUsage> {
+        let parsed = self.parse_file(path)?;
+        let mut ordinal = 0;
+        let events = parsed
+            .messages
+            .into_iter()
+            .filter(|m| m.role == Role::Assistant)
+            .filter_map(|m| {
+                let usage = m.usage?;
+                let basis = match m.native_id {
+                    Some(id) => UsageBasis::Request(id),
+                    None => {
+                        ordinal += 1;
+                        UsageBasis::Ordinal(ordinal - 1)
+                    }
+                };
+                Some(UsageEvent {
+                    basis,
+                    ts_ms: m.timestamp_ms,
+                    model: m.model,
+                    usage,
+                })
+            })
+            .collect();
+        Ok(FileUsage {
+            native_session_id: parsed.session.native_id,
+            events,
+            warnings: parsed.warnings,
         })
     }
 
@@ -214,6 +250,9 @@ impl SourceProvider for ClaudeCodeProvider {
     }
     fn parse_file(&self, path: &Path) -> Result<Parsed> {
         ClaudeCodeProvider::parse_file(self, path)
+    }
+    fn usage_events(&self, path: &Path) -> Result<Option<FileUsage>> {
+        ClaudeCodeProvider::usage_events(self, path).map(Some)
     }
     fn line_parser(&self, path: &Path) -> Result<Option<Box<dyn LineParser>>> {
         Ok(Some(Box::new(self.new_parser(path)?)))

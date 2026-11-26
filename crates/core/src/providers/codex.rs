@@ -14,7 +14,8 @@ use crate::model::{
     ContentBlock, Message, ProviderId, Role, Session, SessionKind, SourceInfo, Usage,
 };
 use crate::providers::{
-    CostSum, Discovery, LineParser, LoadMessage, Parsed, Restart, SourceProvider,
+    CostSum, Discovery, FileUsage, LineParser, LoadMessage, Parsed, Restart, SourceProvider,
+    UsageBasis, UsageEvent,
 };
 use anyhow::{Context, Result};
 use serde_json::Value;
@@ -152,9 +153,27 @@ impl CodexProvider {
     }
 
     pub fn parse_file(&self, path: &Path) -> Result<Parsed> {
+        Ok(self.parse_whole(path, false)?.0)
+    }
+
+    /// 只产出用量：每条计入的 `token_usage_record` 按 `response_id` 一条；整个文件没有 record 的旧格式
+    /// 按 `token_count` 差值逐条用序号。归档挪到 `archived_sessions` 或压成 `.zst` 后文件 id 不变，键也不变。
+    pub fn usage_events(&self, path: &Path) -> Result<FileUsage> {
+        let (parsed, events) = self.parse_whole(path, true)?;
+        Ok(FileUsage {
+            native_session_id: parsed.session.native_id,
+            events,
+            warnings: parsed.warnings,
+        })
+    }
+
+    fn parse_whole(&self, path: &Path, collect_usage: bool) -> Result<(Parsed, Vec<UsageEvent>)> {
         let compressed = path.extension().is_some_and(|e| e == "zst");
         let source = crate::providers::source_info(path, compressed)?;
         let mut parser = self.new_parser(path)?;
+        if collect_usage {
+            parser.usage_events = Some(Vec::new());
+        }
         let file = std::fs::File::open(path).with_context(|| format!("打开 {}", path.display()))?;
         let reader: Box<dyn BufRead> = if compressed {
             let dec = zstd::Decoder::new(file)
@@ -170,12 +189,14 @@ impl CodexProvider {
         session.estimated_cost_usd = crate::pricing::estimate_messages(&messages);
         let mut warnings = parser.take_warnings();
         warnings.extend(read_errors);
-        Ok(Parsed {
+        let events = parser.usage_events.take().unwrap_or_default();
+        let parsed = Parsed {
             session,
             messages,
             warnings,
             ignored_records: parser.take_ignored(),
-        })
+        };
+        Ok((parsed, events))
     }
 
     /// 一个还没喂过任何行的按行解析器；整文件解析与增量续读共用。
@@ -210,6 +231,8 @@ impl CodexProvider {
             mode: UsageMode::Unknown,
             count_applied: Vec::new(),
             seen_response_ids: HashSet::new(),
+            usage_events: None,
+            count_seq: 0,
             last_total: None,
             current_model: None,
             meta_id: None,
@@ -280,6 +303,9 @@ impl SourceProvider for CodexProvider {
     fn parse_file(&self, path: &Path) -> Result<Parsed> {
         CodexProvider::parse_file(self, path)
     }
+    fn usage_events(&self, path: &Path) -> Result<Option<FileUsage>> {
+        CodexProvider::usage_events(self, path).map(Some)
+    }
     fn line_parser(&self, path: &Path) -> Result<Option<Box<dyn LineParser>>> {
         Ok(Some(Box::new(self.new_parser(path)?)))
     }
@@ -340,6 +366,10 @@ pub struct CodexLineParser {
     /// `UsageMode::Count` 下挂过的 (消息 id, usage)。
     count_applied: Vec<(String, Usage)>,
     seen_response_ids: HashSet<String>,
+    /// 只在 `usage_events` 时收集（入库路径为 None，不占内存）：每次计入的请求一条。
+    usage_events: Option<Vec<UsageEvent>>,
+    /// `UsageMode::Count` 下第几条差值，作 `UsageBasis::Ordinal`。
+    count_seq: u64,
     last_total: Option<Usage>,
     current_model: Option<String>,
     meta_id: Option<String>,
@@ -707,8 +737,11 @@ impl CodexLineParser {
                 if delta.total_tokens() > 0 && self.mode != UsageMode::Record {
                     self.mode = UsageMode::Count;
                     let id = self.ensure_target();
-                    self.apply_usage(&id, &delta, load)?;
+                    let target = self.apply_usage(&id, &delta, load)?;
                     self.count_applied.push((id, delta));
+                    let basis = UsageBasis::Ordinal(self.count_seq);
+                    self.count_seq += 1;
+                    self.note_event(basis, target, delta);
                 }
             }
             "" => *self.ignored.entry("event_msg".to_string()).or_default() += 1,
@@ -729,12 +762,13 @@ impl CodexLineParser {
         load: &mut LoadMessage<'_>,
     ) -> Result<(), Restart> {
         let Some(rid) = str_field(p, "response_id") else {
+            // 与入库路径一致：缺 response_id 的 record 不计，只记警告。
             self.warnings.push(format!(
                 "第 {line_no} 行 token_usage_record 缺少 response_id"
             ));
             return Ok(());
         };
-        if !self.seen_response_ids.insert(rid) {
+        if !self.seen_response_ids.insert(rid.clone()) {
             *self
                 .ignored
                 .entry("token_usage_record:duplicate".to_string())
@@ -759,9 +793,30 @@ impl CodexLineParser {
                 );
             }
         }
+        if let Some(events) = &mut self.usage_events {
+            events.retain(|e| !matches!(e.basis, UsageBasis::Ordinal(_)));
+        }
         self.mode = UsageMode::Record;
         let id = self.ensure_target();
-        self.apply_usage(&id, &u, load)
+        let target = self.apply_usage(&id, &u, load)?;
+        self.note_event(UsageBasis::Request(rid), target, u);
+        Ok(())
+    }
+
+    fn note_event(
+        &mut self,
+        basis: UsageBasis,
+        (ts_ms, model): (i64, Option<String>),
+        usage: Usage,
+    ) {
+        if let Some(events) = &mut self.usage_events {
+            events.push(UsageEvent {
+                basis,
+                ts_ms,
+                model,
+                usage,
+            });
+        }
     }
 
     /// usage 归到最近一条 assistant 消息；没有则记警告（不丢数：挂到一条合成的 assistant 上）。
@@ -785,13 +840,15 @@ impl CodexLineParser {
         id
     }
 
+    /// 返回被挂上 usage 的消息的 (时间, 模型)，用量事件沿用它们，与本地统计同口径。
     fn apply_usage(
         &mut self,
         id: &str,
         u: &Usage,
         load: &mut LoadMessage<'_>,
-    ) -> Result<(), Restart> {
+    ) -> Result<(i64, Option<String>), Restart> {
         let m = self.message_mut(id, load)?;
+        let ts = m.timestamp_ms;
         let model = m.model.clone();
         let before = m.usage;
         match &mut m.usage {
@@ -804,7 +861,7 @@ impl CodexLineParser {
             (model.as_deref(), before.as_ref()),
             (model.as_deref(), after.as_ref()),
         );
-        Ok(())
+        Ok((ts, model))
     }
 
     /// 本批里的消息直接改；已在前几批交出去的从库里取回来，放进本批。
