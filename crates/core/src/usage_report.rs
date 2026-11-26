@@ -13,7 +13,7 @@
 //! 缺价：定价表里没有的模型照样计 token，另记未知价请求数与 token；整组都没有价时 `cost_usd` 为空。
 
 use crate::cost::Vendor;
-use crate::model::{ProviderId, Usage};
+use crate::model::{CostBreakdown, ProviderId, Usage};
 use crate::usage_import::ImportStore;
 use crate::usage_store::UsageStore;
 use crate::usage_v1::UsageRecord;
@@ -134,6 +134,35 @@ pub struct ReportRow {
     pub model: String,
     #[serde(flatten)]
     pub tally: Tally,
+}
+
+impl ReportRow {
+    /// 换成首页花费卡用的明细行（CARM-301）：首页和 CLI 对账表读同一份逐请求合计，金额只算一次。
+    /// `unknown` 模型留空，交给 [`crate::cost::CostSummary`] 统一显示为 unknown。
+    pub fn cost_breakdown(&self) -> CostBreakdown {
+        let t = &self.tally;
+        CostBreakdown {
+            key: if self.model == "unknown" {
+                String::new()
+            } else {
+                self.model.clone()
+            },
+            provider: ProviderId::parse(&self.source),
+            usage: Usage {
+                input_tokens: t.input_tokens,
+                output_tokens: t.output_tokens,
+                cache_read_tokens: t.cache_read_tokens,
+                cache_write_tokens: t.cache_write_5m_tokens + t.cache_write_1h_tokens,
+                cache_write_5m_tokens: t.cache_write_5m_tokens,
+                cache_write_1h_tokens: t.cache_write_1h_tokens,
+                reasoning_tokens: t.reasoning_tokens,
+                requests: t.requests,
+                input_includes_cache: false,
+            },
+            cost_usd: t.cost_usd.unwrap_or(0.0),
+            unpriced_tokens: t.unpriced_tokens,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]

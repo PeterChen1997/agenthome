@@ -194,6 +194,15 @@ dashboard.cost_equivalent_hint:
 dashboard.cost_paid_hint:
   en: "Configured monthly fees, prorated for this range"
   zh-CN: "已填订阅月费，按所选范围折算"
+dashboard.cost_paid_per_machine:
+  en: "Account-level; can't be split by machine"
+  zh-CN: "账号级，无法按机器拆分"
+dashboard.cost_machine_all:
+  en: "All machines"
+  zh-CN: "全部机器"
+dashboard.cost_machine_local:
+  en: "This Mac"
+  zh-CN: "本机"
 dashboard.cost_missing_fee:
   en: "Set monthly fee ›"
   zh-CN: "未填月费 ›"

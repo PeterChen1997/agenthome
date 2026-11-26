@@ -5,7 +5,9 @@ use std::collections::BTreeMap;
 use agenthome_core::cost::{CostSummary, ModelCost, Vendor, VendorCost, prorated_fee};
 use agenthome_core::model::Period;
 use agenthome_core::providers::registry::display_name;
+use agenthome_core::usage_report::MachineFilter;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::tab::TabBar;
 use gpui_kit::component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
@@ -27,6 +29,12 @@ const RANGES: [Period; 3] = [Period::Today, Period::Days(7), Period::Days(30)];
 
 pub(super) struct CostCard {
     range: usize,
+    /// CARM-301：只作用于花费卡。
+    machine: MachineFilter,
+    /// 已配对的远端 `(machine_id, 连接名)`，随花费一起刷新；为空时不显示机器筛选。
+    machines: Vec<(String, String)>,
+    /// 调试 / 截图用：`AGENTHOME_COST_MACHINE=local|<连接名>` 指定启动时的机器筛选，首次加载后清掉。
+    pending_machine: Option<String>,
     paid: bool,
     expanded: bool,
     fees: BTreeMap<Vendor, f64>,
@@ -39,6 +47,9 @@ impl CostCard {
     pub(super) fn new() -> Self {
         Self {
             range: 2,
+            machine: MachineFilter::All,
+            machines: Vec::new(),
+            pending_machine: std::env::var("AGENTHOME_COST_MACHINE").ok(),
             paid: false,
             expanded: false,
             fees: SUBSCRIPTION_VENDORS
@@ -57,18 +68,41 @@ impl DashboardView {
         self.cost.revision += 1;
         let revision = self.cost.revision;
         let period = RANGES[self.cost.range];
+        let machine = self.cost.machine.clone();
+        let pending = self.cost.pending_machine.take();
         let source = self.source.clone();
         self.cost._task = cx.spawn(async move |this, cx| {
-            let result = cx
+            let loaded = cx
                 .background_spawn(async move {
-                    let rows = source.by_model(period)?;
-                    Ok::<_, anyhow::Error>(CostSummary::from_breakdown(&rows))
+                    let machines = source.remote_machines()?;
+                    let machine = match pending.as_deref() {
+                        Some("local") => MachineFilter::Local,
+                        Some(label) => machines
+                            .iter()
+                            .find(|(_, l)| l == label)
+                            .map_or(machine, |(id, _)| MachineFilter::Remote(id.clone())),
+                        None => machine,
+                    };
+                    // 选中的远端已取消配对：退回全部机器，而不是报错或显示空表。
+                    let machine = match machine {
+                        MachineFilter::Remote(id) if !machines.iter().any(|(m, _)| *m == id) => {
+                            MachineFilter::All
+                        }
+                        machine => machine,
+                    };
+                    let rows = source.cost_by_model(period, &machine)?;
+                    Ok::<_, anyhow::Error>((machines, machine, CostSummary::from_breakdown(&rows)))
                 })
                 .await;
             let _ = this.update(cx, |this, cx| {
                 if this.cost.revision != revision {
                     return;
                 }
+                let result = loaded.map(|(machines, machine, summary)| {
+                    this.cost.machines = machines;
+                    this.cost.machine = machine;
+                    summary
+                });
                 match &result {
                     Ok(summary) => telemetry::report_unpriced_models(summary),
                     Err(error) => {
@@ -110,6 +144,65 @@ impl DashboardView {
         self.load_cost(cx);
     }
 
+    fn set_cost_machine(&mut self, ix: usize, cx: &mut Context<Self>) {
+        let machine = match ix {
+            0 => MachineFilter::All,
+            1 => MachineFilter::Local,
+            n => match self.cost.machines.get(n - 2) {
+                Some((id, _)) => MachineFilter::Remote(id.clone()),
+                None => return,
+            },
+        };
+        if self.cost.machine == machine {
+            return;
+        }
+        // 只上报类别：不带机器标识、连接名和金额。
+        let kind = match machine {
+            MachineFilter::All => "all",
+            MachineFilter::Local => "local",
+            MachineFilter::Remote(_) => "remote",
+        };
+        telemetry::event("home_cost_machine_change", json!({"machine": kind}));
+        self.cost.machine = machine;
+        self.cost.summary = None;
+        self.cost.expanded = false;
+        self.load_cost(cx);
+    }
+
+    fn render_machine_filter(&self, cx: &mut Context<Self>) -> Option<TabBar> {
+        if self.cost.machines.is_empty() {
+            return None;
+        }
+        let labels = [
+            t!("dashboard.cost_machine_all").into(),
+            t!("dashboard.cost_machine_local").into(),
+        ]
+        .into_iter()
+        .chain(
+            self.cost
+                .machines
+                .iter()
+                .map(|(_, label)| SharedString::from(label.clone())),
+        )
+        .collect();
+        let selected = match &self.cost.machine {
+            MachineFilter::All => 0,
+            MachineFilter::Local => 1,
+            MachineFilter::Remote(id) => self
+                .cost
+                .machines
+                .iter()
+                .position(|(m, _)| m == id)
+                .map_or(0, |i| i + 2),
+        };
+        Some(segmented(
+            "cost-machine",
+            labels,
+            selected,
+            cx.listener(|this, ix: &usize, _, cx| this.set_cost_machine(*ix, cx)),
+        ))
+    }
+
     fn set_cost_basis(&mut self, paid: bool, cx: &mut Context<Self>) {
         if self.cost.paid == paid {
             return;
@@ -145,8 +238,8 @@ impl DashboardView {
                                 this.set_cost_basis(*ix == 1, cx)
                             }),
                         ))
-                        // CARM-284：机器筛选加在时间范围前。
-                        .child(div().w(px(88.)).flex_shrink_0())
+                        // CARM-301：机器筛选在时间范围前，只作用于花费卡；没有配对远端时不显示。
+                        .children(self.render_machine_filter(cx))
                         .child(segmented(
                             "cost-range",
                             RANGES.into_iter().map(period_label).collect(),
@@ -183,6 +276,8 @@ impl DashboardView {
 
     fn render_cost_vendors(&self, summary: &CostSummary, cx: &mut Context<Self>) -> Div {
         let paid = self.cost.paid;
+        // 订阅按账号计费：单看一台机器时没法拆，金额一律显示「—」。
+        let per_machine = paid && self.cost.machine != MachineFilter::All;
         let (rows, total, caption) = if paid {
             let days = match RANGES[self.cost.range] {
                 Period::Days(days) => days,
@@ -196,6 +291,7 @@ impl DashboardView {
                         .cost
                         .fees
                         .get(&vendor)
+                        .filter(|_| !per_machine)
                         .map(|fee| prorated_fee(*fee, days));
                     (vendor, usage, amount)
                 })
@@ -204,7 +300,12 @@ impl DashboardView {
                 .iter()
                 .filter_map(|(_, _, amount)| *amount)
                 .reduce(|a, b| a + b);
-            (rows, total, t!("dashboard.cost_paid_hint"))
+            let caption = if per_machine {
+                t!("dashboard.cost_paid_per_machine")
+            } else {
+                t!("dashboard.cost_paid_hint")
+            };
+            (rows, total, caption)
         } else {
             let rows = summary
                 .vendors
@@ -279,7 +380,7 @@ impl DashboardView {
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .child(vendor_label(vendor)),
                             )
-                            .when(paid && cost.is_none(), |row| {
+                            .when(paid && cost.is_none() && !per_machine, |row| {
                                 row.child(
                                     Button::new(format!("cost-missing-fee-{}", vendor.as_str()))
                                         .link()
@@ -290,7 +391,7 @@ impl DashboardView {
                                         })),
                                 )
                             })
-                            .when(!paid || cost.is_some(), |row| {
+                            .when(!paid || cost.is_some() || per_machine, |row| {
                                 row.child(
                                     mono_num(17., cx)
                                         .font_weight(FontWeight::SEMIBOLD)

@@ -7,6 +7,7 @@ use agenthome_core::model::{
     SEARCH_MARK_END, SEARCH_MARK_START, SearchHit, SessionKind, SessionQuery, SessionSummary,
     Usage, UsageTotals,
 };
+use agenthome_core::usage_report::MachineFilter;
 
 /// 左栏项目行：按 `SessionSummary.project_name` 聚合。
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -24,7 +25,14 @@ pub trait DataSource: Send + Sync + 'static {
     fn daily(&self, days: u32) -> anyhow::Result<Vec<DailyUsage>>;
     /// 周期汇总（provider 为 None 表示全部来源）。
     fn totals(&self, period: Period, provider: Option<ProviderId>) -> anyhow::Result<UsageTotals>;
-    fn by_model(&self, period: Period) -> anyhow::Result<Vec<CostBreakdown>>;
+    /// 首页花费卡的按模型明细（CARM-301）：按单次请求计价，可按机器筛选。
+    fn cost_by_model(
+        &self,
+        period: Period,
+        machine: &MachineFilter,
+    ) -> anyhow::Result<Vec<CostBreakdown>>;
+    /// 已配对的远端机器 `(machine_id, 连接名)`，按连接名排序；没有远端时为空。
+    fn remote_machines(&self) -> anyhow::Result<Vec<(String, String)>>;
     /// 同一项目按来源多行；limit 为项目数上限。
     fn by_project(&self, period: Period, limit: usize) -> anyhow::Result<Vec<CostBreakdown>>;
     fn archive_health(&self) -> anyhow::Result<Vec<ProviderHealth>>;
@@ -68,6 +76,8 @@ pub fn resident_totals(
 
 /// mock 搜索每个会话最多扫多少条消息（第一个会话有 1 万条，全扫没必要）。
 const MOCK_SEARCH_MESSAGES: usize = 300;
+/// mock 里唯一一台远端的 machine_id。
+const MOCK_RUNNER_ID: &str = "00000000-0000-4000-8000-00000000a11e";
 /// mock 搜索每个会话最多给几条消息命中。
 const MOCK_HITS_PER_SESSION: usize = 4;
 /// mock 片段在命中词前后各保留的字数。
@@ -782,7 +792,27 @@ impl DataSource for MockDataSource {
         })
     }
 
-    fn by_model(&self, period: Period) -> anyhow::Result<Vec<CostBreakdown>> {
+    fn remote_machines(&self) -> anyhow::Result<Vec<(String, String)>> {
+        Ok(vec![(MOCK_RUNNER_ID.into(), "runner".into())])
+    }
+
+    /// 演示数据：全部机器是基准量；远端占约三成，没有 Claude 小模型；本机是余下的部分。
+    fn cost_by_model(
+        &self,
+        period: Period,
+        machine: &MachineFilter,
+    ) -> anyhow::Result<Vec<CostBreakdown>> {
+        let remote_share = |model: &str| match model {
+            "claude-opus-5-5" => 0.35,
+            "gpt-5.5" => 0.5,
+            "gemini-4-hydrogen" => 0.6,
+            _ => 0.0,
+        };
+        let share = |model: &str| match machine {
+            MachineFilter::All => 1.0,
+            MachineFilter::Local => 1.0 - remote_share(model),
+            MachineFilter::Remote(_) => remote_share(model),
+        };
         let k = self.totals(period, None)?.cost_usd / 67.4;
         let rows = [
             ("claude-opus-5-5", ProviderId::ClaudeCode, 0.55),
@@ -794,17 +824,23 @@ impl DataSource for MockDataSource {
         ];
         let mut breakdown: Vec<_> = rows
             .iter()
-            .map(|(m, p, share)| CostBreakdown {
+            .map(|(m, p, base)| (m, p, base * share(m)))
+            .filter(|(_, _, part)| *part > 0.0)
+            .map(|(m, p, part)| CostBreakdown {
                 key: (*m).to_string(),
                 provider: p.clone(),
                 usage: Usage {
-                    output_tokens: (182_000.0 * k * share) as u64,
+                    output_tokens: (182_000.0 * k * part) as u64,
                     ..Usage::default()
                 },
-                cost_usd: 67.4 * k * share,
+                cost_usd: 67.4 * k * part,
                 unpriced_tokens: 0,
             })
             .collect();
+        // 未计价的 codex-auto-review 只在本机。
+        if matches!(machine, MachineFilter::Remote(_)) {
+            return Ok(breakdown);
+        }
         let unpriced_tokens = (12_000.0 * k) as u64;
         breakdown.push(CostBreakdown {
             key: "codex-auto-review".into(),

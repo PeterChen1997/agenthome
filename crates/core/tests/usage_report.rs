@@ -532,3 +532,39 @@ fn bad_filters_fail_loudly() {
     let r = query(None, Some(&import), &MachineFilter::All, window()).unwrap();
     assert!(r.rows.iter().all(|x| x.kind == MachineKind::Remote));
 }
+
+/// 首页花费卡（CARM-301）把对账表的行换成花费汇总：每种机器条件下，首页的金额、token、未计价 token
+/// 都必须和 CLI 对账表的合计一致，否则用户在首页看到的和 `agenthome report` 对不上。
+/// 远端单看时，本机的用量一条都不能混进来。
+#[test]
+fn home_cost_summary_matches_report_for_every_machine_filter() {
+    let (mut mac, _runner, import) = fixture();
+    mac.collect(&[Req {
+        model: Some("acme-unreleased-9"),
+        vendor: None,
+        ..req("u", ProviderId::OpenCode, "", "", T0 + HOUR)
+    }]);
+    let runner_id = import.peers().unwrap()[0].0.clone();
+    for filter in [
+        MachineFilter::All,
+        MachineFilter::Local,
+        MachineFilter::Remote(runner_id),
+    ] {
+        let r = query(Some(&mac.store), Some(&import), &filter, window()).unwrap();
+        let rows: Vec<_> = r.rows.iter().map(|x| x.cost_breakdown()).collect();
+        let s = agenthome_core::cost::CostSummary::from_breakdown(&rows);
+        assert!(
+            (s.total_usd - r.totals.cost_usd.unwrap_or(0.0)).abs() < 1e-9,
+            "{filter:?}"
+        );
+        let tokens: u64 = s.vendors.iter().map(|v| v.tokens).sum();
+        assert_eq!(tokens, r.totals.total_tokens, "{filter:?}");
+        assert_eq!(s.unpriced_tokens, r.totals.unpriced_tokens, "{filter:?}");
+        let unpriced_model = s.models.iter().any(|m| m.model == "acme-unreleased-9");
+        assert_eq!(
+            unpriced_model,
+            !matches!(filter, MachineFilter::Remote(_)),
+            "未计价模型只属于本机：{filter:?}"
+        );
+    }
+}

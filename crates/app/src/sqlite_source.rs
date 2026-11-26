@@ -1,15 +1,19 @@
 //! 基于 `agenthome_core::Store` 的数据源。`rusqlite::Connection` 只 `Send` 不 `Sync`，
 //! 用 `Mutex` 包一层满足 `DataSource: Send + Sync`；查询都在后台线程发生，UI 线程不阻塞。
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
+use agenthome_core::device::DeviceIdentity;
 use agenthome_core::model::{
     CostBreakdown, DailyUsage, Message, Period, ProviderActivity, ProviderHealth, ProviderId,
     QuotaSnapshot, SearchHit, SessionQuery, SessionSummary, UsageTotals,
 };
 use agenthome_core::providers::registry;
-use agenthome_core::{SourceProvider, Store, claude_statusline, codex_rollout_quota};
+use agenthome_core::usage_import::ImportStore;
+use agenthome_core::usage_report::{self, MachineFilter, Window};
+use agenthome_core::usage_store::UsageStore;
+use agenthome_core::{SourceProvider, Store, claude_statusline, codex_rollout_quota, paths};
 use anyhow::{Context as _, anyhow};
 
 use crate::data::{DataSource, ProjectRow};
@@ -18,6 +22,9 @@ pub struct SqliteDataSource {
     store: Mutex<Store>,
     /// 来源注册表里的全部来源（活动探测用）。
     providers: Vec<Box<dyn SourceProvider + Send + Sync>>,
+    /// 用量库所在的数据目录（`~/AgentHome`）。只在打开默认索引库时有：`--db` 指定的测试库
+    /// 不碰真实用量库（和 `sync.rs` 里是否启动用量同步的判断一致），花费卡退回读索引。
+    usage_data_dir: Option<PathBuf>,
 }
 
 impl SqliteDataSource {
@@ -27,6 +34,7 @@ impl SqliteDataSource {
         Ok(Self {
             store: Mutex::new(store),
             providers: registry::instantiate_all(),
+            usage_data_dir: (path == paths::default_index_db()).then(paths::default_data_dir),
         })
     }
 
@@ -36,6 +44,26 @@ impl SqliteDataSource {
             .lock()
             .map_err(|_| anyhow!(t!("sync.index_lock_poisoned").to_string()))?;
         f(&guard)
+    }
+
+    /// 只读打开本机用量库与远端导入库：库不存在时不新建（还没采集过、还没配对过）。
+    fn usage_stores(
+        data: &Path,
+    ) -> anyhow::Result<Option<(Option<UsageStore>, Option<ImportStore>)>> {
+        let Some(identity) = DeviceIdentity::load(&data.join("device.json"))? else {
+            return Ok(None);
+        };
+        let local_db = data.join("usage").join("usage.db");
+        let remote_db = data.join("remote").join("usage.db");
+        let local = local_db
+            .exists()
+            .then(|| UsageStore::open(&local_db, &identity))
+            .transpose()?;
+        let remote = remote_db
+            .exists()
+            .then(|| ImportStore::open(&remote_db, &identity))
+            .transpose()?;
+        Ok(Some((local, remote)))
     }
 }
 
@@ -74,8 +102,39 @@ impl DataSource for SqliteDataSource {
         self.with_store(|store| store.stats_totals(period, provider.as_ref()))
     }
 
-    fn by_model(&self, period: Period) -> anyhow::Result<Vec<CostBreakdown>> {
-        self.with_store(|store| store.stats_by_model(period))
+    /// 读采集用量库（CARM-298 的按机器统计），和 CLI `agenthome report` 同一口径。
+    /// 本机还没有用量库（首次采集未完成）时本机部分为空，不报错。
+    fn cost_by_model(
+        &self,
+        period: Period,
+        machine: &MachineFilter,
+    ) -> anyhow::Result<Vec<CostBreakdown>> {
+        let Some(data) = &self.usage_data_dir else {
+            return self.with_store(|store| store.stats_by_model(period));
+        };
+        let Some((local, remote)) = Self::usage_stores(data)? else {
+            return Ok(Vec::new());
+        };
+        if local.is_none() && *machine == MachineFilter::Local {
+            return Ok(Vec::new());
+        }
+        let window = Window::new(period.since_ms().unwrap_or(0), i64::MAX)?;
+        let report = usage_report::query(local.as_ref(), remote.as_ref(), machine, window)?;
+        Ok(report
+            .rows
+            .iter()
+            .map(usage_report::ReportRow::cost_breakdown)
+            .collect())
+    }
+
+    fn remote_machines(&self) -> anyhow::Result<Vec<(String, String)>> {
+        let Some(data) = &self.usage_data_dir else {
+            return Ok(Vec::new());
+        };
+        match Self::usage_stores(data)? {
+            Some((_, Some(remote))) => remote.peers(),
+            _ => Ok(Vec::new()),
+        }
     }
 
     fn by_project(&self, period: Period, limit: usize) -> anyhow::Result<Vec<CostBreakdown>> {
