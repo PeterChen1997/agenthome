@@ -172,7 +172,7 @@ impl UsageRecord {
 
 /// 模型 / 供应商名：非空、不超长、只含 ASCII 字母数字和 `. _ - : / @ +`，
 /// 不能以 `/` 开头。挡住正文、路径这类不该出现在这里的内容。
-fn is_name(s: &str) -> bool {
+pub(crate) fn is_name(s: &str) -> bool {
     !s.is_empty()
         && s.len() <= MAX_NAME_LEN
         && !s.starts_with('/')

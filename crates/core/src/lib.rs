@@ -29,6 +29,7 @@ pub mod signals;
 pub mod statusline_setup;
 pub mod store;
 pub mod update;
+pub mod usage_projection;
 pub mod usage_v1;
 pub mod watch;
 

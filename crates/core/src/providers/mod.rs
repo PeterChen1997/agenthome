@@ -24,6 +24,36 @@ pub struct Parsed {
     pub ignored_records: BTreeMap<String, usize>,
 }
 
+/// 一次计费请求的用量（远程用量投影用）：只有依据、时间、模型和 token，不带正文。
+#[derive(Clone, Debug, PartialEq)]
+pub struct UsageEvent {
+    pub basis: UsageBasis,
+    /// 与本地统计同口径：用量所在消息的时间（UTC 毫秒）。
+    pub ts_ms: i64,
+    pub model: Option<String>,
+    /// 解析器归一后的用量：`input_tokens` 是新鲜输入（`input_includes_cache = false`）。
+    pub usage: crate::model::Usage,
+}
+
+/// 事件键的依据，见 `usage_v1::EventBasis`。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum UsageBasis {
+    /// 来源自带的请求标识（Claude `message.id`、Codex `response_id`）。
+    Request(String),
+    /// 没有请求标识时：本会话内第几条用量（从 0 起，按原件顺序）。改名、压缩、重读都不变。
+    Ordinal(u64),
+}
+
+/// 一个转录文件的用量投影。
+#[derive(Debug)]
+pub struct FileUsage {
+    /// 会话原生 id（不含主机名），`UsageBasis::Ordinal` 用它区分会话。
+    pub native_session_id: String,
+    pub events: Vec<UsageEvent>,
+    /// 解析警告，调用方要计数或展示，不能丢。
+    pub warnings: Vec<String>,
+}
+
 /// 发现结果。
 #[derive(Debug, Default)]
 pub struct Discovery {
@@ -43,6 +73,12 @@ pub trait SourceProvider {
     fn root(&self) -> &Path;
     fn discover(&self) -> Discovery;
     fn parse_file(&self, path: &Path) -> Result<Parsed>;
+
+    /// 只产出用量的路径（远程用量采集用）：复用 `parse_file` 的归一与文件内去重，
+    /// 每次计费请求一条。`None` 表示该来源还没接入。
+    fn usage_events(&self, _path: &Path) -> Result<Option<FileUsage>> {
+        Ok(None)
+    }
 
     /// 能按行续读的来源返回一个「什么都还没喂」的解析器，`ingest` 用它按字节偏移增量入库；
     /// `None` 表示只能整文件解析（`parse_file`）。
