@@ -21,7 +21,7 @@
 //! 两种数据都记为 `ProviderId::GeminiCli`（栖息地里同一位住户），用 `entrypoint` 区分：`cli` / `antigravity`。
 
 use crate::model::{ContentBlock, Message, ProviderId, Role, Session, SessionKind, Usage};
-use crate::providers::{Discovery, Parsed, SourceProvider};
+use crate::providers::{Discovery, FileUsage, Parsed, SourceProvider, UsageBasis, UsageEvent};
 use anyhow::{Context, Result};
 use serde_json::{Map, Value};
 use std::collections::{BTreeMap, HashMap};
@@ -101,6 +101,22 @@ impl GeminiProvider {
         } else {
             self.parse_cli(path)
         }
+    }
+
+    /// 只产出用量：每条带 `tokens` 的 gemini 消息是一次请求，依据是消息 `id`（`.jsonl` 里同 id
+    /// 重写已在回放时并成一条）；没有 id 的旧记录按序号。token 口径与入库相同（`tokens_to_usage`）。
+    /// Antigravity 桌面版的 `.pb` 解不开，没有用量可投影：返回空并记一条警告，不静默。
+    pub fn usage_events(&self, path: &Path) -> Result<FileUsage> {
+        let parsed = self.parse_file(path)?;
+        let mut warnings = parsed.warnings;
+        if path.extension().is_some_and(|x| x == "pb") {
+            warnings.push("Antigravity 桌面版对话无法解码，没有用量".to_string());
+        }
+        Ok(FileUsage {
+            native_session_id: parsed.session.native_id,
+            events: assistant_usage_events(parsed.messages),
+            warnings,
+        })
     }
 
     fn make_id(&self, native: &str) -> String {
@@ -364,6 +380,9 @@ impl SourceProvider for GeminiProvider {
     fn parse_file(&self, path: &Path) -> Result<Parsed> {
         GeminiProvider::parse_file(self, path)
     }
+    fn usage_events(&self, path: &Path) -> Result<Option<FileUsage>> {
+        GeminiProvider::usage_events(self, path).map(Some)
+    }
 }
 
 fn is_chat_file(path: &Path) -> bool {
@@ -594,6 +613,32 @@ fn map_record(
                 .or_default() += 1;
         }
     }
+}
+
+/// 解析结果里带用量的 assistant 消息 → 用量事件（Gemini CLI 与 agy 共用）：有原生 id 用 id，
+/// 没有的按文件内第几条无 id 用量编号。时间、模型、token 原样沿用消息，与入库统计同口径。
+pub(crate) fn assistant_usage_events(messages: Vec<Message>) -> Vec<UsageEvent> {
+    let mut ordinal = 0;
+    messages
+        .into_iter()
+        .filter(|m| m.role == Role::Assistant)
+        .filter_map(|m| {
+            let usage = m.usage?;
+            let basis = match m.native_id {
+                Some(id) => UsageBasis::Request(id),
+                None => {
+                    ordinal += 1;
+                    UsageBasis::Ordinal(ordinal - 1)
+                }
+            };
+            Some(UsageEvent {
+                basis,
+                ts_ms: m.timestamp_ms,
+                model: m.model,
+                usage,
+            })
+        })
+        .collect()
 }
 
 /// `tokens` → 「新鲜输入」口径（见模块注释）。

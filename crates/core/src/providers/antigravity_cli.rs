@@ -20,8 +20,8 @@
 //! SQLite 原件不进 raw 层（每次写入都会改动整页，按版本归档只会无限增长）。
 
 use crate::model::{ContentBlock, Message, ProviderId, Role, Session, SessionKind, Usage};
-use crate::providers::gemini::{one_line, read_summary};
-use crate::providers::{Discovery, Parsed, SourceProvider, proto};
+use crate::providers::gemini::{assistant_usage_events, one_line, read_summary};
+use crate::providers::{Discovery, FileUsage, Parsed, SourceProvider, proto};
 use anyhow::{Context, Result};
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
@@ -58,6 +58,18 @@ impl AntigravityCliProvider {
     fn is_conversation(&self, path: &Path) -> bool {
         path.parent() == Some(self.conversations_dir().as_path())
             && path.extension().is_some_and(|x| x == "db")
+    }
+
+    /// 只产出用量：每个带用量（metadata 9）的模型回复步骤是一次请求，依据是回复 id（`9.11`），
+    /// 模型取 `gen_metadata` 里该回复实际服务的模型（如 `gemini-4-hydrogen`，按名字归 Google）。
+    /// 与入库共用 `parse`，token 口径一致。
+    pub fn usage_events(&self, path: &Path) -> Result<FileUsage> {
+        let parsed = self.parse(path)?;
+        Ok(FileUsage {
+            native_session_id: parsed.session.native_id,
+            events: assistant_usage_events(parsed.messages),
+            warnings: parsed.warnings,
+        })
     }
 
     fn parse(&self, path: &Path) -> Result<Parsed> {
@@ -316,6 +328,10 @@ impl SourceProvider for AntigravityCliProvider {
         self.parse(path)
     }
 
+    fn usage_events(&self, path: &Path) -> Result<Option<FileUsage>> {
+        AntigravityCliProvider::usage_events(self, path).map(Some)
+    }
+
     fn accepts(&self, path: &Path) -> Option<bool> {
         Some(self.is_conversation(path) && path.is_file())
     }
@@ -501,6 +517,97 @@ mod tests {
                 if tool_call_id == "call_b" && output == "Command exited with code 0."
         ));
         assert_eq!(parsed.messages[4].text(), "一共 8 个水果。");
+    }
+
+    /// 远程用量投影（CARM-291）：每次回复一条，token 与本机入库逐项一致；来源标 agy，
+    /// 厂商按 `gen_metadata` 里实际服务的模型归（Hydrogen 归 Google）；查不到模型的回复仍计入，厂商留空。
+    #[test]
+    fn 用量投影与本地一致_按实际模型归厂商() {
+        use crate::usage_projection::{dedup, records};
+        let dir = tempfile::tempdir().unwrap();
+        let path = fixture(dir.path());
+        // r1 实际由 Hydrogen（带推理档位后缀）服务；r2 的模型行缺失。
+        let db = rusqlite::Connection::open(&path).unwrap();
+        let hydrogen = e::msg(
+            1,
+            &[
+                e::msg(4, &[e::bytes(11, b"r1")]),
+                e::bytes(19, b"gemini-4-hydrogen-xhigh"),
+            ],
+        );
+        db.execute(
+            "UPDATE gen_metadata SET data = ?1 WHERE idx = 0",
+            [hydrogen],
+        )
+        .unwrap();
+        db.execute("DELETE FROM gen_metadata WHERE idx = 1", [])
+            .unwrap();
+        drop(db);
+
+        let provider = AntigravityCliProvider::new(dir.path().to_path_buf());
+        let id =
+            crate::device::DeviceIdentity::load_or_create(&dir.path().join("device.json"), "box")
+                .unwrap();
+        let file = provider.usage_events(&path).unwrap();
+        let (recs, warnings) = records(&id, &ProviderId::AntigravityCli, &file);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let recs = dedup(recs);
+        assert_eq!(recs.len(), 2);
+        for r in &recs {
+            r.validate().unwrap();
+            assert_eq!(
+                r.source, "antigravity-cli",
+                "来源标签区分 agy 与 Gemini CLI"
+            );
+        }
+        let (r1, r2) = (&recs[0], &recs[1]);
+        assert_eq!(r1.model.as_deref(), Some("gemini-4-hydrogen-xhigh"));
+        assert_eq!(r1.vendor.as_deref(), Some("google"));
+        // 真实对话 83dc4381 的数字：新鲜输入不含缓存读，思考是输出的子项。
+        assert_eq!(
+            (
+                r1.input_tokens,
+                r1.cache_read_tokens,
+                r1.output_tokens,
+                r1.reasoning_tokens
+            ),
+            (9326, 0, 239 + 108, 108)
+        );
+        assert_eq!(
+            (
+                r2.input_tokens,
+                r2.cache_read_tokens,
+                r2.output_tokens,
+                r2.reasoning_tokens
+            ),
+            (2488, 7272, 159 + 17, 17)
+        );
+        assert_eq!(r2.model, None);
+        assert_eq!(
+            r2.vendor, None,
+            "agy 同时跑 Gemini / Claude / GPT，模型不明不猜厂商"
+        );
+        assert_eq!(r1.ts_ms, 1_794_316_393_500);
+
+        // 同一个回复 id 换成 Gemini CLI 来源，键不同：两个来源不会互相覆盖。
+        let as_gemini = records(&id, &ProviderId::GeminiCli, &file).0;
+        assert_ne!(as_gemini[0].event_key, r1.event_key);
+
+        // 与本机入库统计逐项对比。
+        let mut store = crate::store::Store::in_memory().unwrap();
+        let list: [&dyn SourceProvider; 1] = [&provider];
+        let report = crate::ingest_all(&mut store, &list, None, &mut |_| {});
+        assert!(report.failed.is_empty(), "{:?}", report.failed);
+        let local = store
+            .stats_totals(crate::model::Period::All, Some(&ProviderId::AntigravityCli))
+            .unwrap()
+            .usage;
+        let sum = |f: fn(&crate::usage_v1::UsageRecord) -> u64| recs.iter().map(f).sum::<u64>();
+        assert_eq!(sum(|r| u64::from(r.requests)), local.requests);
+        assert_eq!(sum(|r| r.input_tokens), local.input_tokens);
+        assert_eq!(sum(|r| r.cache_read_tokens), local.cache_read_tokens);
+        assert_eq!(sum(|r| r.output_tokens), local.output_tokens);
+        assert_eq!(sum(|r| r.reasoning_tokens), local.reasoning_tokens);
     }
 
     #[test]
