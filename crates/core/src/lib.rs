@@ -42,6 +42,7 @@ pub use providers::antigravity_cli::AntigravityCliProvider;
 pub use providers::claude_code::ClaudeCodeProvider;
 pub use providers::codex::CodexProvider;
 pub use providers::gemini::GeminiProvider;
+pub use providers::opencode::OpenCodeProvider;
 pub use providers::{Discovery, Parsed, SourceProvider};
 pub use raw::{RawArchive, RawOutcome, RawReport, RawStats};
 pub use signals::{claude_statusline, codex_rollout_quota};

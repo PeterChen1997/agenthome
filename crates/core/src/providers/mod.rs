@@ -4,6 +4,7 @@ pub mod antigravity_cli;
 pub mod claude_code;
 pub mod codex;
 pub mod gemini;
+pub mod opencode;
 pub(crate) mod proto;
 pub mod registry;
 

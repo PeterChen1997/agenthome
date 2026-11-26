@@ -65,6 +65,9 @@ CREATE TABLE IF NOT EXISTS sources (
 
 /// 一个来源文件读到的位置。来源解析器整文件出用量，所以进度就是「上次读时的大小和修改时间」，
 /// 两者都没变就跳过。
+///
+/// SQLite 来源（OpenCode）新请求先写进旁边的 `-wal`，主文件要等合并才变；所以有 `-wal` 时把它也算进去
+/// （大小相加、修改时间取较新），否则 WAL 里的新用量会一直被当成「没变」跳过。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SourceProgress {
     pub size: u64,
@@ -73,7 +76,18 @@ pub struct SourceProgress {
 
 impl SourceProgress {
     pub fn of(path: &Path) -> Result<Self> {
-        let meta = std::fs::metadata(path)?;
+        let mut progress = Self::of_one(&std::fs::metadata(path)?)?;
+        let mut wal = path.as_os_str().to_owned();
+        wal.push("-wal");
+        if let Ok(meta) = std::fs::metadata(&wal) {
+            let w = Self::of_one(&meta)?;
+            progress.size += w.size;
+            progress.mtime_ms = progress.mtime_ms.max(w.mtime_ms);
+        }
+        Ok(progress)
+    }
+
+    fn of_one(meta: &std::fs::Metadata) -> Result<Self> {
         let mtime_ms = meta
             .modified()?
             .duration_since(UNIX_EPOCH)

@@ -77,6 +77,21 @@ pub fn gemini_dir() -> PathBuf {
         .join(".gemini")
 }
 
+/// `$XDG_DATA_HOME/opencode`，没设时 `~/.local/share/opencode`：OpenCode 的数据目录。
+/// OpenCode 在 macOS 上也按 XDG 走，不用 `~/Library`；XDG 规定相对路径无效，忽略。
+pub fn opencode_dir() -> PathBuf {
+    std::env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+        .unwrap_or_else(|| {
+            dirs::home_dir()
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join(".local")
+                .join("share")
+        })
+        .join("opencode")
+}
+
 /// `~/AgentHome/signals`：statusline 包装脚本等外部信号落盘目录。
 pub fn signals_dir() -> PathBuf {
     default_data_dir().join("signals")
