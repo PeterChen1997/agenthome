@@ -38,7 +38,7 @@ AgentHome 常驻 macOS 菜单栏。点像素小屋图标，不用打开主窗口
 ## 功能
 
 - **比 agent 清理活得久的归档。** 每份转录入库前先逐字节拷贝（zstd 压缩）到 `~/AgentHome/raw/`，agent 删掉自己的文件后，你的副本还在。
-- **三个来源。** Claude Code、Codex（含已归档会话）、Gemini CLI。Antigravity 只索引标题、时间和工作区，消息正文是加密的，读不了。
+- **会话来源**包括 Claude Code、Codex（含归档会话）、Gemini CLI 和 Antigravity CLI（`agy`）。Antigravity 桌面版只索引标题、时间和工作区。
 - **实时同步。** 文件系统事件触发按字节偏移的增量入库，大会话追加一行约 0.5 毫秒；每小时一次全量扫描兜底。
 - **仪表盘。** 各 agent 额度、累计 token（输入 / 输出 / 缓存读 / 缓存写）、估算成本、30 / 90 天趋势、今天、按模型与按项目、到期与重置、归档健康。
 - **归档浏览。** 按日分组、子代理折叠进父会话、会话级成本；会话详情按轮次展示，工具调用是可折叠的 Trace 行，支持 Markdown 与代码高亮。
@@ -74,11 +74,12 @@ CLI 随应用附带，位于 `AgentHome.app/Contents/MacOS/agenthome`，可以�
 - **对 agent 只读。** AgentHome 读取 agent 的会话目录，绝不修改、移动或软链其中任何文件。只拷贝，不链接。
 - **不读凭据。** 不读 API key、OAuth token、凭据文件或 macOS 钥匙串。
 - **不调私有端点。** 不调用 Claude OAuth usage 端点，也不调用 Codex 的私有用量端点。
-- **匿名统计与崩溃报告，默认开，可以关。** AgentHome 会把匿名使用统计（启动、打开了哪些页面、更新结果）发到自建的 [Umami](https://umami.is)，把崩溃和内部错误发到 [Sentry](https://sentry.io)（路径里的主目录会去掉）。不发送会话内容、文件路径、项目名与 token 明细，也没有云同步，会话数据不会离开本机。在「设置 → 合规与定价 → 发送匿名使用统计与崩溃报告」里关闭。自己从源码构建、没注入 Sentry DSN 时不会发崩溃报告。另外检查更新会访问 GitHub。
+- **匿名统计与崩溃报告，默认开，可以关。** AgentHome 会把匿名使用统计（启动、打开了哪些页面、更新结果）发到自建的 [Umami](https://umami.is)，把崩溃和内部错误发到 [Sentry](https://sentry.io)（路径里的主目录会去掉）。不发送会话内容、文件路径、项目名与 token 明细。会话档案留在原设备。在「设置 → 合规与定价 → 发送匿名使用统计与崩溃报告」里关闭。自己从源码构建、没注入 Sentry DSN 时不会发崩溃报告。另外检查更新会访问 GitHub。
 - **额度怎么读。**
   - Claude：每 15 分钟在后台伪终端运行一次官方 `claude` CLI 的 `/usage`，读取它打印的文字。不发对话、不耗 token。需要本机装有 `claude` CLI 并已登录。
   - Codex：读 Codex 自己写进 rollout 文件的 `rate_limits` 快照。
-  - Gemini：没有本地额度信号，只统计会话与 token。
+  - Gemini：安装并登录 Antigravity CLI 后，通过官方 `agy -p /usage` 每 15 分钟读取一次额度。未安装时只统计会话和 token。
+- **可选远程用量采集。** 配对后，Mac 经 SSH 从自行管理的采集端拉取逐请求用量，包括模型、时间和 token 数。会话正文和路径留在采集端。见 [Linux 采集端安装](docs/16-Linux采集端安装.md)。
 
 归档里是你完整的对话历史，可能包含你曾粘贴给 agent 的密钥。请像对待其他敏感目录一样保护 `~/AgentHome/`。详情与漏洞报告方式见 [SECURITY.md](SECURITY.md)。
 
@@ -101,7 +102,7 @@ AgentHome 写入的所有内容都在 `~/AgentHome/` 下：
 | 路径 | 内容 |
 |---|---|
 | `raw/<provider>/<machine>/...` | 转录的逐字节副本，zstd 压缩，附 `manifest.json`（来源路径、sha256）。只增不改：增长的文件按字节段追加，被改写的文件另存新版本。Antigravity 的加密 `.pb` 不归档。 |
-| `index/agenthome.db` | SQLite 索引，含 FTS5 trigram 全文索引，可从来源重建。 |
+| `index/agenthome.db` | SQLite 索引，含 FTS5 trigram 全文索引，重建前先备份。 |
 | `signals/` | 额度快照（如 `claude-usage.json`）。 |
 | `config/app.json` | 应用偏好（外观、界面语言）。 |
 

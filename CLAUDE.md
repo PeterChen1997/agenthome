@@ -8,7 +8,7 @@
 
 ## 现状
 
-- **版本**：最新 **v0.2.6**（2026-11-11，已公证，`/Applications` 已装 0.2.6），公开仓库 `PeterChen1997/agenthome`（分支 `main`）。各版内容以 [Releases](https://github.com/PeterChen1997/agenthome/releases) 与 `git log` 为准；`CHANGELOG.md` 目前只写到 0.2.0。升级前的索引库与旧版 `.app` 备份在 `~/AgentHome/backup/`。
+- **版本**见 [GitHub Releases](https://github.com/PeterChen1997/agenthome/releases)，分支为 `main`。机器上的安装版本直接在 App 中核对。升级前的索引库与旧版 `.app` 备份在 `~/AgentHome/backup/`。
 - **菜单栏与双语**（0.2.0）：菜单栏图标 + 像素风使用概要面板（`crates/app/src/menubar.rs`；用户试过原生 NSMenu 后决定保留自绘面板，不要再改成原生菜单）；界面中英双语（rust-i18n，`crates/app/locales/*.yml` 按模块拆，设置页可切换，`--lang`）；关主窗口只隐藏、⌘Q 退出。
 - **检查更新与应用内更新**（0.2.3 / 0.2.5）：启动 8 秒后与每 24 小时查 GitHub releases/latest（系统 curl，只读版本号，README 隐私一节已写明）；弹窗「立即更新」或左栏「更新到 x.y.z」后台下载并核对 sha256、签名、bundle id 与团队、公证、版本号，通过后替换 `.app` 并重开，旧版挪到 `~/AgentHome/backup/AgentHome-<旧版本>.app`（`crates/core/src/update.rs`、`crates/app/src/updater.rs`）。0.2.5 → 0.2.6 是第一次真实的应用内更新，已成功。调试用 `AGENTHOME_PRETEND_VERSION`、`AGENTHOME_UPDATE_TARGET`、`AGENTHOME_UPDATE_NO_RELAUNCH`。
 - **匿名统计与崩溃上报**（2026-11-15，CARM-47）：`crates/app/src/telemetry.rs`。Sentry（组织 `own-tay` / 项目 `agenthome`，release `agenthome@<版本>`）收 panic 与 `report_error` 点名的错误（同步引擎开库 / 开 raw / 监听失败、应用内更新失败），`before_send` 去掉主目录、主机名；Umami（website `AgentHome`）收 `app_launch`、页面浏览（`/dashboard` `/archive` `/settings`）、`search_open_result`、`update_install`（result=ok/failed），网络走系统 curl。设置页「合规与定价」有开关（默认开，`app.json` 的 `telemetry`），关掉立即生效。DSN 构建时由 `SENTRY_DSN_AGENTHOME` 注入（`release-macos.sh` 从 `~/.config/sentry-dsns.env` 读），仓库里没有；调试构建默认不发，`AGENTHOME_TELEMETRY_DEV=1` 才发，`AGENTHOME_TELEMETRY_TEST=1` 启动即 panic 用来核对上报与符号化（正式包也认）。`--mock` / `--capture` / `--menubar-popup` / `--db` / `AGENTHOME_TELEMETRY_TEST` 算测试运行：Sentry environment=test、Umami 不发。`report_error` 带线程堆栈；同步的单文件入库 / 归档失败每个只报一次；检查更新只报返回内容解析失败，断网、限流不报。偏好文件读不了时统计按关。发版时上传 dSYM，sentry-cli 缺失或上传失败中止发版。落地页也接了 Umami（含下载按钮点击 `download`）。
@@ -47,9 +47,9 @@
 | `docs/02-P0-验证记录.md` | P0 退出标准、真实数据暴露的问题 | 历史 |
 | `docs/03-功能清单.md` | 信息架构与全部功能分解（状态标记写于 P1 前，以 `docs/10-设计落地清单.md` 为准） | 现行 |
 | `docs/04-栖息地状态系统.md` | 住户六态状态机、触发条件、动画、素材、gpui 实现 | 现行 |
-| `docs/05-P1-开发计划.md` | P1 分块与接口约定 | 已完成，历史 |
+| `docs/archive/05-P1-开发计划.md` | P1 分块与接口约定 | 已完成，历史 |
 | `docs/06-statusline-安装.md` | 让 Claude 额度可见的 statusline 包装脚本安装（用户尚未安装） | 现行 |
-| `docs/07-P1-集成记录.md` | P1 集成结果、视觉核对、版本历史、已知偏差（已全部并入 `docs/10-设计落地清单.md`） | 历史 |
+| `docs/archive/07-P1-集成记录.md` | P1 集成结果、视觉核对、版本历史、已知偏差（已全部并入 `docs/10-设计落地清单.md`） | 历史 |
 | `docs/08-构建与发布流程.md` | 发版全流程 + 踩坑（工具链、签名、公证、Release、验证） | 现行 |
 | `docs/09-开发踩坑记录.md` | GPUI、数据解析、额度、生图素材、验证工具的坑 | 现行，持续追加 |
 | `docs/10-设计落地清单.md` | **设计稿 + 规格逐项对照代码的验收清单**：271 项的状态、证据（path:line）、缺口，以及按依赖排好的 10 个收尾批次 | 现行，开发主清单 |
@@ -100,7 +100,7 @@ crates/app    agenthome-app（gpui-kit =0.9.0）
 script/       bundle-dev.sh（开发用 .app）、release-macos.sh（发版）、agenthome-statusline.sh
 ```
 
-数据位置：索引库 `~/AgentHome/index/agenthome.db`（可随时删了重建）；本机设备身份 `~/AgentHome/device.json`（安装 UUID、固定的会话机器标签、事件键密钥，0600，**不能删**，删了本机在远程汇总里会变成新机器；`crates/core/src/device.rs`，远程用量协议 v1 在 `usage_v1.rs`）；额度信号 `~/AgentHome/signals/`（`claude-statusline.json`、`claude-usage.json`）；app 偏好 `~/AgentHome/config/app.json`；statusline 包装脚本装到 `~/AgentHome/bin/`。
+数据位置：索引库 `~/AgentHome/index/agenthome.db`（先备份。当前重建只读仍在来源目录的原件，详见上面的 284 个会话记录）；本机设备身份 `~/AgentHome/device.json`（安装 UUID、固定的会话机器标签、事件键密钥，0600，**不能删**，删了本机在远程汇总里会变成新机器；`crates/core/src/device.rs`，远程用量协议 v1 在 `usage_v1.rs`）；额度信号 `~/AgentHome/signals/`（`claude-statusline.json`、`claude-usage.json`）；app 偏好 `~/AgentHome/config/app.json`；statusline 包装脚本装到 `~/AgentHome/bin/`。
 
 ## 常用命令
 
@@ -123,7 +123,7 @@ cargo fmt --all --check && cargo clippy --workspace --all-targets && cargo test 
 ## 已拍板的决策（不要重新讨论）
 
 1. 产品名 AgentHome，归档目录 `~/AgentHome`。
-2. 存储：**拷贝，绝不软链、绝不动 agent 原目录**；仓库分 raw（原件，不可变）/ index（SQLite，可重建）/ user（星标笔记）三层。
+2. 存储：**拷贝，绝不软链、绝不动 agent 原目录**；仓库分 raw（原件，不可变）/ index（SQLite，重建前先备份）/ user（星标笔记）三层。
 3. 额度只用合规来源：Claude 走官方 `claude` CLI 的 `/usage`（后台伪终端读屏，2026-11-08 用户选定）与 statusline，Codex 走 rollout 快照，Antigravity 走官方 `agy -p /usage --output-format json`（后台每 15 分钟，不建对话、不耗 token，2026-11-10）；**不做** Claude OAuth usage 端点、Codex wham 端点，AgentHome 不读取任何凭据。例外（2026-11-10 用户决定）：ChatGPT 重置额度本机没有，由用户在设置页**手动点「查询」**、第一次弹授权说明同意后，启动官方 `codex app-server` 发只读 `account/rateLimits/read`，由 codex 自己鉴权；仍不读凭据、不自动轮询、绝不调兑换（consume）。
 4. core 自带 CLI；TUI 以后再说。
 5. 首次启动默认归档模式。
