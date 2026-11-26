@@ -24,6 +24,12 @@ pub fn default_usage_db() -> PathBuf {
     default_data_dir().join("usage").join("usage.db")
 }
 
+/// `~/AgentHome/remote/usage.db`：Mac 端远程用量导入库（`usage_import.rs`）。和索引库分开，
+/// 删索引库重建不影响它。
+pub fn default_remote_usage_db() -> PathBuf {
+    default_data_dir().join("remote").join("usage.db")
+}
+
 /// `~/AgentHome/raw`：raw 层原件归档。
 pub fn raw_dir() -> PathBuf {
     default_data_dir().join("raw")

@@ -16,6 +16,7 @@
 //! - `device`：本机设备身份（安装 UUID、固定的会话标签、事件键密钥）。
 //! - `usage_v1`：远程用量同步 v1 的记录、分页与事件键。
 //! - `usage_store`：采集端本地用量库（用量与读取进度同事务、单调 `seq`、修订与撤回）。
+//! - `usage_import`：Mac 端远程用量导入库（按 `(machine_id, source, event_key)` 取最新修订，用量与游标同事务）。
 
 pub mod cost;
 pub mod device;
@@ -30,6 +31,7 @@ pub mod signals;
 pub mod statusline_setup;
 pub mod store;
 pub mod update;
+pub mod usage_import;
 pub mod usage_projection;
 pub mod usage_store;
 pub mod usage_v1;
