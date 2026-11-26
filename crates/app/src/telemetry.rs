@@ -58,6 +58,11 @@ pub fn init(test_run: bool) -> Option<sentry::ClientInitGuard> {
     set_enabled(config::telemetry_enabled());
     TEST_RUN.store(test_run, Ordering::Relaxed);
     let dsn = option_env!("SENTRY_DSN_AGENTHOME").filter(|d| !d.is_empty())?;
+    Some(sentry::init((dsn, client_options(test_run))))
+}
+
+/// 上报用的客户端配置（不含 DSN）：release、environment、去个人信息。
+fn client_options(test_run: bool) -> sentry::ClientOptions {
     let mut options = sentry::ClientOptions::default();
     options.release = Some(format!("agenthome@{VERSION}").into());
     options.environment = Some(environment(cfg!(debug_assertions), test_run).into());
@@ -67,7 +72,7 @@ pub fn init(test_run: bool) -> Option<sentry::ClientInitGuard> {
     // 不用 contexts 默认的主机名（常带真名）。
     options.server_name = Some("agenthome".into());
     options.before_send = Some(Arc::new(|event| active().then(|| scrub(event))));
-    Some(sentry::init((dsn, options)))
+    options
 }
 
 /// 上报一个被处理掉的错误：`context` 是固定的英文标题（决定分组），`error` 是详情（会去掉主目录）。
@@ -76,6 +81,23 @@ pub fn report_error(context: &'static str, error: &str) {
         |scope| scope.set_extra("error", Value::String(error.to_string())),
         || sentry::capture_message(context, sentry::Level::Error),
     );
+}
+
+/// 用量同步失败（CARM-299）：本机采集（`collect`）、远端拉取（`sync`）、写导入库（`import`）。
+/// 只发阶段和类别（`RemoteErrorKind` / `FailureKind` 的字符串），不发远端名、地址、路径、金额和载荷；
+/// 版本、环境由 `init` 的 release / environment 带上。标题含类别，Sentry 按类别分组。
+pub fn report_usage_failure(stage: &'static str, kind: &'static str) {
+    sentry::with_scope(
+        |scope| {
+            scope.set_tag("remote.stage", stage);
+            scope.set_tag("remote.kind", kind);
+        },
+        || sentry::capture_message(&usage_failure_title(stage, kind), sentry::Level::Error),
+    );
+}
+
+fn usage_failure_title(stage: &str, kind: &str) -> String {
+    format!("Usage sync failed: {stage}/{kind}")
 }
 
 /// 首页花费里出现了定价表没有的模型：每个模型名每次运行只报一次。
@@ -284,6 +306,39 @@ mod tests {
             ),
             "dir <project>/s.jsonl"
         );
+    }
+
+    /// 远端拉取失败的上报只能有阶段和类别：错误详情里有对方地址、远端名（常是主机名）、路径，
+    /// 一样都不能发出去；版本和环境要带上，才能按版本看哪类失败多了。
+    #[test]
+    fn remote_failure_event_carries_only_category_version_and_env() {
+        let mut options = client_options(false);
+        // 调试构建里 `active()` 为假会丢弃事件；这里只验证事件本身长什么样。
+        options.before_send = Some(Arc::new(|event| Some(scrub(event))));
+        let events = sentry::test::with_captured_events_options(
+            || report_usage_failure("sync", "unreachable"),
+            options,
+        );
+        assert_eq!(events.len(), 1);
+        let event = &events[0];
+        let json = serde_json::to_string_pretty(event).unwrap();
+        println!("{json}");
+        assert_eq!(
+            event.message.as_deref(),
+            Some("Usage sync failed: sync/unreachable")
+        );
+        assert_eq!(event.tags["remote.stage"], "sync");
+        assert_eq!(event.tags["remote.kind"], "unreachable");
+        assert!(event.extra.is_empty(), "不带错误详情：{:?}", event.extra);
+        assert_eq!(
+            event.release.as_deref(),
+            Some(format!("agenthome@{VERSION}").as_str())
+        );
+        assert_eq!(event.environment.as_deref(), Some("development"));
+        assert_eq!(event.server_name.as_deref(), Some("agenthome"));
+        assert!(event.user.is_none());
+        let home = dirs::home_dir().unwrap().display().to_string();
+        assert!(!json.contains(&home));
     }
 
     /// 测试运行（截图、演示数据、自检 panic）的上报不能混进 production 的崩溃率与报错列表。

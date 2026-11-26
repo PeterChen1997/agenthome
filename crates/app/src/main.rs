@@ -23,6 +23,7 @@ mod sqlite_source;
 mod sync;
 mod telemetry;
 mod updater;
+mod usage_sync;
 mod workspace;
 
 use std::path::PathBuf;

@@ -596,6 +596,9 @@ impl Workspace {
             )
         } else if let Some(error) = sync.error.as_ref().or(live.error.as_ref()) {
             (cx.theme().danger, error.clone())
+        } else if let Some(remote) = sync.remote_attention() {
+            // 远端拉取失败或有积压（CARM-299）：本机同步正常时才轮到它。
+            (cx.theme().warning, remote.status_line(now))
         } else if self.sync_engine.is_some() {
             match sync.last_sync_ms {
                 Some(at) => (cx.theme().success, {
@@ -631,6 +634,17 @@ impl Workspace {
                 ),
             }
         };
+        // 悬停看本机用量采集与每台远端的上次成功时间、积压。
+        // 状态行显示的是远端时，下面的远端明细已含这一行（带失败类别），不再重复。
+        let tooltip = (sync.remote_attention().is_none() || sync.scanning.is_some())
+            .then(|| text.clone())
+            .into_iter()
+            .chain(
+                (sync.local_usage != Default::default()).then(|| sync.local_usage.status_line(now)),
+            )
+            .chain(sync.remotes.iter().map(|r| r.detail_line(now)))
+            .collect::<Vec<_>>()
+            .join("\n");
         let update_available = self.update.read(cx).available().cloned();
         let update_phase = self.update.read(cx).install.clone();
         // 底部品牌行（同 Notion 左下角的工作区行）：图标 + 名字，名字下一行是同步状态。
@@ -701,7 +715,7 @@ impl Workspace {
                     ),
             )
             .tooltip(move |window, cx| {
-                gpui_kit::component::tooltip::Tooltip::new(text.clone()).build(window, cx)
+                gpui_kit::component::tooltip::Tooltip::new(tooltip.clone()).build(window, cx)
             })
             .into_any_element()
     }

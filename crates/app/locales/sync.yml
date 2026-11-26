@@ -17,3 +17,36 @@ sync.index_open_failed:
 sync.index_lock_poisoned:
   en: Index lock is poisoned
   zh-CN: 索引库锁已中毒
+sync.remote_line:
+  en: "Remote %{name} %{tail} · %{last}"
+  zh-CN: "远端 %{name} %{tail} · %{last}"
+sync.remote_last_ok:
+  en: "pulled %{time}"
+  zh-CN: "%{time}成功"
+sync.remote_never:
+  en: never pulled
+  zh-CN: 从未成功
+sync.remote_failed:
+  en: pull failed
+  zh-CN: 拉取失败
+sync.remote_snapshot:
+  en: "full resync, %{count} changes to go"
+  zh-CN: "完整同步中，还差 %{count} 条"
+sync.remote_backlog:
+  en: "%{count} changes pending"
+  zh-CN: "积压 %{count} 条"
+sync.remote_caught_up:
+  en: up to date
+  zh-CN: 已是最新
+sync.local_line:
+  en: "Local usage: %{tail} · %{last}"
+  zh-CN: "本机用量：%{tail} · %{last}"
+sync.local_last_ok:
+  en: "last collected %{time}"
+  zh-CN: "上次采集 %{time}"
+sync.local_never:
+  en: not collected yet
+  zh-CN: 还没采集过
+sync.local_pending:
+  en: "%{count} files pending"
+  zh-CN: "待读 %{count} 个文件"

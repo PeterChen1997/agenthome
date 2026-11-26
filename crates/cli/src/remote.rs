@@ -2,7 +2,9 @@
 
 use agenthome_core::device::DeviceIdentity;
 use agenthome_core::paths;
+use agenthome_core::remote_pull;
 use agenthome_core::remote_ssh::{self, EXPORT_TIMEOUT, PairRequest};
+use agenthome_core::usage_import::ImportStore;
 use agenthome_core::usage_store::UsageStore;
 use anyhow::{Context, Result, bail, ensure};
 use clap::Subcommand;
@@ -72,6 +74,13 @@ pub enum RemoteAction {
     },
     /// Mac：删除一台远端的配对（专用钥匙与固定的主机密钥）
     Unpair {
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        data_dir: Option<PathBuf>,
+    },
+    /// Mac：从远端拉取用量并导入远端用量库（与 App 后台拉取同一套逻辑），拉到没有新变更为止
+    Pull {
         #[arg(long)]
         name: String,
         #[arg(long)]
@@ -216,6 +225,45 @@ pub fn run(action: RemoteAction) -> Result<()> {
             remote_ssh::load_config(&dir)?;
             std::fs::remove_dir_all(&dir)?;
             println!("已删除与 {name} 的配对；采集端那把钥匙请用 remote revoke 撤销");
+            Ok(())
+        }
+        RemoteAction::Pull { name, data_dir } => {
+            let data = data_dir.unwrap_or_else(paths::default_data_dir);
+            let local = DeviceIdentity::load(&data.join("device.json"))?
+                .context("本机还没有设备身份（先打开一次 App 或跑 scan）")?;
+            let mut store = ImportStore::open(&data.join("remote").join("usage.db"), &local)?;
+            let dir = remote_ssh::remote_dir(&data, &name)?;
+            let now = || chrono::Utc::now().timestamp_millis();
+            loop {
+                let outcome =
+                    remote_pull::pull_ssh(&data, &mut store, &local, &name, &|| false, now())
+                        .map_err(|e| anyhow::anyhow!("{e}（已提交 {} 页）", e.pages))?;
+                remote_pull::save_last_ok(&dir, now())?;
+                eprintln!(
+                    "{} 页：新增 {}，替换 {}，完整快照 {}，积压 {}",
+                    outcome.pages,
+                    outcome.inserted,
+                    outcome.replaced,
+                    outcome.snapshots,
+                    outcome.backlog
+                );
+                if !outcome.more {
+                    break;
+                }
+            }
+            let machine_id = store.peer(&name)?.context("还没有配对记录")?;
+            let t = store.totals(Some(&machine_id))?;
+            println!(
+                "{name}\tevents={}\trequests={}\tinput={}\toutput={}\tcache_read={}\tcache_write_5m={}\tcache_write_1h={}\treasoning={}",
+                t.events,
+                t.requests,
+                t.input_tokens,
+                t.output_tokens,
+                t.cache_read_tokens,
+                t.cache_write_5m_tokens,
+                t.cache_write_1h_tokens,
+                t.reasoning_tokens
+            );
             Ok(())
         }
         RemoteAction::Fetch {

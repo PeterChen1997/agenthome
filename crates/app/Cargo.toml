@@ -59,3 +59,7 @@ image = { version = "0.25", optional = true, default-features = false, features 
 
 [features]
 capture = ["dep:gpui-pre-macos", "dep:image"]
+
+[dev-dependencies]
+# 单测里截获上报事件，核对脱敏（telemetry.rs）。
+sentry = { version = "0.49", default-features = false, features = ["test"] }

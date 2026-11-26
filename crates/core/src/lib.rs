@@ -30,6 +30,7 @@ pub mod pressure;
 pub mod pricing;
 pub mod providers;
 pub mod raw;
+pub mod remote_pull;
 pub mod remote_ssh;
 pub mod signals;
 pub mod statusline_setup;

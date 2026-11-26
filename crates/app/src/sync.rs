@@ -25,7 +25,7 @@ use agenthome_core::{
 };
 use gpui_kit::{App, AsyncApp, Entity, Task};
 
-use crate::format::now_ms;
+use crate::format::{now_ms, relative_time};
 use crate::telemetry;
 
 /// 合并文件变化：首个事件后至少等这么久，期间安静了就入库。活跃会话每秒都在追加，没必要每行都入一次库。
@@ -106,6 +106,102 @@ pub struct RawSync {
     pub last_failure: Option<String>,
 }
 
+/// 一台远端的拉取状况，供左栏状态行展示。
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct RemotePull {
+    pub name: String,
+    pub running: bool,
+    /// 上次成功拉取的时刻（Unix 毫秒），重开 App 后从远端目录里读回。
+    pub last_ok_ms: Option<i64>,
+    /// 对方还有多少变更没拉（按 `seq` 计）。
+    pub backlog: u64,
+    /// 正在做完整快照（对方库重建 / 恢复过）。
+    pub in_snapshot: bool,
+    /// 最近一次失败的类别（`阶段/类别`，如 `sync/unreachable`）；成功后清空。
+    pub failure: Option<String>,
+    /// 最近一次失败的详情，只在本机显示（可能含地址）。
+    pub last_error: Option<String>,
+}
+
+/// 本机用量采集的状况。
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct LocalUsage {
+    /// 上次一轮采集完成的时刻（Unix 毫秒）。
+    pub last_ok_ms: Option<i64>,
+    /// 有变化、还没读的文件（首扫分片、预算暂停）。
+    pub pending_files: usize,
+    /// 上一轮读失败的文件数。
+    pub failed: usize,
+    /// 采集器打不开（例如命令行的采集进程正占着用量库）或整轮失败的原因，只在本机显示。
+    pub error: Option<String>,
+}
+
+impl LocalUsage {
+    pub fn status_line(&self, now: i64) -> String {
+        let last = match self.last_ok_ms {
+            Some(at) => t!("sync.local_last_ok", time = relative_time(at, now)).to_string(),
+            None => t!("sync.local_never").to_string(),
+        };
+        let tail = if let Some(error) = &self.error {
+            error.clone()
+        } else if self.pending_files > 0 {
+            t!("sync.local_pending", count = self.pending_files).to_string()
+        } else {
+            t!("sync.remote_caught_up").to_string()
+        };
+        t!("sync.local_line", last = last, tail = tail).to_string()
+    }
+}
+
+impl RemotePull {
+    /// 一行状况：`远端 名字 拉取失败 · 3 分钟前成功`；状况在前，左栏窄时被截断的是时间。
+    pub fn status_line(&self, now: i64) -> String {
+        let last = match self.last_ok_ms {
+            Some(at) => t!("sync.remote_last_ok", time = relative_time(at, now)).to_string(),
+            None => t!("sync.remote_never").to_string(),
+        };
+        let tail = if self.failure.is_some() {
+            t!("sync.remote_failed").to_string()
+        } else if self.in_snapshot {
+            t!("sync.remote_snapshot", count = self.backlog).to_string()
+        } else if self.backlog > 0 {
+            t!("sync.remote_backlog", count = self.backlog).to_string()
+        } else {
+            t!("sync.remote_caught_up").to_string()
+        };
+        t!(
+            "sync.remote_line",
+            name = self.name,
+            last = last,
+            tail = tail
+        )
+        .to_string()
+    }
+
+    /// 悬停提示用的完整一行：失败时在末尾带上类别（如 `sync/unreachable`）。
+    pub fn detail_line(&self, now: i64) -> String {
+        match &self.failure {
+            Some(kind) => format!("{}（{kind}）", self.status_line(now)),
+            None => self.status_line(now),
+        }
+    }
+
+    /// 需要提醒：失败、或有积压 / 快照未完。
+    pub fn needs_attention(&self) -> bool {
+        self.failure.is_some() || self.in_snapshot || self.backlog > 0
+    }
+}
+
+impl SyncState {
+    /// 左栏状态行要突出显示的远端（失败优先，其次有积压的）；都正常为 `None`。
+    pub fn remote_attention(&self) -> Option<&RemotePull> {
+        self.remotes
+            .iter()
+            .find(|r| r.failure.is_some())
+            .or_else(|| self.remotes.iter().find(|r| r.needs_attention()))
+    }
+}
+
 /// 同步状态快照。`SyncState` 实体里放的就是它。
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct SyncState {
@@ -123,6 +219,10 @@ pub struct SyncState {
     /// Antigravity CLI 额度（官方 `agy -p /usage`）。
     pub agy_probe: QuotaProbe,
     pub raw: RawSync,
+    /// 已配对的远端（Mac 经 SSH 拉取，CARM-299），按名字排序；没配对过为空。
+    pub remotes: Vec<RemotePull>,
+    /// 本机用量采集（写 `~/AgentHome/usage/usage.db`，首页统计读它）。
+    pub local_usage: LocalUsage,
     /// 内部版本号：快照任何字段变化都加一，前台据此判断要不要重绘。
     version: u64,
 }
@@ -201,6 +301,7 @@ impl SyncEngine {
             ..SyncState::default()
         }));
         let (commands, receiver) = mpsc::channel::<Command>();
+        let pull_remotes = db_path == paths::default_index_db();
 
         let worker_shared = shared.clone();
         let watch_sender = commands.clone();
@@ -222,6 +323,15 @@ impl SyncEngine {
             .name("agenthome-agy-usage".into())
             .spawn(move || run_agy_probe(agy_shared, agy_receiver))
             .expect("启动 Antigravity 额度线程失败");
+
+        // 用量采集与远端拉取只跟真实的默认库一起跑；`--db` 指定的测试库不碰 ~/AgentHome 下的用量库。
+        if pull_remotes {
+            let usage_shared = shared.clone();
+            std::thread::Builder::new()
+                .name("agenthome-usage-sync".into())
+                .spawn(move || crate::usage_sync::run(paths::default_data_dir(), usage_shared))
+                .expect("启动用量同步线程失败");
+        }
 
         // 弱引用：外壳释放状态实体后轮询自行退出。
         let state = state.downgrade();
@@ -261,7 +371,7 @@ impl SyncEngine {
     }
 }
 
-fn update(shared: &Mutex<SyncState>, f: impl FnOnce(&mut SyncState)) {
+pub(crate) fn update(shared: &Mutex<SyncState>, f: impl FnOnce(&mut SyncState)) {
     if let Ok(mut state) = shared.lock() {
         f(&mut state);
         state.touch();
@@ -657,6 +767,54 @@ fn run_agy_probe(shared: Arc<Mutex<SyncState>>, receiver: mpsc::Receiver<bool>) 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 首页（左栏状态行）要能读出每台远端的上次成功时间和积压；失败的远端优先于有积压的显示。
+    #[test]
+    fn remote_status_shows_last_ok_backlog_and_failure_first() {
+        let now = 1_763_500_000_000;
+        let ok = RemotePull {
+            name: "runner".into(),
+            last_ok_ms: Some(now - 3 * 60_000),
+            ..RemotePull::default()
+        };
+        let backlog = RemotePull {
+            name: "box-a".into(),
+            last_ok_ms: Some(now - 60_000),
+            backlog: 120,
+            ..RemotePull::default()
+        };
+        let failed = RemotePull {
+            name: "box-b".into(),
+            failure: Some("sync/unreachable".into()),
+            last_error: Some("connect to 10.0.0.2 refused".into()),
+            ..RemotePull::default()
+        };
+        let line = ok.status_line(now);
+        assert!(
+            line.contains("runner") && line.contains("pulled") && line.contains("up to date"),
+            "{line}"
+        );
+        assert!(backlog.status_line(now).contains("120 changes pending"));
+        let line = failed.detail_line(now);
+        assert!(
+            line.contains("never pulled") && line.contains("sync/unreachable"),
+            "{line}"
+        );
+        assert!(!line.contains("10.0.0.2"), "详情只在设置等处看，不进状态行");
+
+        let mut state = SyncState {
+            remotes: vec![ok.clone()],
+            ..SyncState::default()
+        };
+        assert!(
+            state.remote_attention().is_none(),
+            "都正常时保持原来的「监听中」"
+        );
+        state.remotes = vec![backlog.clone(), failed.clone(), ok];
+        assert_eq!(state.remote_attention(), Some(&failed));
+        state.remotes.retain(|r| r.failure.is_none());
+        assert_eq!(state.remote_attention(), Some(&backlog));
+    }
 
     #[test]
     fn watcher_rescan_queues_scan_all_without_reporting_an_error() {
