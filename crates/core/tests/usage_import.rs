@@ -6,11 +6,13 @@
 //! - 采集端会升修订（解析更正）和撤回：Mac 必须只留最新修订，旧修订晚到也不能覆盖回去；
 //! - 本机用量走索引库，若把本机再当远端汇入、或同一台 Runner 配对两次，全部机器视图就会翻倍；
 //! - 索引库随时可删了重建，远端用量只存在导入库里，重建后必须原样还在、游标也不回退。
+//! - 采集端库被重建或从旧备份恢复后旧游标作废，要走完整快照（单元 8）：快照拉一半断了，
+//!   首页的旧统计不能变成半截；拉完后一次替换，已在 Mac 上的历史不能被缺了原件的重扫抹掉。
 
 use agenthome_core::Store;
 use agenthome_core::device::DeviceIdentity;
 use agenthome_core::model::ProviderId;
-use agenthome_core::usage_import::{ImportStore, PageCursor, StoreReset, Totals};
+use agenthome_core::usage_import::{ImportStore, PageCursor, SnapshotState, StoreReset, Totals};
 use agenthome_core::usage_store::{SourceProgress, UsageStore};
 use agenthome_core::usage_v1::{EventBasis, Op, UsagePage, UsageRecord, VERSION, event_key};
 use std::path::Path;
@@ -476,4 +478,250 @@ fn rusqlite_set_version(db: &Path, v: i32) -> rusqlite::Connection {
     let conn = rusqlite::Connection::open(db).unwrap();
     conn.pragma_update(None, "user_version", v).unwrap();
     conn
+}
+
+/// 按快照状态从暂存位置往后拉，每页 `page` 条，最多 `max_pages` 页；返回最新状态。
+fn pull_snapshot(
+    store: &mut ImportStore,
+    runner: &Collector,
+    mut state: SnapshotState,
+    page: usize,
+    max_pages: usize,
+) -> SnapshotState {
+    for _ in 0..max_pages {
+        if state.complete() {
+            break;
+        }
+        let (cursor, bytes) = runner.export(state.staged_through, page);
+        state = store
+            .stage_snapshot_page("runner", &cursor, &bytes)
+            .unwrap();
+    }
+    state
+}
+
+fn begin(store: &mut ImportStore, runner: &Collector) -> SnapshotState {
+    store
+        .begin_snapshot(
+            "runner",
+            runner.store.store_id(),
+            runner.store.high_water().unwrap(),
+        )
+        .unwrap()
+}
+
+/// 采集端库重建（`store_id` 变了）：增量返回 `StoreReset`，走完整快照后结果等于采集端真值，
+/// 游标接到新库，之后照常增量。新库的修订从 1 重新编号，所以替换不能按修订比较。
+#[test]
+fn store_reset_runs_full_snapshot_then_resumes_incremental() {
+    let mac = Mac::new();
+    let mut runner = Collector::new();
+    runner.collect(&[("m1", 1), ("m2", 2)]);
+    runner.collect(&[("m1", 1), ("m2", 20), ("m3", 3)]); // m2 修订 2
+    let mut store = paired(&mac, &runner);
+    let (cursor, page) = runner.export(0, 100);
+    store.import_page("runner", &cursor, &page).unwrap();
+
+    // 重建：同一身份、新库；m2 这次解析成 200（修订 1，比 Mac 上的修订 2 小），多了 m4、m5。
+    runner.store = UsageStore::in_memory(&runner.id).unwrap();
+    runner.collect(&[("m1", 1), ("m2", 200), ("m3", 3), ("m4", 4), ("m5", 5)]);
+    let mid = runner.machine_id();
+    let (cursor, page) = runner.export(0, 100);
+    let err = store.import_page("runner", &cursor, &page).unwrap_err();
+    assert!(err.downcast_ref::<StoreReset>().is_some(), "{err}");
+    let high = runner.store.high_water().unwrap();
+    assert!(
+        store
+            .needs_snapshot(&mid, runner.store.store_id(), high)
+            .unwrap()
+    );
+
+    let state = begin(&mut store, &runner);
+    let state = pull_snapshot(&mut store, &runner, state, 2, 100);
+    assert!(state.complete());
+    let outcome = store.finish_snapshot("runner").unwrap();
+    assert_eq!(
+        (outcome.applied, outcome.kept, outcome.cursor_seq),
+        (5, 0, high)
+    );
+    assert_eq!(store.totals(None).unwrap(), runner.truth());
+    assert_eq!(store.snapshot(&mid).unwrap(), None);
+    assert!(
+        !store
+            .needs_snapshot(&mid, runner.store.store_id(), high)
+            .unwrap()
+    );
+
+    // 之后照常增量：新键入账，m2 在新库里的修订 2 也能覆盖快照写入的修订 1。
+    runner.collect(&[("m2", 250), ("m6", 6)]);
+    let (cursor, page) = runner.export(high, 100);
+    store.import_page("runner", &cursor, &page).unwrap();
+    assert_eq!(store.totals(None).unwrap(), runner.truth());
+    assert_eq!(
+        store.totals(None).unwrap().output_tokens,
+        1 + 250 + 3 + 4 + 5 + 6
+    );
+}
+
+/// 采集端从旧备份恢复：`store_id` 不变但 `seq` 回退，之后的新用量编号落在 Mac 游标之内，
+/// 增量永远读不到。高水位低于游标即判失效，走快照补回；备份之后、Mac 已入账的用量保留不抹。
+#[test]
+fn restored_backup_expires_cursor_and_snapshot_keeps_history() {
+    let mac = Mac::new();
+    let mut runner = Collector::new();
+    let db = runner._dir.path().join("usage.db");
+    runner.store = UsageStore::open(&db, &runner.id).unwrap();
+    runner.collect(&[("m1", 1), ("m2", 2)]);
+    let backup = runner._dir.path().join("backup.db");
+    runner.store.backup_to(&backup).unwrap();
+    runner.collect(&[("m3", 3), ("m4", 4)]);
+    let mut store = paired(&mac, &runner);
+    let (cursor, page) = runner.export(0, 100);
+    store.import_page("runner", &cursor, &page).unwrap();
+    let before = store.totals(None).unwrap();
+    assert_eq!(store.cursor(&runner.machine_id()).unwrap().unwrap().seq, 4);
+
+    // 恢复备份（m3、m4 的原件已被 agent 清理，重读不到），之后采到 m5。
+    runner.store = UsageStore::open(&backup, &runner.id).unwrap();
+    runner.collect(&[("m5", 5)]);
+    let store_id = runner.store.store_id().to_string();
+    let high = runner.store.high_water().unwrap();
+    assert!(high < 4);
+    // 不走快照的话：从游标 4 往后增量拉不到 m5。
+    let (cursor, page) = runner.export(4, 100);
+    assert_eq!(
+        store
+            .import_page("runner", &cursor, &page)
+            .unwrap()
+            .inserted,
+        0
+    );
+    assert!(
+        store
+            .needs_snapshot(&runner.machine_id(), &store_id, high)
+            .unwrap()
+    );
+
+    let state = begin(&mut store, &runner);
+    pull_snapshot(&mut store, &runner, state, 1, 100);
+    let outcome = store.finish_snapshot("runner").unwrap();
+    assert_eq!((outcome.applied, outcome.kept), (3, 2));
+    let after = store.totals(None).unwrap();
+    assert_eq!(after.events, before.events + 1);
+    assert_eq!(after.output_tokens, before.output_tokens + 5);
+    assert_eq!(
+        store.cursor(&runner.machine_id()).unwrap().unwrap().seq,
+        high
+    );
+}
+
+/// 快照拉到一半进程被杀：旧统计原样可查（不是半截快照）；增量导入和提前替换都被拒；
+/// 重开后从暂存位置续拉，拉完替换。快照期间采集端的新变更（超出固定高水位）由之后的增量补上。
+#[test]
+fn interrupted_snapshot_keeps_old_totals_and_resumes() {
+    let data = tempfile::tempdir().unwrap();
+    let db = data.path().join("remote").join("usage.db");
+    let mac = Mac::new();
+    let mut runner = Collector::new();
+    runner.collect(&[("m1", 1), ("m2", 2), ("m3", 3)]);
+    let mid = runner.machine_id();
+    let old = {
+        let mut store = ImportStore::open(&db, &mac.id).unwrap();
+        store.pair("runner", &mid, 1).unwrap();
+        let (cursor, page) = runner.export(0, 100);
+        store.import_page("runner", &cursor, &page).unwrap();
+        store.totals(None).unwrap()
+    };
+
+    runner.store = UsageStore::in_memory(&runner.id).unwrap();
+    let items: Vec<(String, u64)> = (1..=10).map(|i| (format!("m{i}"), 100 + i)).collect();
+    let refs: Vec<(&str, u64)> = items.iter().map(|(k, v)| (k.as_str(), *v)).collect();
+    runner.collect(&refs);
+    let high = runner.store.high_water().unwrap();
+    {
+        let mut store = ImportStore::open(&db, &mac.id).unwrap();
+        let state = begin(&mut store, &runner);
+        let state = pull_snapshot(&mut store, &runner, state, 2, 2);
+        assert_eq!(state.staged_through, 4);
+        assert_eq!(store.totals(None).unwrap(), old);
+    } // 进程被杀
+
+    let mut store = ImportStore::open(&db, &mac.id).unwrap();
+    assert_eq!(store.totals(None).unwrap(), old, "中断后旧统计不变");
+    assert!(store.finish_snapshot("runner").is_err(), "没拉完不能替换");
+    assert_eq!(store.totals(None).unwrap(), old);
+    let (cursor, page) = runner.export(0, 100);
+    assert!(store.import_page("runner", &cursor, &page).is_err());
+    assert_eq!(store.totals(None).unwrap(), old);
+    assert!(
+        store
+            .needs_snapshot(&mid, runner.store.store_id(), high)
+            .unwrap()
+    );
+
+    // 期间采集端又改了 m1（新 seq 超出快照开始时的高水位）、加了 m11。
+    let mut more = refs.clone();
+    more[0].1 = 999;
+    more.push(("m11", 11));
+    runner.collect(&more);
+    let state = store
+        .begin_snapshot(
+            "runner",
+            runner.store.store_id(),
+            runner.store.high_water().unwrap(),
+        )
+        .unwrap();
+    assert_eq!(
+        (state.staged_through, state.high_water),
+        (4, high),
+        "续上而不是从头"
+    );
+    pull_snapshot(&mut store, &runner, state, 2, 100);
+    store.finish_snapshot("runner").unwrap();
+    let cursor_seq = store.cursor(&mid).unwrap().unwrap().seq;
+    assert!(cursor_seq >= high);
+    // 增量补上快照之后的变更，结果等于真值；旧库的 m1–m3 被快照里的新值覆盖，不重复计。
+    let (cursor, page) = runner.export(cursor_seq, 100);
+    store.import_page("runner", &cursor, &page).unwrap();
+    assert_eq!(store.totals(None).unwrap(), runner.truth());
+    assert_eq!(store.totals(None).unwrap().events, 11);
+}
+
+/// 快照跳页整页拒收、什么都不写；快照中途对方库又变了返回 `StoreReset`，
+/// 用新库重新开始时清掉旧暂存，不把两个库的页混在一起。
+#[test]
+fn snapshot_rejects_gaps_and_restarts_on_new_store() {
+    let mac = Mac::new();
+    let mut runner = Collector::new();
+    runner.collect(&[("m1", 1)]);
+    let mut store = paired(&mac, &runner);
+    let (cursor, page) = runner.export(0, 100);
+    store.import_page("runner", &cursor, &page).unwrap();
+
+    runner.store = UsageStore::in_memory(&runner.id).unwrap();
+    runner.collect(&[("m1", 1), ("m2", 2), ("m3", 3), ("m4", 4)]);
+    let state = begin(&mut store, &runner);
+    let (cursor, page) = runner.export(2, 2);
+    assert!(store.stage_snapshot_page("runner", &cursor, &page).is_err());
+    assert_eq!(
+        store.snapshot(&runner.machine_id()).unwrap().unwrap(),
+        state
+    );
+    pull_snapshot(&mut store, &runner, state, 2, 1);
+
+    // 又重建一次：这次只采回 m1、m9。
+    runner.store = UsageStore::in_memory(&runner.id).unwrap();
+    runner.collect(&[("m1", 1), ("m9", 9)]);
+    let (cursor, page) = runner.export(2, 2);
+    let err = store
+        .stage_snapshot_page("runner", &cursor, &page)
+        .unwrap_err();
+    assert!(err.downcast_ref::<StoreReset>().is_some(), "{err}");
+    let state = begin(&mut store, &runner);
+    assert_eq!(state.staged_through, 0);
+    pull_snapshot(&mut store, &runner, state, 2, 100);
+    let outcome = store.finish_snapshot("runner").unwrap();
+    // 第一次快照暂存过的 m2 不应出现：只有 m1（覆盖）、m9（新），旧的 m1 之外没有别的历史。
+    assert_eq!((outcome.applied, outcome.kept), (2, 0));
+    assert_eq!(store.totals(None).unwrap(), runner.truth());
 }
