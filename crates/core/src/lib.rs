@@ -18,6 +18,7 @@
 //! - `usage_store`：采集端本地用量库（用量与读取进度同事务、单调 `seq`、修订与撤回）。
 //! - `usage_import`：Mac 端远程用量导入库（按 `(machine_id, source, event_key)` 取最新修订，用量与游标同事务）。
 //! - `collector`：采集服务的一轮调度（并发 1、分片续采、源读取限速、状态目录预算）。
+//! - `remote_ssh`：受限 SSH 导出（固定命令、分页、超时）与配对（专用钥匙、固定主机密钥、内网网段）。
 
 pub mod collector;
 pub mod cost;
@@ -29,6 +30,7 @@ pub mod pressure;
 pub mod pricing;
 pub mod providers;
 pub mod raw;
+pub mod remote_ssh;
 pub mod signals;
 pub mod statusline_setup;
 pub mod store;

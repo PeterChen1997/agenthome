@@ -1,6 +1,8 @@
 //! agenthome 命令行：scan / sessions / show / stats / quota / activity / statusline / collect。
 
 use agenthome_core::collector::{Collector, Limits, RoundReport};
+mod remote;
+
 use agenthome_core::model::{
     ContentBlock, CostSource, Freshness, Period, ProviderId, Role, SessionQuery,
 };
@@ -161,6 +163,18 @@ enum Cmd {
         #[arg(long, global = true)]
         bin_dir: Option<PathBuf>,
     },
+    /// 远程用量：采集端授权专用钥匙、Mac 配对与拉取（经 SSH，默认关闭）
+    Remote {
+        #[command(subcommand)]
+        action: remote::RemoteAction,
+    },
+    /// 采集端 authorized_keys 固定命令的入口：只认 SSH_ORIGINAL_COMMAND 里的用量导出请求
+    #[command(hide = true)]
+    SshExport {
+        /// 数据目录（device.json、usage/），默认 ~/AgentHome
+        #[arg(long)]
+        data_dir: Option<PathBuf>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -242,6 +256,8 @@ fn main() -> Result<()> {
             };
             collect(data_dir, sources, limits, once)
         }
+        Cmd::Remote { action } => remote::run(action),
+        Cmd::SshExport { data_dir } => remote::ssh_export(data_dir),
     }
 }
 
