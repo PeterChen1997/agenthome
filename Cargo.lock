@@ -111,7 +111,7 @@ dependencies = [
 
 [[package]]
 name = "agenthome-app"
-version = "0.2.12"
+version = "0.2.13"
 dependencies = [
  "agenthome-core",
  "anyhow",
@@ -136,7 +136,7 @@ dependencies = [
 
 [[package]]
 name = "agenthome-cli"
-version = "0.2.12"
+version = "0.2.13"
 dependencies = [
  "agenthome-core",
  "anyhow",
@@ -149,7 +149,7 @@ dependencies = [
 
 [[package]]
 name = "agenthome-core"
-version = "0.2.12"
+version = "0.2.13"
 dependencies = [
  "anyhow",
  "chrono",
