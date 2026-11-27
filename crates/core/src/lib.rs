@@ -23,6 +23,7 @@
 pub mod collector;
 pub mod cost;
 pub mod device;
+pub mod diagnostics;
 pub mod ingest;
 pub mod model;
 pub mod paths;

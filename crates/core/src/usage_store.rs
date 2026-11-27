@@ -18,12 +18,13 @@
 //! 显式撤回（`retract`）后该键保持撤回，之后重读到同键也不复活。
 
 use crate::device::{DeviceIdentity, hex};
+use crate::diagnostics::ResultStep;
 use crate::model::ProviderId;
 use crate::providers::SourceProvider;
 use crate::usage_projection;
 use crate::usage_v1::{self, Op, UsageRecord};
 use anyhow::{Context, Result, bail, ensure};
-use rusqlite::{Connection, OptionalExtension, Transaction, params};
+use rusqlite::{Connection, OpenFlags, OptionalExtension, Transaction, params};
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
@@ -125,8 +126,7 @@ impl CommitStats {
     }
 }
 
-/// 一个文件采集失败的类别。日志、状态文件和以后上报 Mac 都只用它，不带路径和原始报错
-/// （报错里常有路径、甚至行内容）。失败的文件进度不前移，下一轮重试。
+/// 一个文件采集失败的类别，用于失败计数和上报分组。失败的文件进度不前移，下一轮重试。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FailureKind {
@@ -213,8 +213,40 @@ impl UsageStore {
         // synchronous = FULL：这里是部分花费唯一的记录，掉电也不能丢已提交的事务。
         conn.execute_batch(
             "PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL; PRAGMA busy_timeout = 5000;",
-        )?;
-        Self::init(conn, identity.machine_id())
+        )
+        .step("usage.local.configure")?;
+        Self::init(conn, identity.machine_id()).step("usage.local.initialize")
+    }
+
+    /// Opens an initialized database without taking a writer lock. Missing or still initializing
+    /// databases are absent until the writer commits the schema and its version together.
+    pub fn open_read_only(path: &Path, identity: &DeviceIdentity) -> Result<Option<Self>> {
+        let Some(conn) =
+            open_initialized_read_only(path, SCHEMA_VERSION).step("usage.local.schema")?
+        else {
+            return Ok(None);
+        };
+        let (owner, store_id) = (|| -> Result<_> {
+            let owner: String =
+                conn.query_row("SELECT value FROM meta WHERE key = 'machine_id'", [], |r| {
+                    r.get(0)
+                })?;
+            ensure!(
+                owner == identity.machine_id(),
+                "用量库属于另一台机器，不能用本机身份读取（迁机请连同 device.json 一起恢复）"
+            );
+            let store_id: String =
+                conn.query_row("SELECT value FROM meta WHERE key = 'store_id'", [], |r| {
+                    r.get(0)
+                })?;
+            Ok((owner, store_id))
+        })()
+        .step("usage.local.identity")?;
+        Ok(Some(Self {
+            conn,
+            machine_id: owner,
+            store_id,
+        }))
     }
 
     pub fn in_memory(identity: &DeviceIdentity) -> Result<Self> {
@@ -303,13 +335,16 @@ impl UsageStore {
         records: &[UsageRecord],
     ) -> Result<CommitStats> {
         let key = path_key(path)?;
-        let tx = self.conn.transaction()?;
+        let tx = self
+            .conn
+            .transaction()
+            .step("usage.local.begin_file_transaction")?;
         let mut stats = CommitStats::default();
         for r in records {
-            r.validate()?;
+            r.validate().step("usage.local.validate_record")?;
             ensure!(r.machine_id == self.machine_id, "记录不属于本机");
             ensure!(r.source == source.as_str(), "记录来源与文件来源不一致");
-            stats.add(upsert(&tx, r)?);
+            stats.add(upsert(&tx, r).step("usage.local.upsert_record")?);
         }
         tx.execute(
             "INSERT INTO sources (source, path, size, mtime_ms, visible) VALUES (?1, ?2, ?3, ?4, 1)
@@ -321,8 +356,9 @@ impl UsageStore {
                 i64::try_from(progress.size)?,
                 progress.mtime_ms
             ],
-        )?;
-        tx.commit()?;
+        )
+        .step("usage.local.write_progress")?;
+        tx.commit().step("usage.local.commit_transaction")?;
         Ok(stats)
     }
 
@@ -468,14 +504,25 @@ pub fn collect_file(
     path: &Path,
 ) -> Result<FileOutcome> {
     let source = provider.id();
-    let progress = SourceProgress::of(path).context(FailureKind::Io)?;
-    if store.progress(&source, path).context(FailureKind::Store)? == Some(progress) {
+    let progress = SourceProgress::of(path)
+        .step("collect.source_metadata")
+        .context(FailureKind::Io)?;
+    if store
+        .progress(&source, path)
+        .step("usage.local.read_progress")
+        .context(FailureKind::Store)?
+        == Some(progress)
+    {
         return Ok(FileOutcome {
             skipped: true,
             ..FileOutcome::default()
         });
     }
-    let Some(file) = provider.usage_events(path).context(FailureKind::Parse)? else {
+    let Some(file) = provider
+        .usage_events(path)
+        .step("collect.parse_source")
+        .context(FailureKind::Parse)?
+    else {
         return Err(anyhow::anyhow!("来源 {} 还没接入用量投影", source.as_str())
             .context(FailureKind::Unsupported));
     };
@@ -484,6 +531,7 @@ pub fn collect_file(
     let records = usage_projection::dedup(records);
     let stats = store
         .commit_file(&source, path, progress, &records)
+        .step("usage.local.commit_file")
         .context(FailureKind::Store)?;
     Ok(FileOutcome {
         skipped: false,
@@ -538,6 +586,31 @@ impl SourceReport {
     pub fn failed(&self) -> usize {
         self.failures.values().sum()
     }
+}
+
+pub(crate) fn open_initialized_read_only(
+    path: &Path,
+    schema_version: i32,
+) -> Result<Option<Connection>> {
+    let conn = match Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY) {
+        Ok(conn) => conn,
+        Err(error) if error.sqlite_error_code() == Some(rusqlite::ErrorCode::CannotOpen) => {
+            if !path.try_exists()? {
+                return Ok(None);
+            }
+            return Err(error.into());
+        }
+        Err(error) => return Err(error.into()),
+    };
+    let version: i32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+    if version == 0 {
+        return Ok(None);
+    }
+    ensure!(
+        version == schema_version,
+        "用量库版本 {version} 不认识（本程序是 {schema_version}），请升级 AgentHome；不会删表重建"
+    );
+    Ok(Some(conn))
 }
 
 fn path_key(path: &Path) -> Result<String> {

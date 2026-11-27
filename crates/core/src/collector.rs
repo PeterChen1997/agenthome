@@ -12,6 +12,8 @@
 //! 不重不漏。同一进程里下一轮从上一轮最后读的文件之后开始，活跃的大文件不会饿死后面的文件。
 
 use crate::device::DeviceIdentity;
+use crate::diagnostics::{ErrorDiagnostic, ResultStep};
+use crate::model::ProviderId;
 use crate::providers::SourceProvider;
 use crate::usage_store::{CommitStats, FailureKind, SourceProgress, UsageStore, collect_file};
 use anyhow::{Context, Result, bail};
@@ -80,7 +82,7 @@ impl Throttle {
     }
 }
 
-/// 一轮的结果。只有计数，不含路径、文件名或报错原文，可以直接写日志、状态文件。
+/// 一轮的结果。写入日志和状态文件的是计数与运行指标，不含路径、文件名或报错原文。
 #[derive(Clone, Debug, Default, serde::Serialize)]
 pub struct RoundReport {
     /// 本轮结束时间（UTC 毫秒）。
@@ -98,6 +100,9 @@ pub struct RoundReport {
     pub stats: CommitStats,
     pub warnings: usize,
     pub failures: BTreeMap<FailureKind, usize>,
+    /// One privacy-safe sample per failure kind for app telemetry.
+    #[serde(skip)]
+    pub failure_diagnostics: BTreeMap<FailureKind, (ProviderId, ErrorDiagnostic)>,
     /// 有变化但本轮没读的文件（分片用完或预算暂停），进度没前移，之后的轮次接着读。
     pub pending_files: usize,
     pub pending_bytes: u64,
@@ -115,6 +120,14 @@ pub struct RoundReport {
 impl RoundReport {
     pub fn failed(&self) -> usize {
         self.failures.values().sum()
+    }
+
+    fn record_failure(&mut self, provider: &dyn SourceProvider, error: &anyhow::Error) {
+        let kind = FailureKind::of(error);
+        *self.failures.entry(kind).or_default() += 1;
+        self.failure_diagnostics
+            .entry(kind)
+            .or_insert_with(|| (provider.id(), ErrorDiagnostic::from_error(error)));
     }
 }
 
@@ -143,14 +156,19 @@ impl Collector {
             .parent()
             .context("用量库路径没有上级目录")?
             .to_path_buf();
-        std::fs::create_dir_all(&state_dir).context("创建状态目录")?;
-        let lock = File::create(state_dir.join("collector.lock")).context("创建锁文件")?;
+        std::fs::create_dir_all(&state_dir)
+            .context("创建状态目录")
+            .step("collect.create_state_dir")?;
+        let lock = File::create(state_dir.join("collector.lock"))
+            .context("创建锁文件")
+            .step("collect.create_lock_file")?;
         if lock.try_lock().is_err() {
             bail!("已有采集进程在使用这个状态目录");
         }
         let identity =
-            DeviceIdentity::load_or_create(identity_path, &crate::device::current_hostname())?;
-        let store = UsageStore::open(usage_db, &identity)?;
+            DeviceIdentity::load_or_create(identity_path, &crate::device::current_hostname())
+                .step("collect.load_identity")?;
+        let store = UsageStore::open(usage_db, &identity).step("collect.open_usage_store")?;
         Ok(Self {
             store,
             identity,
@@ -187,14 +205,14 @@ impl Collector {
         let fits = |used: u64| {
             used.saturating_add(self.limits.commit_reserve_bytes) <= self.limits.state_budget_bytes
         };
-        if fits(self.state_bytes()?) {
+        if fits(self.state_bytes().step("collect.state_bytes")?) {
             return Ok(true);
         }
         if !*checkpointed {
             // WAL 可能占了大头：合并截断后再量一次。
             *checkpointed = true;
-            self.store.checkpoint()?;
-            return Ok(fits(self.state_bytes()?));
+            self.store.checkpoint().step("usage.local.checkpoint")?;
+            return Ok(fits(self.state_bytes().step("collect.state_bytes")?));
         }
         Ok(false)
     }
@@ -214,7 +232,10 @@ impl Collector {
             } else {
                 Vec::new()
             };
-            let (hidden, revived) = self.store.refresh_visibility(&provider.id(), &files)?;
+            let (hidden, revived) = self
+                .store
+                .refresh_visibility(&provider.id(), &files)
+                .step("usage.local.refresh_visibility")?;
             report.hidden += hidden;
             report.revived += revived;
             queue.extend(files.into_iter().map(|f| (i, f)));
@@ -231,14 +252,19 @@ impl Collector {
         let mut checkpointed = false;
         for (i, path) in queue {
             let provider = &*self.providers[i];
-            let progress = match SourceProgress::of(&path) {
+            let progress = match SourceProgress::of(&path).step("collect.source_metadata") {
                 Ok(p) => p,
                 Err(e) => {
-                    *report.failures.entry(FailureKind::of(&e)).or_default() += 1;
+                    report.record_failure(provider, &e);
                     continue;
                 }
             };
-            if self.store.progress(&provider.id(), &path)? == Some(progress) {
+            if self
+                .store
+                .progress(&provider.id(), &path)
+                .step("usage.local.scan_progress")?
+                == Some(progress)
+            {
                 report.unchanged += 1;
                 continue;
             }
@@ -266,13 +292,13 @@ impl Collector {
                     report.stats.add(outcome.stats);
                     report.warnings += outcome.warnings.len();
                 }
-                Err(e) => *report.failures.entry(FailureKind::of(&e)).or_default() += 1,
+                Err(e) => report.record_failure(provider, &e),
             }
         }
 
         report.paused_for_budget = paused;
-        report.state_bytes = self.state_bytes()?;
-        report.high_water = self.store.high_water()?;
+        report.state_bytes = self.state_bytes().step("collect.state_bytes")?;
+        report.high_water = self.store.high_water().step("usage.local.high_water")?;
         report.elapsed_ms = started.elapsed().as_millis() as u64;
         report.finished_at_ms = chrono::Utc::now().timestamp_millis();
         Ok(report)

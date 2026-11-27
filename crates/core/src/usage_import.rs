@@ -21,6 +21,7 @@
 //! 之后照常增量。快照里没有、导入库里有的键（对方原件已被清理）保留，不以重扫的结果抹掉已发生的花费。
 
 use crate::device::{DeviceIdentity, is_uuid};
+use crate::usage_store::open_initialized_read_only;
 use crate::usage_v1::{Op, UsagePage, UsageRecord};
 use anyhow::{Context, Result, bail, ensure};
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
@@ -193,6 +194,16 @@ impl ImportStore {
 
     pub fn in_memory(local: &DeviceIdentity) -> Result<Self> {
         Self::init(Connection::open_in_memory()?, local)
+    }
+
+    /// Opens the already initialized import database without running write-side setup.
+    pub fn open_read_only(path: &Path, local: &DeviceIdentity) -> Result<Option<Self>> {
+        Ok(
+            open_initialized_read_only(path, SCHEMA_VERSION)?.map(|conn| Self {
+                conn,
+                local_machine_id: local.machine_id().to_string(),
+            }),
+        )
     }
 
     fn init(mut conn: Connection, local: &DeviceIdentity) -> Result<Self> {

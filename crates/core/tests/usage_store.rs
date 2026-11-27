@@ -358,12 +358,14 @@ fn refuses_foreign_identity_and_unknown_schema() {
     let other_dir = tempfile::tempdir().unwrap();
     let other = identity(other_dir.path());
     assert!(UsageStore::open(&fx.db, &other).is_err());
+    assert!(UsageStore::open_read_only(&fx.db, &other).is_err());
 
     {
         let conn = rusqlite::Connection::open(&fx.db).unwrap();
         conn.pragma_update(None, "user_version", 99).unwrap();
     }
     assert!(UsageStore::open(&fx.db, &fx.id).is_err());
+    assert!(UsageStore::open_read_only(&fx.db, &fx.id).is_err());
     {
         let conn = rusqlite::Connection::open(&fx.db).unwrap();
         let n: i64 = conn

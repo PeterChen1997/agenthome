@@ -13,6 +13,7 @@
 //! 缺价：定价表里没有的模型照样计 token，另记未知价请求数与 token；整组都没有价时 `cost_usd` 为空。
 
 use crate::cost::Vendor;
+use crate::diagnostics::ResultStep;
 use crate::model::{CostBreakdown, ProviderId, Usage};
 use crate::usage_import::ImportStore;
 use crate::usage_store::UsageStore;
@@ -218,7 +219,11 @@ pub fn query(
     let local_id = local.map(|s| s.machine_id().to_string());
     if matches!(filter, MachineFilter::All | MachineFilter::Local) {
         match local {
-            Some(store) => records.extend(store.records_in(window.from_ms, window.to_ms)?),
+            Some(store) => records.extend(
+                store
+                    .records_in(window.from_ms, window.to_ms)
+                    .step("usage.local.read_records")?,
+            ),
             None => ensure!(
                 *filter == MachineFilter::All,
                 "本机还没有用量库，先运行一次采集"
@@ -233,11 +238,13 @@ pub fn query(
     if let Some(machine) = remote_machine {
         match remote {
             Some(store) => {
-                labels.extend(store.peers()?);
+                labels.extend(store.peers().step("usage.remote.read_peers")?);
                 if let Some(id) = machine {
                     ensure!(labels.contains_key(id), "这台远端机器没有配对过");
                 }
-                let rows = store.records_in(window.from_ms, window.to_ms, machine)?;
+                let rows = store
+                    .records_in(window.from_ms, window.to_ms, machine)
+                    .step("usage.remote.read_records")?;
                 ensure!(
                     rows.iter()
                         .all(|r| Some(&r.machine_id) != local_id.as_ref()),

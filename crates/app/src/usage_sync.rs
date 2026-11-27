@@ -10,7 +10,7 @@
 //! 事务里提交，采集也是每个文件的用量和进度同事务提交：App 退出、休眠、断网时线程停在哪都不会留下
 //! 半提交，下次从已确认的位置续上。
 //!
-//! 失败上报 Sentry 只发阶段和类别（[`telemetry::report_usage_failure`]），每种每次运行只报一次。
+//! 失败上报 Sentry 带阶段和类别，本机采集再附安全的错误诊断，每种每次运行只报一次。
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -19,6 +19,8 @@ use std::time::Duration;
 
 use agenthome_core::collector::{Collector, Limits, RoundReport};
 use agenthome_core::device::DeviceIdentity;
+use agenthome_core::diagnostics::{ErrorDiagnostic, local_error_message};
+use agenthome_core::model::ProviderId;
 use agenthome_core::providers::opencode::OpenCodeProvider;
 use agenthome_core::providers::registry;
 use agenthome_core::remote_pull::{self, PullFailure, PullOutcome, PullSchedule};
@@ -48,10 +50,26 @@ fn mac_limits() -> Limits {
 /// 每种失败每次运行只报一次：`(远端名或空, 阶段, 类别)`。
 type Reported = HashSet<(String, &'static str, &'static str)>;
 
-fn report_once(reported: &mut Reported, who: &str, stage: &'static str, kind: &'static str) {
+fn report_once(
+    reported: &mut Reported,
+    who: &str,
+    stage: &'static str,
+    kind: &'static str,
+    diagnostic: Option<(&ErrorDiagnostic, Option<&ProviderId>)>,
+) {
     if reported.insert((who.to_string(), stage, kind)) {
-        telemetry::report_usage_failure(stage, kind);
+        telemetry::report_usage_failure(stage, kind, diagnostic);
     }
+}
+
+fn report_collect_error(reported: &mut Reported, error: &anyhow::Error) {
+    report_once(
+        reported,
+        "",
+        "collect",
+        FailureKind::of(error).as_str(),
+        Some((&ErrorDiagnostic::from_error(error), None)),
+    );
 }
 
 pub fn run(data_dir: PathBuf, shared: Arc<Mutex<SyncState>>) {
@@ -103,11 +121,10 @@ impl Local {
                 Ok(collector) => self.collector = Some(collector),
                 Err(error) => {
                     // 最常见的是命令行采集进程正占着锁；那边在采，这里一分钟后再试。
-                    let kind = FailureKind::of(&error);
-                    if !format!("{error:#}").contains("已有采集进程") {
-                        report_once(reported, "", "collect", kind.as_str());
+                    let message = local_error_message(&error);
+                    if !message.contains("已有采集进程") {
+                        report_collect_error(reported, &error);
                     }
-                    let message = format!("{error:#}");
                     update(shared, |s| s.local_usage.error = Some(message));
                     self.next_due_ms = now + mac_limits().interval.as_millis() as i64;
                     return;
@@ -119,15 +136,21 @@ impl Local {
         };
         match collector.run_round() {
             Ok(report) => {
-                for kind in report.failures.keys() {
-                    report_once(reported, "", "collect", kind.as_str());
+                for (kind, (provider, diagnostic)) in &report.failure_diagnostics {
+                    report_once(
+                        reported,
+                        "",
+                        "collect",
+                        kind.as_str(),
+                        Some((diagnostic, Some(provider))),
+                    );
                 }
                 self.next_due_ms = now_ms() + collector.next_delay(&report).as_millis() as i64;
                 apply_round(shared, &report);
             }
             Err(error) => {
-                report_once(reported, "", "collect", FailureKind::of(&error).as_str());
-                let message = format!("{error:#}");
+                report_collect_error(reported, &error);
+                let message = local_error_message(&error);
                 update(shared, |s| s.local_usage.error = Some(message));
                 self.next_due_ms = now_ms() + collector.limits().interval.as_millis() as i64;
             }
@@ -180,7 +203,7 @@ impl Remotes {
                 Ok(store) => self.store = Some(store),
                 Err(error) => {
                     let failure = PullFailure::of_import(&error);
-                    report_once(reported, "", failure.stage(), failure.kind());
+                    report_once(reported, "", failure.stage(), failure.kind(), None);
                     let label = format!("{}/{}", failure.stage(), failure.kind());
                     let detail = format!("{error:#}");
                     update(shared, |s| {
@@ -214,7 +237,13 @@ impl Remotes {
                 }
                 Err(error) => {
                     schedule.on_failure(done);
-                    report_once(reported, name, error.failure.stage(), error.failure.kind());
+                    report_once(
+                        reported,
+                        name,
+                        error.failure.stage(),
+                        error.failure.kind(),
+                        None,
+                    );
                 }
             }
             apply_pull(shared, name, done, &result);

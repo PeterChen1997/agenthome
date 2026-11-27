@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 
 use agenthome_core::cost::{CostSummary, ModelCost, Vendor, VendorCost, prorated_fee};
+use agenthome_core::diagnostics::ResultStep;
 use agenthome_core::model::Period;
 use agenthome_core::providers::registry::display_name;
 use agenthome_core::usage_report::MachineFilter;
@@ -75,7 +76,10 @@ impl DashboardView {
         self.cost._task = cx.spawn(async move |this, cx| {
             let loaded = cx
                 .background_spawn(async move {
-                    let machines = source.remote_machines()?;
+                    let machines = source
+                        .remote_machines()
+                        .step("cost.list_remote_machines")
+                        .map_err(|error| (telemetry::machine_filter_kind(&machine), error))?;
                     let machine = match pending.as_deref() {
                         Some("local") => MachineFilter::Local,
                         Some(label) => machines
@@ -91,25 +95,33 @@ impl DashboardView {
                         }
                         machine => machine,
                     };
-                    let rows = source.cost_by_model(period, &machine)?;
-                    Ok::<_, anyhow::Error>((machines, machine, CostSummary::from_breakdown(&rows)))
+                    let rows = source
+                        .cost_by_model(period, &machine)
+                        .step("cost.read_models")
+                        .map_err(|error| (telemetry::machine_filter_kind(&machine), error))?;
+                    Ok::<_, (&str, anyhow::Error)>((
+                        machines,
+                        machine,
+                        CostSummary::from_breakdown(&rows),
+                    ))
                 })
                 .await;
             let _ = this.update(cx, |this, cx| {
                 if this.cost.revision != revision {
                     return;
                 }
-                let result = loaded.map(|(machines, machine, summary)| {
-                    this.cost.machines = machines;
-                    this.cost.machine = machine;
-                    summary
-                });
-                match &result {
-                    Ok(summary) => telemetry::report_unpriced_models(summary),
-                    Err(error) => {
-                        telemetry::report_error("Cost summary query failed", &format!("{error:#}"))
+                let result = match loaded {
+                    Ok((machines, machine, summary)) => {
+                        this.cost.machines = machines;
+                        this.cost.machine = machine;
+                        telemetry::report_unpriced_models(&summary);
+                        Ok(summary)
                     }
-                }
+                    Err((machine_kind, error)) => {
+                        telemetry::report_cost_failure(period, machine_kind, &error);
+                        Err(error)
+                    }
+                };
                 this.cost.summary = Some(result);
                 cx.notify();
             });
@@ -158,11 +170,7 @@ impl DashboardView {
             return;
         }
         // 只上报类别：不带机器标识、连接名和金额。
-        let kind = match machine {
-            MachineFilter::All => "all",
-            MachineFilter::Local => "local",
-            MachineFilter::Remote(_) => "remote",
-        };
+        let kind = telemetry::machine_filter_kind(&machine);
         telemetry::event("home_cost_machine_change", json!({"machine": kind}));
         self.cost.machine = machine;
         self.cost.summary = None;

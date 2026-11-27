@@ -79,7 +79,7 @@ App 的用量同步线程（`crates/app/src/usage_sync.rs`）同时负责本机�
 - **远端拉取**：`remote_pull::pull_ssh`。打开 App 就拉，之后每 5 分钟拉一次；一轮最多 32 页，没拉完 2 秒后接着拉。失败从 30 秒开始翻倍退避，最长 5 分钟。Mac 休眠时单调时钟会停，所以到点和唤醒都按墙钟判断：两次看钟相隔超过 45 秒就当作刚醒来，立即补拉并重置退避。
 - **一次只拉一台、不留半提交**：同一远端同时只能有一个拉取（远端目录下的 `pull.lock`，跨进程有效）。每页的用量和游标在同一个事务里提交，App 退出、休眠或断网时，停在哪两页之间都行，下次从已确认的游标续拉。游标失效时自动走完整快照，快照没拉完时旧统计不变。
 - **首页**：左栏底部状态行在远端拉取失败或有积压时显示该远端（例如「远端 runner 拉取失败 · 2 分钟前成功」）。悬停能看到本机采集和每台远端的上次成功时间、积压和失败类别。上次成功时间存在 `remote/<名字>/last_pull.json`，重开 App 后还没连上也能看到。
-- **Sentry**：标题是 `Usage sync failed: <阶段>/<类别>`，tag 为 `remote.stage`、`remote.kind`。阶段是 `collect` / `sync` / `import`，类别取 `RemoteErrorKind` / `FailureKind`。不带远端名、地址、路径、金额或载荷，版本和环境由 release / environment 带上。每种失败每次运行只报一次。
+- **Sentry**：标题为 `Usage sync failed: <阶段>/<类别>`，带 `remote.stage`、`remote.kind`。本机采集（`collect`）还带固定代码步骤 `code.operation`、允许上报的 `error.chain`（如 SQLite 错误码），单文件失败附来源类型 `source.provider`。远端名、地址、路径、金额、载荷和错误原文留在本机。每种失败每次运行只报一次。
 - **手动拉取**：`agenthome remote pull --name <名字>`，逻辑和 App 后台相同，会一直拉到没有新变更，然后打印合计。
 
 验收脚本：`cargo build -p agenthome-cli && script/test-remote-pull.sh target/debug/agenthome`。脚本走真实的受限 SSH，依次验证首次分页拉取、断网失败（`sync/unreachable`）、恢复后续拉断网期间的新增和修订、采集端库重建后的完整快照，每一步都和采集端真值逐项对比。

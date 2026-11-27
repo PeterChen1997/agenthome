@@ -16,6 +16,9 @@ use std::process::{Command, Stdio};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use agenthome_core::diagnostics::ErrorDiagnostic;
+use agenthome_core::model::{Period, ProviderId};
+use agenthome_core::usage_report::MachineFilter;
 use sentry::protocol::DebugImage;
 use serde_json::{Value, json};
 
@@ -83,17 +86,53 @@ pub fn report_error(context: &'static str, error: &str) {
     );
 }
 
-/// 用量同步失败（CARM-299）：本机采集（`collect`）、远端拉取（`sync`）、写导入库（`import`）。
-/// 只发阶段和类别（`RemoteErrorKind` / `FailureKind` 的字符串），不发远端名、地址、路径、金额和载荷；
-/// 版本、环境由 `init` 的 release / environment 带上。标题含类别，Sentry 按类别分组。
-pub fn report_usage_failure(stage: &'static str, kind: &'static str) {
+pub fn machine_filter_kind(machine: &MachineFilter) -> &'static str {
+    match machine {
+        MachineFilter::All => "all",
+        MachineFilter::Local => "local",
+        MachineFilter::Remote(_) => "remote",
+    }
+}
+
+pub fn report_cost_failure(period: Period, machine_kind: &'static str, error: &anyhow::Error) {
+    sentry::with_scope(
+        |scope| {
+            scope.set_tag("cost.period", period.as_str());
+            scope.set_tag("cost.machine", machine_kind);
+            set_error_diagnostic(scope, &ErrorDiagnostic::from_error(error));
+        },
+        || sentry::capture_message("Cost summary query failed", sentry::Level::Error),
+    );
+}
+
+/// 用量同步失败：所有阶段附类别，本机采集还附代码步骤和错误码。
+pub fn report_usage_failure(
+    stage: &'static str,
+    kind: &'static str,
+    diagnostic: Option<(&ErrorDiagnostic, Option<&ProviderId>)>,
+) {
     sentry::with_scope(
         |scope| {
             scope.set_tag("remote.stage", stage);
             scope.set_tag("remote.kind", kind);
+            if let Some((error, provider)) = diagnostic {
+                set_error_diagnostic(scope, error);
+                if let Some(provider) = provider {
+                    let label = match provider {
+                        ProviderId::Other(_) => "other",
+                        provider => provider.as_str(),
+                    };
+                    scope.set_tag("source.provider", label);
+                }
+            }
         },
         || sentry::capture_message(&usage_failure_title(stage, kind), sentry::Level::Error),
     );
+}
+
+fn set_error_diagnostic(scope: &mut sentry::Scope, diagnostic: &ErrorDiagnostic) {
+    scope.set_tag("code.operation", diagnostic.operation);
+    scope.set_extra("error.chain", json!(diagnostic.chain));
 }
 
 fn usage_failure_title(stage: &str, kind: &str) -> String {
@@ -256,6 +295,136 @@ fn scrub(mut event: sentry::protocol::Event<'static>) -> sentry::protocol::Event
 #[cfg(test)]
 mod tests {
     use super::*;
+    use agenthome_core::collector::{Collector, Limits};
+    use agenthome_core::device::DeviceIdentity;
+    use agenthome_core::diagnostics::ResultStep;
+    use agenthome_core::usage_store::{FailureKind, UsageStore};
+
+    fn emit_handled_failure_examples() -> [sentry::protocol::Uuid; 2] {
+        let dir = tempfile::tempdir().unwrap();
+        let identity_path = dir.path().join("device.json");
+        let identity =
+            DeviceIdentity::load_or_create(&identity_path, "synthetic-private-host").unwrap();
+        let bad_db = dir.path().join("synthetic-private-db");
+        std::fs::write(&bad_db, "synthetic-private-content").unwrap();
+        let Err(error) = UsageStore::open_read_only(&bad_db, &identity).step("cost.read_models")
+        else {
+            panic!("malformed cost fixture must fail");
+        };
+        report_cost_failure(
+            Period::Days(30),
+            machine_filter_kind(&MachineFilter::Remote("synthetic-private-machine".into())),
+            &error,
+        );
+        let cost_id = sentry::last_event_id().unwrap();
+
+        let gemini = dir.path().join("gemini");
+        let file = gemini.join("tmp/project/chats/session-2026-11-01T08-00-aaaaaaaa.jsonl");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(
+            &file,
+            concat!(
+                r#"{"sessionId":"aaaaaaaa-1111-4222-8333-000000000001","startTime":"2026-11-01T08:00:00.000Z","kind":"main"}"#, "\n",
+                r#"{"id":"r1","timestamp":"2026-11-01T08:00:01.000Z","type":"gemini","content":"synthetic-private-content","model":"gemini-3-flash","tokens":{"input":100,"output":10,"total":110}}"#, "\n",
+            ),
+        )
+        .unwrap();
+        let db = dir.path().join("usage/usage.db");
+        let mut collector = Collector::open(
+            &identity_path,
+            &db,
+            vec![Box::new(agenthome_core::GeminiProvider::new(gemini))],
+            Limits::default(),
+        )
+        .unwrap();
+        rusqlite::Connection::open(&db)
+            .unwrap()
+            .execute_batch(
+                "CREATE TRIGGER fail_usage BEFORE INSERT ON usage
+                 BEGIN SELECT RAISE(ABORT, 'synthetic-private-content'); END;",
+            )
+            .unwrap();
+        let report = collector.run_round().unwrap();
+        assert_eq!(report.failures[&FailureKind::Store], 1);
+        assert_eq!(collector.store().high_water().unwrap(), 0);
+        let (provider, diagnostic) = &report.failure_diagnostics[&FailureKind::Store];
+        report_usage_failure("collect", "store", Some((diagnostic, Some(provider))));
+        [cost_id, sentry::last_event_id().unwrap()]
+    }
+
+    #[test]
+    fn handled_failures_include_steps_codes_and_safe_stacktraces() {
+        let mut options = client_options(true);
+        options.before_send = Some(Arc::new(|event| Some(scrub(event))));
+        let events = sentry::test::with_captured_events_options(
+            || {
+                emit_handled_failure_examples();
+            },
+            sentry::apply_defaults(options),
+        );
+        assert_eq!(events.len(), 2);
+        let cost = &events[0];
+        assert_eq!(cost.tags["code.operation"], "usage.local.schema");
+        assert_eq!(cost.tags["cost.machine"], "remote");
+        assert_eq!(
+            cost.extra["error.chain"],
+            json!([
+                "cost.read_models",
+                "usage.local.schema",
+                "sqlite.NotADatabase (26)"
+            ])
+        );
+
+        let usage = &events[1];
+        assert_eq!(usage.tags["code.operation"], "usage.local.upsert_record");
+        assert_eq!(usage.tags["source.provider"], "gemini-cli");
+        assert_eq!(
+            usage.extra["error.chain"],
+            json!([
+                "usage.local.commit_file",
+                "usage.local.upsert_record",
+                "sqlite.ConstraintViolation (1811)"
+            ])
+        );
+
+        for event in events {
+            assert!(event.threads.values.iter().any(|thread| {
+                thread
+                    .stacktrace
+                    .as_ref()
+                    .is_some_and(|trace| !trace.frames.is_empty())
+            }));
+            let payload = serde_json::to_string(&event).unwrap();
+            assert!(!payload.contains("synthetic-private") && !payload.contains("gemini-3-flash"));
+            assert!(event.user.is_none());
+        }
+    }
+
+    #[test]
+    #[ignore = "Sends two synthetic events to Sentry in the test environment"]
+    fn handled_failures_sentry_selftest() {
+        let dsn = option_env!("SENTRY_DSN_AGENTHOME")
+            .filter(|dsn| !dsn.is_empty())
+            .expect("set SENTRY_DSN_AGENTHOME at build time");
+        assert!(active(), "set AGENTHOME_TELEMETRY_DEV=1 for a debug build");
+        let mut options = client_options(true);
+        options.environment = Some("test".into());
+        let client = sentry::init((dsn, options));
+        let ids = sentry::with_scope(
+            |scope| {
+                scope.set_fingerprint(Some(&[
+                    "agenthome-handled-errors-selftest",
+                    "{{ default }}",
+                ]));
+                scope.set_tag("telemetry.selftest", "handled-errors");
+            },
+            emit_handled_failure_examples,
+        );
+        assert!(client.flush(Some(std::time::Duration::from_secs(8))));
+        for id in ids {
+            println!("Sentry test event: {}", id.simple());
+        }
+    }
 
     /// 错误详情常带索引库 / 会话文件的绝对路径，里面是用户名；上报前必须换成 `~`，主机名也不能带出去。
     #[test]
@@ -316,7 +485,7 @@ mod tests {
         // 调试构建里 `active()` 为假会丢弃事件；这里只验证事件本身长什么样。
         options.before_send = Some(Arc::new(|event| Some(scrub(event))));
         let events = sentry::test::with_captured_events_options(
-            || report_usage_failure("sync", "unreachable"),
+            || report_usage_failure("sync", "unreachable", None),
             options,
         );
         assert_eq!(events.len(), 1);

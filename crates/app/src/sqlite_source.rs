@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use agenthome_core::device::DeviceIdentity;
+use agenthome_core::diagnostics::ResultStep;
 use agenthome_core::model::{
     CostBreakdown, DailyUsage, Message, Period, ProviderActivity, ProviderHealth, ProviderId,
     QuotaSnapshot, SearchHit, SessionQuery, SessionSummary, UsageTotals,
@@ -46,24 +47,16 @@ impl SqliteDataSource {
         f(&guard)
     }
 
-    /// 只读打开本机用量库与远端导入库：库不存在时不新建（还没采集过、还没配对过）。
-    fn usage_stores(
+    fn load_usage_identity(data: &Path) -> anyhow::Result<Option<DeviceIdentity>> {
+        DeviceIdentity::load(&data.join("device.json")).step("usage.load_identity")
+    }
+
+    fn open_remote_usage(
         data: &Path,
-    ) -> anyhow::Result<Option<(Option<UsageStore>, Option<ImportStore>)>> {
-        let Some(identity) = DeviceIdentity::load(&data.join("device.json"))? else {
-            return Ok(None);
-        };
-        let local_db = data.join("usage").join("usage.db");
-        let remote_db = data.join("remote").join("usage.db");
-        let local = local_db
-            .exists()
-            .then(|| UsageStore::open(&local_db, &identity))
-            .transpose()?;
-        let remote = remote_db
-            .exists()
-            .then(|| ImportStore::open(&remote_db, &identity))
-            .transpose()?;
-        Ok(Some((local, remote)))
+        identity: &DeviceIdentity,
+    ) -> anyhow::Result<Option<ImportStore>> {
+        ImportStore::open_read_only(&data.join("remote").join("usage.db"), identity)
+            .step("usage.remote.open_read_only")
     }
 }
 
@@ -110,16 +103,27 @@ impl DataSource for SqliteDataSource {
         machine: &MachineFilter,
     ) -> anyhow::Result<Vec<CostBreakdown>> {
         let Some(data) = &self.usage_data_dir else {
-            return self.with_store(|store| store.stats_by_model(period));
+            return self
+                .with_store(|store| store.stats_by_model(period))
+                .step("index.stats_by_model");
         };
-        let Some((local, remote)) = Self::usage_stores(data)? else {
+        let Some(identity) = Self::load_usage_identity(data)? else {
             return Ok(Vec::new());
         };
+        let local = UsageStore::open_read_only(&data.join("usage").join("usage.db"), &identity)
+            .step("usage.local.open_read_only")?;
         if local.is_none() && *machine == MachineFilter::Local {
             return Ok(Vec::new());
         }
-        let window = Window::new(period.since_ms().unwrap_or(0), i64::MAX)?;
-        let report = usage_report::query(local.as_ref(), remote.as_ref(), machine, window)?;
+        let remote = if *machine == MachineFilter::Local {
+            None
+        } else {
+            Self::open_remote_usage(data, &identity)?
+        };
+        let window =
+            Window::new(period.since_ms().unwrap_or(0), i64::MAX).step("usage.report_window")?;
+        let report = usage_report::query(local.as_ref(), remote.as_ref(), machine, window)
+            .step("usage.report_query")?;
         Ok(report
             .rows
             .iter()
@@ -131,8 +135,11 @@ impl DataSource for SqliteDataSource {
         let Some(data) = &self.usage_data_dir else {
             return Ok(Vec::new());
         };
-        match Self::usage_stores(data)? {
-            Some((_, Some(remote))) => remote.peers(),
+        let Some(identity) = Self::load_usage_identity(data)? else {
+            return Ok(Vec::new());
+        };
+        match Self::open_remote_usage(data, &identity)? {
+            Some(remote) => remote.peers().step("usage.remote.read_peers"),
             _ => Ok(Vec::new()),
         }
     }

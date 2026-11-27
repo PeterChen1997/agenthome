@@ -14,10 +14,43 @@ use agenthome_core::usage_import::{ImportStore, PageCursor};
 use agenthome_core::usage_report::{MachineFilter, MachineKind, Report, Tally, Window, query};
 use agenthome_core::usage_store::{SourceProgress, UsageStore};
 use agenthome_core::usage_v1::{EventBasis, Op, UsagePage, UsageRecord, VERSION, event_key};
+use rusqlite::Connection;
 use std::path::Path;
 
 const T0: i64 = 1_763_500_000_000;
 const HOUR: i64 = 3_600_000;
+
+#[test]
+fn cost_readers_can_query_while_local_and_remote_writers_hold_the_wal_lock() {
+    let dir = tempfile::tempdir().unwrap();
+    let id = DeviceIdentity::load_or_create(&dir.path().join("device.json"), "test").unwrap();
+    let local = dir.path().join("local.db");
+    let remote = dir.path().join("remote.db");
+    assert!(UsageStore::open_read_only(&local, &id).unwrap().is_none());
+    assert!(ImportStore::open_read_only(&remote, &id).unwrap().is_none());
+    assert!(!local.exists() && !remote.exists());
+    let uninitialized = Connection::open(&local).unwrap();
+    assert!(UsageStore::open_read_only(&local, &id).unwrap().is_none());
+    drop(uninitialized);
+
+    let _local_store = UsageStore::open(&local, &id).unwrap();
+    let _remote_store = ImportStore::open(&remote, &id).unwrap();
+    let local_writer = Connection::open(&local).unwrap();
+    let remote_writer = Connection::open(&remote).unwrap();
+    local_writer.execute_batch("BEGIN IMMEDIATE").unwrap();
+    remote_writer.execute_batch("BEGIN IMMEDIATE").unwrap();
+
+    let local = UsageStore::open_read_only(&local, &id).unwrap().unwrap();
+    let remote = ImportStore::open_read_only(&remote, &id).unwrap().unwrap();
+    let report = query(
+        Some(&local),
+        Some(&remote),
+        &MachineFilter::All,
+        Window::new(T0, T0 + HOUR).unwrap(),
+    )
+    .unwrap();
+    assert!(report.rows.is_empty());
+}
 
 struct Machine {
     _dir: tempfile::TempDir,
