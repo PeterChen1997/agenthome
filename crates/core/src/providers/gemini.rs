@@ -775,13 +775,8 @@ pub(crate) struct SummaryRow {
 /// 只读打开 Antigravity 的摘要库，取一行。标题在 `raw_summary`（protobuf）的字段 1；
 /// `title` 列本机实测全空，`preview` 是对话片段，只在两者都没有时兜底。
 pub(crate) fn read_summary(db: &Path, conv_id: &str) -> Result<Option<SummaryRow>> {
-    use rusqlite::{OpenFlags, OptionalExtension};
-    let conn = rusqlite::Connection::open_with_flags(
-        db,
-        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-    )
-    .with_context(|| format!("只读打开 {}", db.display()))?;
-    conn.busy_timeout(std::time::Duration::from_secs(2))?;
+    use rusqlite::OptionalExtension;
+    let conn = crate::providers::open_sqlite_readonly(db)?;
     let row = conn
         .query_row(
             "SELECT title, preview, raw_summary, workspace_uris, parent_conversation_id,

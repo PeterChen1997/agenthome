@@ -20,9 +20,8 @@
 
 use crate::model::{ProviderId, Usage};
 use crate::providers::{Discovery, FileUsage, Parsed, SourceProvider, UsageBasis, UsageEvent};
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
 use rusqlite::types::Value;
-use rusqlite::{Connection, OpenFlags};
 use std::path::{Path, PathBuf};
 
 const DB_FILE: &str = "opencode.db";
@@ -83,50 +82,6 @@ impl SourceProvider for OpenCodeProvider {
     }
 }
 
-/// 只读打开，读到已提交的 WAL 又不改源目录里的任何文件：
-/// - 有 `-wal` 或 `-shm`（OpenCode 在跑，或没正常退出）：`mode=ro&readonly_shm=1`，`-shm` 只读映射，
-///   SQLite 在内存里核对 WAL 索引，不写读标记。缺 `-shm` 时会打不开，报错、下一轮重试，不静默少读。
-/// - 都没有（OpenCode 正常退出时已全部合并进主文件）：`immutable=1`，否则只读连接也会新建 `-shm`。
-///   读的瞬间 OpenCode 恰好启动，新写入先进 `-wal`、主文件不变；`SourceProgress` 把 `-wal` 算进进度，下一轮会重读。
-///
-/// 注意 SQLite 在同一进程内共用 `-shm` 映射：本进程另有读写连接时 `readonly_shm` 不起作用。采集端不会写 OpenCode 的库。
-fn open_readonly(path: &Path) -> Result<Connection> {
-    let sidecar = |suffix: &str| {
-        let mut p = path.as_os_str().to_owned();
-        p.push(suffix);
-        Path::new(&p).exists()
-    };
-    let mode = if sidecar("-wal") || sidecar("-shm") {
-        "mode=ro&readonly_shm=1"
-    } else {
-        "mode=ro&immutable=1"
-    };
-    let uri = format!("file:{}?{mode}", uri_path(path)?);
-    let conn = Connection::open_with_flags(
-        &uri,
-        OpenFlags::SQLITE_OPEN_READ_ONLY
-            | OpenFlags::SQLITE_OPEN_URI
-            | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-    )
-    .with_context(|| format!("只读打开 {}", path.display()))?;
-    conn.busy_timeout(std::time::Duration::from_secs(2))?;
-    Ok(conn)
-}
-
-/// SQLite URI 的路径部分：`?`、`#`、`%` 等要百分号转义。
-fn uri_path(path: &Path) -> Result<String> {
-    let s = path.to_str().context("数据库路径不是 UTF-8")?;
-    let mut out = String::with_capacity(s.len());
-    for b in s.bytes() {
-        if b.is_ascii_alphanumeric() || b"/-_.~".contains(&b) {
-            out.push(char::from(b));
-        } else {
-            out.push_str(&format!("%{b:02X}"));
-        }
-    }
-    Ok(out)
-}
-
 /// 所有完成步骤，按完成时间排序。`k` 是步骤在所属消息里的序号（按 part id，即写入顺序）。
 const STEPS_SQL: &str = "
 SELECT p.id,
@@ -148,7 +103,7 @@ WHERE json_extract(p.data, '$.type') = 'step-finish'
 ORDER BY p.time_created, p.id";
 
 fn read_usage(path: &Path) -> Result<FileUsage> {
-    let conn = open_readonly(path)?;
+    let conn = crate::providers::open_sqlite_readonly(path)?;
     // 一个读事务里读完，OpenCode 同时在写也拿到同一时刻的一致视图。
     let tx = conn.unchecked_transaction()?;
     let mut events = Vec::new();

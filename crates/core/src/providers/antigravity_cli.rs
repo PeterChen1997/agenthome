@@ -83,12 +83,7 @@ impl AntigravityCliProvider {
         let mut warnings = Vec::new();
         let mut ignored: BTreeMap<String, usize> = BTreeMap::new();
 
-        let conn = rusqlite::Connection::open_with_flags(
-            path,
-            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
-        )
-        .with_context(|| format!("只读打开 {}", path.display()))?;
-        conn.busy_timeout(std::time::Duration::from_secs(2))?;
+        let conn = crate::providers::open_sqlite_readonly(path)?;
 
         // 回复 id → 实际服务的模型名。
         let mut models_by_response: HashMap<String, String> = HashMap::new();
@@ -620,5 +615,94 @@ mod tests {
         std::fs::write(&wal, b"x").unwrap();
         assert_eq!(provider.accepts(&wal), Some(false));
         assert_eq!(provider.discover().files.len(), 1);
+    }
+
+    /// 源目录下每个文件的（大小、内容哈希）。
+    fn dir_state(root: &Path) -> BTreeMap<PathBuf, (u64, u64)> {
+        use std::hash::{Hash, Hasher};
+        let mut out = BTreeMap::new();
+        let mut stack = vec![root.to_path_buf()];
+        while let Some(dir) = stack.pop() {
+            for entry in std::fs::read_dir(dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    stack.push(path);
+                    continue;
+                }
+                let bytes = std::fs::read(&path).unwrap();
+                let mut h = std::collections::hash_map::DefaultHasher::new();
+                bytes.hash(&mut h);
+                out.insert(path, (bytes.len() as u64, h.finish()));
+            }
+        }
+        out
+    }
+
+    /// 摘要库：WAL 模式、正常关闭（只剩主文件），与真实 agy 一致。
+    fn wal_summary_db(root: &Path, conv: &str) {
+        let db = rusqlite::Connection::open(root.join("conversation_summaries.db")).unwrap();
+        db.execute_batch(
+            "PRAGMA journal_mode=WAL;
+             CREATE TABLE conversation_summaries (conversation_id text, title text, preview text,
+                raw_summary blob, workspace_uris text, parent_conversation_id text,
+                last_modified_time datetime, last_user_input_time datetime);",
+        )
+        .unwrap();
+        db.execute(
+            "INSERT INTO conversation_summaries (conversation_id, preview) VALUES (?1, '数水果')",
+            [conv],
+        )
+        .unwrap();
+    }
+
+    /// 硬约束「原目录只读」（CARM-678）：agy 的库是 WAL 模式，普通只读连接也会在它的目录里新建
+    /// `-shm` / `-wal`。agy 正常退出后目录里只有主文件，读完必须还是只有主文件。
+    #[test]
+    fn 读取不在_agy_目录里留下_shm_与_wal() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = fixture(dir.path());
+        let conv = path.file_stem().unwrap().to_str().unwrap().to_string();
+        rusqlite::Connection::open(&path)
+            .unwrap()
+            .execute_batch("PRAGMA journal_mode=WAL; CREATE TABLE wal_probe (x);")
+            .unwrap();
+        wal_summary_db(dir.path(), &conv);
+        let before = dir_state(dir.path());
+        assert_eq!(before.len(), 2, "fixture 应只有两个主文件：{before:?}");
+
+        let provider = AntigravityCliProvider::new(dir.path().to_path_buf());
+        let parsed = provider.parse_file(&path).unwrap();
+        assert!(parsed.warnings.is_empty(), "{:?}", parsed.warnings);
+        assert_eq!(parsed.session.title.as_deref(), Some("数水果"));
+        assert_eq!(provider.usage_events(&path).unwrap().events.len(), 2);
+
+        assert_eq!(dir_state(dir.path()), before, "读取不能改源目录");
+    }
+
+    /// 旧版本读过的目录里已经留着 `-shm` 和 0 字节的 `-wal`（Runner 上实测 40 个库都是这样）：
+    /// 照样读得出来，并且不再改写这两个文件。
+    #[test]
+    fn 已有残留的_shm_与_wal_照样读且不改写() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = fixture(dir.path());
+        rusqlite::Connection::open(&path)
+            .unwrap()
+            .execute_batch("PRAGMA journal_mode=WAL; CREATE TABLE wal_probe (x);")
+            .unwrap();
+        // 旧的打开方式：裸路径只读，查一次就留下 -shm / -wal。
+        rusqlite::Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .unwrap()
+            .query_row("SELECT count(*) FROM steps", [], |r| r.get::<_, i64>(0))
+            .unwrap();
+        let before = dir_state(dir.path());
+        assert!(
+            before.contains_key(&path.with_extension("db-shm"))
+                && before.contains_key(&path.with_extension("db-wal")),
+            "应复现出残留文件：{before:?}"
+        );
+
+        let provider = AntigravityCliProvider::new(dir.path().to_path_buf());
+        assert_eq!(provider.usage_events(&path).unwrap().events.len(), 2);
+        assert_eq!(dir_state(dir.path()), before, "读取不能改源目录");
     }
 }
