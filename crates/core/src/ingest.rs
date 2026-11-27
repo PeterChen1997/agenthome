@@ -8,6 +8,7 @@
 //!   先把偏移之前的部分在内存里重放一遍重建状态，不写库。
 //! - 末尾没有换行的一段可能是写了一半的行：是完整 JSON 才消费，否则留到下次。
 
+use crate::diagnostics::ErrorDiagnostic;
 use crate::model::{ProviderId, SourceInfo};
 use crate::providers::claude_code::ClaudeCodeProvider;
 use crate::providers::{LineParser, LoadMessage, Restart, SourceProvider};
@@ -48,6 +49,8 @@ pub struct Report {
     pub skipped_superseded: usize,
     /// 解析或入库失败：(路径, 错误)。
     pub failed: Vec<(PathBuf, String)>,
+    /// 与 `failed` 逐条对应的错误类别（不含路径和原文），上报用。
+    pub failed_diagnostics: Vec<ErrorDiagnostic>,
     /// 各文件 warnings 总条数（坏行、缺字段）。
     pub warnings: usize,
     /// 最近几条 warning 原文（带路径），便于排查；全部保留会太长。
@@ -86,6 +89,8 @@ impl Report {
         self.skipped_unchanged += other.skipped_unchanged;
         self.skipped_superseded += other.skipped_superseded;
         self.failed.extend(other.failed.iter().cloned());
+        self.failed_diagnostics
+            .extend(other.failed_diagnostics.iter().cloned());
         self.warnings += other.warnings;
         for w in &other.warning_samples {
             if self.warning_samples.len() < WARNING_SAMPLE_LIMIT {
@@ -289,7 +294,13 @@ fn ingest_files(
             let root = provider.source_root(&path).unwrap_or(provider.root());
             match raw.archive(&provider.id(), root, &path) {
                 Ok(outcome) => report.raw.record(&outcome),
-                Err(e) => report.raw.failed.push((path.clone(), format!("{e:#}"))),
+                Err(e) => {
+                    report
+                        .raw
+                        .failed_diagnostics
+                        .push(ErrorDiagnostic::from_error(&e));
+                    report.raw.failed.push((path.clone(), format!("{e:#}")));
+                }
             }
         }
         let mut ctx = Ctx {
@@ -300,6 +311,9 @@ fn ingest_files(
             cache: &mut *cache,
         };
         if let Err(e) = ctx.process_one(&path) {
+            report
+                .failed_diagnostics
+                .push(ErrorDiagnostic::from_error(&e));
             report.failed.push((path.clone(), format!("{e:#}")));
         }
         progress(Progress {

@@ -994,10 +994,7 @@ impl SettingsView {
                     cx.emit(SettingsEvent::SubscriptionFeeChanged(vendor, fee));
                 }
                 Err(error) => {
-                    crate::telemetry::report_error(
-                        "Subscription fee save failed",
-                        &format!("{error:#}"),
-                    );
+                    crate::telemetry::report_error("Subscription fee save failed", &error);
                     field.error = Some(t!("settings.subscription_fee_save_failed").into());
                 }
             }

@@ -410,4 +410,13 @@ fn broken_json_is_reported_not_panicking() {
     );
     assert_eq!(r.parsed, 6);
     assert!(r.warnings >= 2, "jsonl 坏行 + 孤儿 .pb");
+    // 上报用的错误类别与 failed 逐条对应：能看出是哪类失败，但不带路径（Gemini 的目录名就是项目名）。
+    assert_eq!(r.failed_diagnostics.len(), r.failed.len());
+    let chain = &r.failed_diagnostics[0].chain;
+    assert!(chain.iter().any(|c| c.starts_with("json.")), "{chain:?}");
+    assert!(
+        chain
+            .iter()
+            .all(|c| !c.contains("hash-c") && !c.contains("session-"))
+    );
 }

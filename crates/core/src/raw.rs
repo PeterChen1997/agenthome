@@ -18,6 +18,7 @@
 //! key 取原件相对来源根目录的路径去掉 `.jsonl` / `.jsonl.zst`：Claude 是 `<项目目录>/<会话 id>`
 //! （子代理 `<项目目录>/<会话 id>/subagents/agent-*`），Codex 是 `YYYY/MM/DD/rollout-*`。
 
+use crate::diagnostics::ErrorDiagnostic;
 use crate::model::ProviderId;
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
@@ -102,6 +103,8 @@ pub struct RawReport {
     /// 本次写入的原件内容字节数（解压后）。
     pub bytes_copied: u64,
     pub failed: Vec<(PathBuf, String)>,
+    /// 与 `failed` 逐条对应的错误类别（不含路径和原文），上报用。
+    pub failed_diagnostics: Vec<ErrorDiagnostic>,
 }
 
 impl RawReport {
@@ -132,6 +135,8 @@ impl RawReport {
         self.new_versions += other.new_versions;
         self.bytes_copied += other.bytes_copied;
         self.failed.extend(other.failed.iter().cloned());
+        self.failed_diagnostics
+            .extend(other.failed_diagnostics.iter().cloned());
     }
 
     /// 本次有没有写入任何东西。

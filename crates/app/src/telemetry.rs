@@ -2,7 +2,8 @@
 //! 关掉后立即生效：Umami 不再发，Sentry 在 `before_send` 里丢弃。
 //!
 //! 只发枚举 / 数字 / 布尔：页面名、版本号、结果（ok / failed）。不发会话内容、路径、项目名、token 用量。
-//! 错误上报前把用户主目录替换成 `~`，不带主机名、不带用户信息。
+//! 被处理掉的错误只发固定标题、代码里定义的步骤名和错误类别，错误原文（常带路径）不出设备。
+//! 崩溃（panic）的文字在发出前把路径换成 `<path>`，不带主机名、不带用户信息。
 //!
 //! Sentry DSN 在构建时从环境变量 `SENTRY_DSN_AGENTHOME` 注入（`script/release-macos.sh` 从
 //! `~/.config/sentry-dsns.env` 读），开源仓库里没有；没注入时 Sentry 不启用。调试构建默认都不发，
@@ -70,7 +71,7 @@ fn client_options(test_run: bool) -> sentry::ClientOptions {
     options.release = Some(format!("agenthome@{VERSION}").into());
     options.environment = Some(environment(cfg!(debug_assertions), test_run).into());
     options.send_default_pii = false;
-    // capture_message 默认不带堆栈；带上当前线程的堆栈，report_error 的事件才能定位到调用处。
+    // capture_message 默认不带堆栈；带上当前线程的堆栈，被处理掉的错误才能定位到调用处。
     options.attach_stacktrace = true;
     // 不用 contexts 默认的主机名（常带真名）。
     options.server_name = Some("agenthome".into());
@@ -78,10 +79,31 @@ fn client_options(test_run: bool) -> sentry::ClientOptions {
     options
 }
 
-/// 上报一个被处理掉的错误：`context` 是固定的英文标题（决定分组），`error` 是详情（会去掉主目录）。
-pub fn report_error(context: &'static str, error: &str) {
+/// 上报一个被处理掉的错误：`context` 是固定的英文标题（决定分组）。`error` 只取代码里定义的步骤名和
+/// 错误类别（如 `io.NotFound`）；原文常带会话文件路径，Gemini CLI 的目录名就是项目名，所以不发。
+pub fn report_error(context: &'static str, error: &anyhow::Error) {
+    report_diagnostic(context, &ErrorDiagnostic::from_error(error));
+}
+
+fn report_diagnostic(context: &'static str, diagnostic: &ErrorDiagnostic) {
     sentry::with_scope(
-        |scope| scope.set_extra("error", Value::String(error.to_string())),
+        |scope| set_error_diagnostic(scope, diagnostic),
+        || sentry::capture_message(context, sentry::Level::Error),
+    );
+}
+
+/// 只有一段文字、拿不到错误类型的失败（如文件监听后端报错）：只发固定标题。
+pub fn report_failure(context: &'static str) {
+    sentry::capture_message(context, sentry::Level::Error);
+}
+
+/// 一次扫描里新出现的单文件失败：发个数和第一条的错误类别，不发文件路径和错误原文。
+pub fn report_file_failures(context: &'static str, count: usize, first: &ErrorDiagnostic) {
+    sentry::with_scope(
+        |scope| {
+            scope.set_extra("failed_files", json!(count));
+            set_error_diagnostic(scope, first);
+        },
         || sentry::capture_message(context, sentry::Level::Error),
     );
 }
@@ -153,7 +175,10 @@ pub fn report_unpriced_models(summary: &agenthome_core::cost::CostSummary) {
             continue;
         }
         reported.push(model.model.clone());
-        report_error("Model missing from pricing table", &model.model);
+        sentry::with_scope(
+            |scope| scope.set_extra("model", Value::String(model.model.clone())),
+            || sentry::capture_message("Model missing from pricing table", sentry::Level::Error),
+        );
     }
 }
 
@@ -235,17 +260,56 @@ fn scrub_text(text: &str, home: Option<&str>) -> String {
     out
 }
 
-/// 去掉事件里的用户主目录、Claude 项目目录名与主机名。
+/// 自由文本（panic 文字、面包屑）里的绝对路径和 `~/` 路径整段换成 `<path>`：文件名、会话 id、
+/// 项目目录名（Gemini CLI 的 `~/.gemini/tmp/<项目名>/`、外置盘上的 Claude 项目）都不出设备。
+/// 路径到空白或引号 / 括号为止；路径前面紧挨着引号时到配对的引号为止（带空格的路径也整段去掉）。
+/// 没加引号又带空格的路径，第一个空格之后的部分去不掉。URL 不动。
+fn redact_paths(text: &str) -> String {
+    let ends_path = |c: char| c.is_whitespace() || "\"'`(),;=[]{}<>".contains(c);
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    let mut prev: Option<char> = None;
+    while let Some(c) = rest.chars().next() {
+        let starts_path = (rest.starts_with('/') || rest.starts_with("~/"))
+            && prev.is_none_or(|p| p == ':' || ends_path(p))
+            && rest
+                .trim_start_matches('~')
+                .chars()
+                .nth(1)
+                .is_some_and(|next| !ends_path(next) && next != '/');
+        if starts_path {
+            let end = match prev.filter(|p| "\"'`".contains(*p)) {
+                Some(quote) => rest.find(quote),
+                None => rest.find(ends_path),
+            }
+            .unwrap_or(rest.len());
+            // 「读 /a/b: 权限不足」里的冒号是句子的，不算路径。
+            let end = rest[..end].trim_end_matches(':').len();
+            out.push_str("<path>");
+            rest = &rest[end..];
+            prev = Some('>');
+            continue;
+        }
+        out.push(c);
+        rest = &rest[c.len_utf8()..];
+        prev = Some(c);
+    }
+    out
+}
+
+/// 去掉事件里的路径、用户主目录、Claude 项目目录名与主机名。
 fn scrub(mut event: sentry::protocol::Event<'static>) -> sentry::protocol::Event<'static> {
     let home = dirs::home_dir().map(|h| h.display().to_string());
-    let clean = |text: &mut String| *text = scrub_text(text, home.as_deref());
+    // 堆栈帧和调试镜像里是源码 / 可执行文件的路径，符号化要用，只换主目录。
+    let clean_location = |text: &mut String| *text = scrub_text(text, home.as_deref());
+    let clean = |text: &mut String| *text = scrub_text(&redact_paths(text), home.as_deref());
     let clean_stack = |stacktrace: &mut sentry::protocol::Stacktrace| {
         for frame in stacktrace.frames.iter_mut() {
             if let Some(path) = frame.abs_path.as_mut() {
-                clean(path);
+                clean_location(path);
             }
             if let Some(path) = frame.filename.as_mut() {
-                clean(path);
+                clean_location(path);
             }
         }
     };
@@ -267,7 +331,7 @@ fn scrub(mut event: sentry::protocol::Event<'static>) -> sentry::protocol::Event
             clean_stack(stacktrace);
         }
     }
-    // attach_stacktrace 给 report_error 的事件挂的是线程堆栈。
+    // attach_stacktrace 给被处理掉的错误挂的是线程堆栈。
     if let Some(stacktrace) = event.stacktrace.as_mut() {
         clean_stack(stacktrace);
     }
@@ -279,8 +343,8 @@ fn scrub(mut event: sentry::protocol::Event<'static>) -> sentry::protocol::Event
     // 调试镜像里是可执行文件的完整路径（app 不在 /Applications 时带用户名）。
     for image in event.debug_meta.to_mut().images.iter_mut() {
         match image {
-            DebugImage::Symbolic(image) => clean(&mut image.name),
-            DebugImage::Apple(image) => clean(&mut image.name),
+            DebugImage::Symbolic(image) => clean_location(&mut image.name),
+            DebugImage::Apple(image) => clean_location(&mut image.name),
             _ => {}
         }
     }
@@ -426,28 +490,110 @@ mod tests {
         }
     }
 
-    /// 错误详情常带索引库 / 会话文件的绝对路径，里面是用户名；上报前必须换成 `~`，主机名也不能带出去。
+    /// README 与 SECURITY.md 对外承诺上报里没有文件路径和项目名。被处理掉的错误原文常带会话文件路径：
+    /// Gemini CLI 的目录名就是项目名，外置盘上的 Claude 项目目录名也认不出来，所以原文整段不发，
+    /// 只留代码里定义的步骤名和错误类别。
     #[test]
-    fn scrub_removes_home_and_hostname() {
+    fn handled_errors_never_carry_paths_or_project_names() {
+        let leaky = [
+            "/Users/alice/.gemini/tmp/secret-client/chats/session-2026-11-01T08-00-aaaaaaaa.jsonl",
+            "/Users/alice/.claude/projects/-Volumes-work-secret-client/abc.jsonl",
+            "/Users/alice/.codex/sessions/2026/11/01/rollout-secret-client.jsonl",
+        ];
+        let mut options = client_options(false);
+        options.before_send = Some(Arc::new(|event| Some(scrub(event))));
+        let events = sentry::test::with_captured_events_options(
+            || {
+                for path in leaky {
+                    let io = std::io::Error::from(std::io::ErrorKind::PermissionDenied);
+                    let error = anyhow::Error::new(io).context(format!("读 {path}"));
+                    report_error("sync: open index failed", &error);
+                    report_file_failures(
+                        "sync: ingest failed",
+                        3,
+                        &ErrorDiagnostic::from_error(&error),
+                    );
+                }
+                report_failure("sync: watcher error");
+            },
+            options,
+        );
+        assert_eq!(events.len(), leaky.len() * 2 + 1);
+        for event in &events {
+            let payload = serde_json::to_string(event).unwrap();
+            for word in ["secret-client", "alice", ".gemini", ".jsonl", "session-"] {
+                assert!(!payload.contains(word), "{word} 出现在上报里：{payload}");
+            }
+        }
+        // 路径去掉后仍要能看出是哪一类失败。
+        let first = &events[0];
+        assert_eq!(first.message.as_deref(), Some("sync: open index failed"));
+        assert_eq!(first.extra["error.chain"], json!(["io.PermissionDenied"]));
+        assert_eq!(events[1].extra["failed_files"], json!(3));
+        assert_eq!(
+            events[1].extra["error.chain"],
+            json!(["io.PermissionDenied"])
+        );
+        assert!(events.last().unwrap().extra.is_empty());
+    }
+
+    /// 崩溃的文字是自由文本，可能带索引库 / 会话文件的路径：路径整段换成 `<path>`，主机名也不能带出去；
+    /// 堆栈帧里的源码路径符号化要用，只换主目录。
+    #[test]
+    fn scrub_redacts_paths_in_free_text_and_hostname() {
         let home = dirs::home_dir().unwrap().display().to_string();
         let mut event = sentry::protocol::Event {
             message: Some(format!("open {home}/AgentHome/index/agenthome.db failed")),
             server_name: Some(Cow::Owned("Peters-MacBook".into())),
             ..Default::default()
         };
-        event.extra.insert(
-            "error".into(),
-            Value::String(format!("{home}/.claude/projects/x.jsonl")),
-        );
+        event.exception.values.push(sentry::protocol::Exception {
+            ty: "panic".into(),
+            value: Some(format!(
+                "read {home}/.gemini/tmp/secret-client/chats/s.jsonl: denied"
+            )),
+            stacktrace: Some(sentry::protocol::Stacktrace {
+                frames: vec![sentry::protocol::Frame {
+                    abs_path: Some(format!("{home}/code/agenthome/crates/app/src/sync.rs")),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
         let event = scrub(event);
-        let message = event.message.unwrap();
-        assert!(!message.contains(&home), "{message}");
-        assert!(message.contains("~/AgentHome/index"));
+        assert_eq!(event.message.as_deref(), Some("open <path> failed"));
+        let exception = &event.exception.values[0];
+        assert_eq!(exception.value.as_deref(), Some("read <path>: denied"));
+        let frames = &exception.stacktrace.as_ref().unwrap().frames;
         assert_eq!(
-            event.extra["error"],
-            Value::String("~/.claude/projects/x.jsonl".into())
+            frames[0].abs_path.as_deref(),
+            Some("~/code/agenthome/crates/app/src/sync.rs")
         );
         assert_eq!(event.server_name.as_deref(), Some("agenthome"));
+    }
+
+    #[test]
+    fn redact_paths_handles_quotes_urls_and_plain_text() {
+        // Debug 格式的路径带引号：带空格的目录名也要整段去掉。
+        assert_eq!(
+            redact_paths(r#"open "/Volumes/work/My Client/a.jsonl" failed"#),
+            r#"open "<path>" failed"#
+        );
+        assert_eq!(
+            redact_paths("a ~/.claude/projects/-Volumes-work-client/abc.jsonl, b (/tmp/x)"),
+            "a <path>, b (<path>)"
+        );
+        assert_eq!(redact_paths("db:/Users/alice/x.db busy"), "db:<path> busy");
+        // 不是路径的不动：URL、除号、单独的斜杠、模型名。
+        for text in [
+            "GET https://api.github.com/repos/x/y failed",
+            "ratio 3 / 4 and and/or",
+            "model openrouter/some-model",
+            "index out of bounds: the len is 3 but the index is 7",
+        ] {
+            assert_eq!(redact_paths(text), text);
+        }
     }
 
     /// Claude 会话原件在 `~/.claude/projects/-Users-<用户名>-<项目路径>/` 下，入库失败的报错常带这个目录名；

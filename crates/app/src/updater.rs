@@ -101,7 +101,7 @@ pub fn install_now(state: &Entity<UpdateState>, cx: &mut App) {
             serde_json::json!({ "result": if ok { "ok" } else { "failed" } }),
         );
         if let Err(error) = &result {
-            telemetry::report_error("update install failed", &format!("{error:#}"));
+            telemetry::report_error("update install failed", error);
         }
         state.update(cx, |s, cx| {
             s.install = match result {
@@ -154,12 +154,12 @@ pub fn check_now(state: &Entity<UpdateState>, cx: &mut App) {
                     s.last_error = None;
                 }
                 Err(error) => {
-                    let error = format!("{error:#}");
+                    let text = format!("{error:#}");
                     // 断网 / 限流是常态，只报返回内容解析不了这类真问题
-                    if !error.starts_with(FETCH_FAILED_PREFIX) {
+                    if !text.starts_with(FETCH_FAILED_PREFIX) {
                         telemetry::report_error("update check failed", &error);
                     }
-                    s.last_error = Some(error);
+                    s.last_error = Some(text);
                 }
             }
             cx.notify();

@@ -17,6 +17,7 @@ use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use agenthome_core::diagnostics::ErrorDiagnostic;
 use agenthome_core::model::ProviderId;
 use agenthome_core::providers::registry;
 use agenthome_core::{
@@ -381,13 +382,14 @@ pub(crate) fn update(shared: &Mutex<SyncState>, f: impl FnOnce(&mut SyncState)) 
 fn handle_watch_event(
     event: WatchEvent,
     sender: &Sender<Command>,
-    report_error: impl FnOnce(&'static str, &str),
+    report_failure: impl FnOnce(&'static str),
 ) {
     let command = match event {
         WatchEvent::Changed { provider, paths } => Command::Changed(provider, paths),
         WatchEvent::Rescan => Command::ScanAll,
-        WatchEvent::Error(error) => {
-            report_error("sync: watcher error", &error);
+        // 报错原文可能带被监听的路径，只发固定标题。
+        WatchEvent::Error(_) => {
+            report_failure("sync: watcher error");
             Command::ScanAll
         }
     };
@@ -404,7 +406,7 @@ fn run_worker(
     let mut store = match Store::open(&db_path) {
         Ok(store) => store,
         Err(error) => {
-            telemetry::report_error("sync: open index failed", &format!("{error:#}"));
+            telemetry::report_error("sync: open index failed", &error);
             update(&shared, |s| {
                 s.error =
                     Some(t!("sync.open_index_failed", error = format!("{error:#}")).to_string());
@@ -414,7 +416,7 @@ fn run_worker(
     };
     // 先固定本机身份再实例化来源：会话 id 里的机器标签以身份文件为准，不随主机名变。
     if let Err(error) = agenthome_core::device::ensure_local(&store) {
-        telemetry::report_error("sync: device identity failed", &format!("{error:#}"));
+        telemetry::report_error("sync: device identity failed", &error);
     }
     let providers = registry::instantiate_all();
     let sources: Vec<&dyn SourceProvider> = providers
@@ -425,7 +427,7 @@ fn run_worker(
     let raw = match RawArchive::open(raw_root.clone()) {
         Ok(raw) => Some(raw),
         Err(error) => {
-            telemetry::report_error("sync: open raw archive failed", &format!("{error:#}"));
+            telemetry::report_error("sync: open raw archive failed", &error);
             update(&shared, |s| {
                 s.raw.open_error = Some(format!("{error:#}"));
             });
@@ -438,7 +440,7 @@ fn run_worker(
     // 各来源自己声明要监听的目录（Codex 还有归档目录）；目录不存在属正常，不算没挂上。
     let watch_list: Vec<WatchRoot> = sources.iter().flat_map(|p| WatchRoot::of(*p)).collect();
     let watcher = watch_roots(&watch_list, move |event| {
-        handle_watch_event(event, &watch_sender, telemetry::report_error);
+        handle_watch_event(event, &watch_sender, telemetry::report_failure);
     });
     match &watcher {
         Ok(watcher) => update(&shared, |s| {
@@ -459,7 +461,7 @@ fn run_worker(
             }
         }),
         Err(error) => {
-            telemetry::report_error("sync: start watcher failed", &format!("{error:#}"));
+            telemetry::report_error("sync: start watcher failed", error);
             update(&shared, |s| {
                 s.error = Some(t!("sync.watch_failed", error = format!("{error:#}")).to_string());
             })
@@ -605,8 +607,18 @@ fn scan(
         .map(|(p, _)| p.clone())
         .chain(batch.full.iter().cloned())
         .collect();
-    report_new_failures("sync: ingest failed", &report.failed, reported);
-    report_new_failures("sync: raw archive failed", &report.raw.failed, reported);
+    report_new_failures(
+        "sync: ingest failed",
+        &report.failed,
+        &report.failed_diagnostics,
+        reported,
+    );
+    report_new_failures(
+        "sync: raw archive failed",
+        &report.raw.failed,
+        &report.raw.failed_diagnostics,
+        reported,
+    );
     let now = now_ms();
     let full = batch.full.len() == sources.len();
     // 统计要遍历全部清单，只在有写入或还没统计过时重算。
@@ -645,22 +657,21 @@ fn scan(
     });
 }
 
-/// 本次扫描里新出现的单文件失败合成一条上报（数量 + 第一条详情），不让一个坏文件每次扫描都报一遍。
+/// 本次扫描里新出现的单文件失败合成一条上报（数量 + 第一条的错误类别），不让一个坏文件每次扫描都报一遍。
+/// 文件路径和错误原文不发：路径里有项目名。`diagnostics` 与 `failed` 逐条对应。
 fn report_new_failures(
     context: &'static str,
     failed: &[(PathBuf, String)],
+    diagnostics: &[ErrorDiagnostic],
     reported: &mut HashSet<(PathBuf, String)>,
 ) {
     let fresh = new_failures(failed, reported);
-    if let Some((path, error)) = fresh.first() {
-        telemetry::report_error(
-            context,
-            &format!(
-                "{} new failed file(s); first: {}: {error}",
-                fresh.len(),
-                path.display()
-            ),
-        );
+    let first = fresh
+        .first()
+        .and_then(|first| failed.iter().position(|item| item == *first))
+        .and_then(|index| diagnostics.get(index));
+    if let Some(first) = first {
+        telemetry::report_file_failures(context, fresh.len(), first);
     }
 }
 
@@ -819,25 +830,23 @@ mod tests {
     #[test]
     fn watcher_rescan_queues_scan_all_without_reporting_an_error() {
         let (sender, receiver) = mpsc::channel();
-        handle_watch_event(WatchEvent::Rescan, &sender, |context, error| {
-            panic!("unexpected error report: {context}: {error}");
+        handle_watch_event(WatchEvent::Rescan, &sender, |context| {
+            panic!("unexpected error report: {context}");
         });
         assert!(matches!(receiver.try_recv(), Ok(Command::ScanAll)));
     }
 
+    /// 监听后端的报错原文可能带被监听的路径（含项目名），上报只给固定标题。
     #[test]
     fn watcher_error_is_reported_and_queues_scan_all() {
         let (sender, receiver) = mpsc::channel();
         let mut reports = Vec::new();
         handle_watch_event(
-            WatchEvent::Error("backend failed".into()),
+            WatchEvent::Error("backend failed: /Users/alice/.gemini/tmp/secret-client".into()),
             &sender,
-            |context, error| reports.push((context, error.to_string())),
+            |context| reports.push(context),
         );
-        assert_eq!(
-            reports,
-            vec![("sync: watcher error", "backend failed".to_string())]
-        );
+        assert_eq!(reports, vec!["sync: watcher error"]);
         assert!(matches!(receiver.try_recv(), Ok(Command::ScanAll)));
     }
 
