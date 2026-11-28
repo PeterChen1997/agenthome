@@ -52,7 +52,7 @@ AgentHome 不监听任何端口、不自动发现、不做穿透。采集端没�
 - `-F /dev/null` 不读用户的 `~/.ssh/config`，所以 ProxyCommand、转发等配置都不会带进来。另外固定 `StrictHostKeyChecking=yes`、`IdentitiesOnly=yes`、`IdentityAgent=none`、`ClearAllForwardings=yes`、`BatchMode=yes`。
 - 总时限 30 秒，超时就杀掉 ssh。stdout 最多读 256 KiB + 1 字节，返回内容按 `deny_unknown_fields` 校验，不合规整页拒收。
 - 对端 `machine_id` 和本机相同（把本机当远端）时拒绝。
-- 错误分类（`RemoteErrorKind`）：`net_not_allowed`、`host_key_mismatch`、`unauthorized`、`unreachable`、`timeout`、`bad_response`、`self_pairing`、`local`。上报只报类别。
+- 错误分类（`RemoteErrorKind`）：`net_not_allowed`、`host_key_mismatch`、`unauthorized`、`unreachable`、`timeout`、`bad_response`、`self_pairing`、`local`。上报包含失败类别。收到不合规响应时，再附退出码、错误类别，以及 stdout / stderr 各自捕获的字节数和首个非空行的类别。响应原文留在本机。
 
 ## 导出页
 

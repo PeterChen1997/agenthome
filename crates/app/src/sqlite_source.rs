@@ -194,3 +194,49 @@ impl DataSource for SqliteDataSource {
         Ok(out)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rusqlite::{Connection, params};
+
+    #[test]
+    fn cost_dashboard_reads_usage_while_local_and_remote_writers_hold_the_wal_lock() {
+        let data = tempfile::tempdir().unwrap();
+        let identity =
+            DeviceIdentity::load_or_create(&data.path().join("device.json"), "mac").unwrap();
+        let remote_data = tempfile::tempdir().unwrap();
+        let peer =
+            DeviceIdentity::load_or_create(&remote_data.path().join("device.json"), "runner")
+                .unwrap();
+        let local = data.path().join("usage/usage.db");
+        let remote = data.path().join("remote/usage.db");
+        let _local_store = UsageStore::open(&local, &identity).unwrap();
+        let mut remote_store = ImportStore::open(&remote, &identity).unwrap();
+        remote_store.pair("runner", peer.machine_id(), 0).unwrap();
+
+        let local_writer = Connection::open(&local).unwrap();
+        let remote_writer = Connection::open(&remote).unwrap();
+        local_writer.execute_batch("BEGIN IMMEDIATE").unwrap();
+        remote_writer.execute_batch("BEGIN IMMEDIATE").unwrap();
+        remote_writer
+            .execute(
+                "UPDATE peers SET label = 'uncommitted' WHERE machine_id = ?1",
+                params![peer.machine_id()],
+            )
+            .unwrap();
+
+        let mut source = SqliteDataSource::open(&data.path().join("index.db")).unwrap();
+        source.usage_data_dir = Some(data.path().to_owned());
+        assert_eq!(
+            source.remote_machines().unwrap(),
+            vec![(peer.machine_id().to_owned(), "runner".to_owned())]
+        );
+        assert!(
+            source
+                .cost_by_model(Period::Days(30), &MachineFilter::All)
+                .unwrap()
+                .is_empty()
+        );
+    }
+}

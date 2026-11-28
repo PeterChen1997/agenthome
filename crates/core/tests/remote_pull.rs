@@ -81,6 +81,7 @@ fn ssh<'a>(
             return Err(RemoteError {
                 kind: RemoteErrorKind::Unreachable,
                 detail: "ssh: connect to host 10.0.0.2 port 22: Network is unreachable".into(),
+                response: None,
             }
             .into());
         }

@@ -25,7 +25,7 @@ use std::fmt;
 use std::io::Read;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, ToSocketAddrs};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
 /// 导出请求的固定写法：`agenthome-export v1 after=<seq>`。
@@ -80,7 +80,12 @@ pub struct ExportPage {
 
 impl ExportPage {
     pub fn validate(&self) -> Result<()> {
-        ensure!(self.v == usage_v1::VERSION, "不支持的版本 {}", self.v);
+        for version in [self.v, self.page.v] {
+            ensure!(
+                version == usage_v1::VERSION,
+                UnsupportedExportVersion(version)
+            );
+        }
         ensure!(
             self.store_id.len() == 32 && self.store_id.bytes().all(|c| c.is_ascii_hexdigit()),
             "store_id 不是 32 位 hex"
@@ -130,6 +135,17 @@ impl ExportPage {
         Ok(page)
     }
 }
+
+#[derive(Debug)]
+struct UnsupportedExportVersion(u32);
+
+impl fmt::Display for UnsupportedExportVersion {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "不支持的版本 {}", self.0)
+    }
+}
+
+impl std::error::Error for UnsupportedExportVersion {}
 
 /// 取 `seq > after` 的变更，按页大小截断成一页。
 pub fn export_page(store: &UsageStore, after: u64) -> Result<ExportPage> {
@@ -455,7 +471,7 @@ impl RemoteConfig {
     }
 }
 
-/// 拉取 / 配对失败的类别。上报时只报类别，不带地址、路径和载荷。
+/// 拉取 / 配对失败的类别，可安全上报。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RemoteErrorKind {
     /// 目标地址不在允许网段内。
@@ -495,6 +511,78 @@ impl RemoteErrorKind {
 pub struct RemoteError {
     pub kind: RemoteErrorKind,
     pub detail: String,
+    pub response: Option<ResponseDiagnostic>,
+}
+
+/// A bounded summary of a rejected SSH response. Stream text stays on the device.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+pub struct ResponseDiagnostic {
+    pub reason: ResponseFailure,
+    pub exit_code: Option<i32>,
+    pub stdout: ResponseStream,
+    pub stderr: ResponseStream,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResponseFailure {
+    ExitStatus,
+    OutputTooLarge,
+    IncompleteJson,
+    InvalidJson,
+    UnexpectedJsonData,
+    UnsupportedVersion,
+    InvalidPage,
+    CursorMismatch,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+pub struct ResponseStream {
+    /// Number of captured bytes, bounded by the stream's read limit.
+    pub captured_bytes: usize,
+    /// Category of the first nonblank line.
+    pub first_line: ResponseLine,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResponseLine {
+    Empty,
+    Blank,
+    JsonObject,
+    ExporterDatabaseOpenError,
+    ExporterError,
+    Text,
+    Binary,
+}
+
+impl ResponseStream {
+    fn from_bytes(bytes: &[u8]) -> Self {
+        let first_line = if bytes.is_empty() {
+            ResponseLine::Empty
+        } else {
+            let line = bytes
+                .split(|byte| *byte == b'\n')
+                .map(<[u8]>::trim_ascii)
+                .find(|line| !line.is_empty());
+            match line.map(std::str::from_utf8) {
+                None => ResponseLine::Blank,
+                Some(Ok(line)) if line.starts_with('{') => ResponseLine::JsonObject,
+                Some(Ok(line)) if line.starts_with("agenthome ssh-export: 打不开用量库") => {
+                    ResponseLine::ExporterDatabaseOpenError
+                }
+                Some(Ok(line)) if line.starts_with("agenthome ssh-export: ") => {
+                    ResponseLine::ExporterError
+                }
+                Some(Ok(_)) => ResponseLine::Text,
+                Some(Err(_)) => ResponseLine::Binary,
+            }
+        };
+        Self {
+            captured_bytes: bytes.len(),
+            first_line,
+        }
+    }
 }
 
 impl fmt::Display for RemoteError {
@@ -509,6 +597,7 @@ fn fail<T>(kind: RemoteErrorKind, detail: impl Into<String>) -> Result<T> {
     Err(RemoteError {
         kind,
         detail: detail.into(),
+        response: None,
     }
     .into())
 }
@@ -734,17 +823,68 @@ pub fn fetch(dir: &Path, after: u64, local_machine_id: Option<&str>) -> Result<E
         .arg("--")
         .arg(ip.to_string())
         .arg(request_command(after));
-    let (status, stdout, stderr) = run_limited(cmd, FETCH_TIMEOUT)?;
-    if !status.success() {
-        let kind = classify_ssh_error(status.code(), &stderr);
-        return fail(kind, first_line(&stderr));
-    }
-    let page = match ExportPage::decode(&stdout) {
-        Ok(page) => page,
-        Err(e) => return fail(RemoteErrorKind::BadResponse, format!("返回内容不合规：{e}")),
+    let output = run_limited(cmd, FETCH_TIMEOUT)?;
+    decode_ssh_response(
+        output.status.code(),
+        &output.stdout,
+        &output.stderr,
+        after,
+        local_machine_id,
+    )
+}
+
+fn decode_ssh_response(
+    exit_code: Option<i32>,
+    stdout: &[u8],
+    stderr: &[u8],
+    after: u64,
+    local_machine_id: Option<&str>,
+) -> Result<ExportPage> {
+    let bad_response = |reason, detail| RemoteError {
+        kind: RemoteErrorKind::BadResponse,
+        detail,
+        response: Some(ResponseDiagnostic {
+            reason,
+            exit_code,
+            stdout: ResponseStream::from_bytes(stdout),
+            stderr: ResponseStream::from_bytes(stderr),
+        }),
     };
+    if exit_code != Some(0) {
+        let stderr = String::from_utf8_lossy(stderr);
+        let kind = classify_ssh_error(exit_code, &stderr);
+        let detail = first_line(&stderr);
+        return if kind == RemoteErrorKind::BadResponse {
+            Err(bad_response(ResponseFailure::ExitStatus, detail).into())
+        } else {
+            fail(kind, detail)
+        };
+    }
+    let page = ExportPage::decode(stdout).map_err(|error| {
+        let reason = if stdout.len() > usage_v1::MAX_PAGE_BYTES {
+            ResponseFailure::OutputTooLarge
+        } else if error.is::<UnsupportedExportVersion>() {
+            ResponseFailure::UnsupportedVersion
+        } else {
+            use serde_json::error::Category;
+            match error
+                .downcast_ref::<serde_json::Error>()
+                .map(|e| e.classify())
+            {
+                Some(Category::Eof) => ResponseFailure::IncompleteJson,
+                Some(Category::Syntax) => ResponseFailure::InvalidJson,
+                Some(Category::Data) => ResponseFailure::UnexpectedJsonData,
+                _ => ResponseFailure::InvalidPage,
+            }
+        };
+        bad_response(reason, format!("返回内容不合规：{error}"))
+    })?;
     if page.after != after {
-        return fail(RemoteErrorKind::BadResponse, "返回的游标与请求不一致");
+        return Err(bad_response(
+            ResponseFailure::CursorMismatch,
+            "返回的游标与请求不一致".into(),
+        )
+        .into());
     }
     if local_machine_id == Some(page.page.machine_id.as_str()) {
         return fail(
@@ -783,10 +923,7 @@ fn classify_ssh_error(code: Option<i32>, stderr: &str) -> RemoteErrorKind {
 }
 
 /// 跑子进程：stdout 最多读 `MAX_PAGE_BYTES + 1` 字节，超时杀掉。
-fn run_limited(
-    mut cmd: Command,
-    timeout: Duration,
-) -> Result<(std::process::ExitStatus, Vec<u8>, String)> {
+fn run_limited(mut cmd: Command, timeout: Duration) -> Result<Output> {
     let mut child = cmd
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -795,6 +932,7 @@ fn run_limited(
         .map_err(|e| RemoteError {
             kind: RemoteErrorKind::Local,
             detail: format!("启动 ssh 失败：{e}"),
+            response: None,
         })?;
     let stdout = child.stdout.take().context("ssh stdout")?;
     let stderr = child.stderr.take().context("ssh stderr")?;
@@ -808,7 +946,7 @@ fn run_limited(
     let err = std::thread::spawn(move || {
         let mut buf = Vec::new();
         let _ = stderr.take(16 * 1024).read_to_end(&mut buf);
-        String::from_utf8_lossy(&buf).into_owned()
+        buf
     });
     let deadline = Instant::now() + timeout;
     let status = loop {
@@ -824,7 +962,11 @@ fn run_limited(
     };
     let stdout = out.join().unwrap_or_default();
     let stderr = err.join().unwrap_or_default();
-    Ok((status, stdout, stderr))
+    Ok(Output {
+        status,
+        stdout,
+        stderr,
+    })
 }
 
 /// `~/AgentHome/remote/<name>`
@@ -853,6 +995,59 @@ pub fn host_fingerprints(dir: &Path) -> Result<Vec<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bad_response_diagnostics_classify_ssh_output_without_preserving_it() {
+        let cases = [
+            (
+                2,
+                &b""[..],
+                "agenthome ssh-export: 打不开用量库\nprivate runner path".as_bytes(),
+                ResponseFailure::ExitStatus,
+                ResponseLine::Empty,
+                ResponseLine::ExporterDatabaseOpenError,
+            ),
+            (
+                0,
+                b"",
+                b"",
+                ResponseFailure::IncompleteJson,
+                ResponseLine::Empty,
+                ResponseLine::Empty,
+            ),
+            (
+                0,
+                b"\nprivate login banner\n{}",
+                b"\xff",
+                ResponseFailure::InvalidJson,
+                ResponseLine::Text,
+                ResponseLine::Binary,
+            ),
+            (
+                0,
+                br#"{"v":2,"store_id":"00000000000000000000000000000000","after":0,"next":0,
+                     "high_water":0,"more":false,"page":{"v":1,"machine_id":"private","records":[]}}"#,
+                b"   \n",
+                ResponseFailure::UnsupportedVersion,
+                ResponseLine::JsonObject,
+                ResponseLine::Blank,
+            ),
+        ];
+        for (exit_code, stdout, stderr, reason, stdout_line, stderr_line) in cases {
+            let err = decode_ssh_response(Some(exit_code), stdout, stderr, 0, None).unwrap_err();
+            let err = err.downcast_ref::<RemoteError>().unwrap();
+            assert_eq!(err.kind, RemoteErrorKind::BadResponse);
+            let summary = err.response.unwrap();
+            assert_eq!(summary.reason, reason);
+            assert_eq!(summary.exit_code, Some(exit_code));
+            assert_eq!(summary.stdout.captured_bytes, stdout.len());
+            assert_eq!(summary.stderr.captured_bytes, stderr.len());
+            assert_eq!(summary.stdout.first_line, stdout_line);
+            assert_eq!(summary.stderr.first_line, stderr_line);
+            let report = serde_json::to_string(&summary).unwrap();
+            assert!(!report.contains("private") && !report.contains("0000000000000000"));
+        }
+    }
 
     #[test]
     fn request_grammar_is_strict() {

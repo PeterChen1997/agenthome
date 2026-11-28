@@ -319,7 +319,9 @@ fn export(data_dir: Option<PathBuf>) -> Result<Vec<u8>> {
         .map_err(|_| anyhow::anyhow!("设备身份文件读不了"))?
         .context("采集端还没有设备身份（先跑采集）")?;
     let db = data.join("usage").join("usage.db");
-    ensure!(db.exists(), "采集端还没有用量库（先跑采集）");
-    let store = UsageStore::open(&db, &identity).map_err(|_| anyhow::anyhow!("打不开用量库"))?;
+    // The collector owns schema initialization and writes. Export reads the committed WAL snapshot.
+    let store = UsageStore::open_read_only(&db, &identity)
+        .map_err(|_| anyhow::anyhow!("打不开用量库"))?
+        .context("采集端还没有用量库（先跑采集）")?;
     remote_ssh::export_page(&store, after)?.encode()
 }

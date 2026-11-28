@@ -11,11 +11,11 @@
 //!
 //! 同一远端同时只能有一个拉取：[`lock_remote`] 在远端目录里拿独占文件锁，跨进程也成立。
 //!
-//! 出错只给类别（[`PullFailure`]）：拉取阶段用 [`RemoteErrorKind`]，导入阶段用 [`FailureKind`]。
-//! 上报（Sentry）只发阶段和类别，不发地址、路径、金额和载荷；`detail` 只在本机显示。
+//! 失败类别（[`PullFailure`]）按阶段区分：拉取用 [`RemoteErrorKind`]，导入用 [`FailureKind`]。
+//! 上报（Sentry）发阶段、类别和拒收响应的安全摘要；`detail` 只在本机显示。
 
 use crate::device::DeviceIdentity;
-use crate::remote_ssh::{self, ExportPage, RemoteError, RemoteErrorKind};
+use crate::remote_ssh::{self, ExportPage, RemoteError, RemoteErrorKind, ResponseDiagnostic};
 use crate::usage_import::{ImportStore, StoreReset};
 use crate::usage_store::FailureKind;
 use anyhow::{Context, Result};
@@ -89,6 +89,7 @@ pub struct PullError {
     pub failure: PullFailure,
     pub detail: String,
     pub pages: usize,
+    pub response: Option<ResponseDiagnostic>,
 }
 
 impl std::fmt::Display for PullError {
@@ -138,6 +139,7 @@ pub fn pull(
         failure: PullFailure::of_import(&e),
         detail: format!("{e:#}"),
         pages: out.pages,
+        response: None,
     };
     let mut fetch_page = |out: &mut PullOutcome, after: u64| match fetch(after) {
         Ok(page) => {
@@ -148,6 +150,7 @@ pub fn pull(
             failure: PullFailure::of_fetch(&e),
             detail: format!("{e:#}"),
             pages: out.pages,
+            response: e.downcast_ref::<RemoteError>().and_then(|e| e.response),
         }),
     };
     loop {
@@ -199,6 +202,7 @@ pub fn pull(
                     failure: PullFailure::Import(FailureKind::Store),
                     detail: "完整快照期间采集端高水位倒退".into(),
                     pages: out.pages,
+                    response: None,
                 });
             }
             continue;
@@ -279,6 +283,7 @@ pub fn lock_remote(remote_dir: &Path) -> Result<File, PullError> {
         failure: PullFailure::Busy,
         detail,
         pages: 0,
+        response: None,
     };
     let file = File::create(remote_dir.join("pull.lock"))
         .map_err(|e| busy(format!("创建锁文件失败：{e}")))?;
@@ -302,6 +307,7 @@ pub fn pull_ssh(
             failure: PullFailure::Sync(RemoteErrorKind::Local),
             detail: format!("{e:#}"),
             pages: 0,
+            response: None,
         })?;
     let _lock = lock_remote(&dir)?;
     let local_id = local.machine_id().to_string();
@@ -474,6 +480,7 @@ mod tests {
         let remote: anyhow::Error = RemoteError {
             kind: RemoteErrorKind::Unreachable,
             detail: "connect to 10.0.0.2 port 22: refused".into(),
+            response: None,
         }
         .into();
         let f = PullFailure::of_fetch(&remote);

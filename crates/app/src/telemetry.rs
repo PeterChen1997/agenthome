@@ -19,6 +19,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use agenthome_core::diagnostics::ErrorDiagnostic;
 use agenthome_core::model::{Period, ProviderId};
+use agenthome_core::remote_ssh::ResponseDiagnostic;
 use agenthome_core::usage_report::MachineFilter;
 use sentry::protocol::DebugImage;
 use serde_json::{Value, json};
@@ -127,16 +128,20 @@ pub fn report_cost_failure(period: Period, machine_kind: &'static str, error: &a
     );
 }
 
-/// 用量同步失败：所有阶段附类别，本机采集还附代码步骤和错误码。
+/// 用量同步失败：附失败类别、本机错误诊断或拒收的 SSH 响应摘要。
 pub fn report_usage_failure(
     stage: &'static str,
     kind: &'static str,
     diagnostic: Option<(&ErrorDiagnostic, Option<&ProviderId>)>,
+    response: Option<ResponseDiagnostic>,
 ) {
     sentry::with_scope(
         |scope| {
             scope.set_tag("remote.stage", stage);
             scope.set_tag("remote.kind", kind);
+            if let Some(response) = response {
+                scope.set_extra("ssh.response", json!(response));
+            }
             if let Some((error, provider)) = diagnostic {
                 set_error_diagnostic(scope, error);
                 if let Some(provider) = provider {
@@ -412,7 +417,7 @@ mod tests {
         assert_eq!(report.failures[&FailureKind::Store], 1);
         assert_eq!(collector.store().high_water().unwrap(), 0);
         let (provider, diagnostic) = &report.failure_diagnostics[&FailureKind::Store];
-        report_usage_failure("collect", "store", Some((diagnostic, Some(provider))));
+        report_usage_failure("collect", "store", Some((diagnostic, Some(provider))), None);
         [cost_id, sentry::last_event_id().unwrap()]
     }
 
@@ -623,15 +628,14 @@ mod tests {
         );
     }
 
-    /// 远端拉取失败的上报只能有阶段和类别：错误详情里有对方地址、远端名（常是主机名）、路径，
-    /// 一样都不能发出去；版本和环境要带上，才能按版本看哪类失败多了。
+    /// 网络连接失败发阶段、类别、版本和环境。
     #[test]
     fn remote_failure_event_carries_only_category_version_and_env() {
         let mut options = client_options(false);
         // 调试构建里 `active()` 为假会丢弃事件；这里只验证事件本身长什么样。
         options.before_send = Some(Arc::new(|event| Some(scrub(event))));
         let events = sentry::test::with_captured_events_options(
-            || report_usage_failure("sync", "unreachable", None),
+            || report_usage_failure("sync", "unreachable", None, None),
             options,
         );
         assert_eq!(events.len(), 1);
@@ -654,6 +658,44 @@ mod tests {
         assert!(event.user.is_none());
         let home = dirs::home_dir().unwrap().display().to_string();
         assert!(!json.contains(&home));
+    }
+
+    #[test]
+    fn remote_bad_response_event_carries_only_bounded_response_metadata() {
+        use agenthome_core::remote_ssh::{ResponseFailure, ResponseLine, ResponseStream};
+
+        let response = ResponseDiagnostic {
+            reason: ResponseFailure::ExitStatus,
+            exit_code: Some(2),
+            stdout: ResponseStream {
+                captured_bytes: 0,
+                first_line: ResponseLine::Empty,
+            },
+            stderr: ResponseStream {
+                captured_bytes: 42,
+                first_line: ResponseLine::ExporterDatabaseOpenError,
+            },
+        };
+        let mut options = client_options(false);
+        options.before_send = Some(Arc::new(|event| Some(scrub(event))));
+        let events = sentry::test::with_captured_events_options(
+            || report_usage_failure("sync", "bad_response", None, Some(response)),
+            options,
+        );
+        assert_eq!(events.len(), 1);
+        let event = &events[0];
+        assert_eq!(event.tags["remote.stage"], "sync");
+        assert_eq!(event.tags["remote.kind"], "bad_response");
+        assert_eq!(event.extra.len(), 1);
+        assert_eq!(
+            event.extra["ssh.response"],
+            json!({
+                "reason": "exit_status",
+                "exit_code": 2,
+                "stdout": {"captured_bytes": 0, "first_line": "empty"},
+                "stderr": {"captured_bytes": 42, "first_line": "exporter_database_open_error"}
+            })
+        );
     }
 
     /// 测试运行（截图、演示数据、自检 panic）的上报不能混进 production 的崩溃率与报错列表。

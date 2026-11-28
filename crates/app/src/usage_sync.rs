@@ -10,7 +10,7 @@
 //! 事务里提交，采集也是每个文件的用量和进度同事务提交：App 退出、休眠、断网时线程停在哪都不会留下
 //! 半提交，下次从已确认的位置续上。
 //!
-//! 失败上报 Sentry 带阶段和类别，本机采集再附安全的错误诊断，每种每次运行只报一次。
+//! 失败上报 Sentry 带阶段和类别，采集错误和拒收的 SSH 响应再附安全诊断，每种每次运行只报一次。
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -24,7 +24,7 @@ use agenthome_core::model::ProviderId;
 use agenthome_core::providers::opencode::OpenCodeProvider;
 use agenthome_core::providers::registry;
 use agenthome_core::remote_pull::{self, PullFailure, PullOutcome, PullSchedule};
-use agenthome_core::remote_ssh;
+use agenthome_core::remote_ssh::{self, ResponseDiagnostic};
 use agenthome_core::usage_import::ImportStore;
 use agenthome_core::usage_store::FailureKind;
 use agenthome_core::{SourceProvider, paths};
@@ -56,9 +56,10 @@ fn report_once(
     stage: &'static str,
     kind: &'static str,
     diagnostic: Option<(&ErrorDiagnostic, Option<&ProviderId>)>,
+    response: Option<ResponseDiagnostic>,
 ) {
     if reported.insert((who.to_string(), stage, kind)) {
-        telemetry::report_usage_failure(stage, kind, diagnostic);
+        telemetry::report_usage_failure(stage, kind, diagnostic, response);
     }
 }
 
@@ -69,6 +70,7 @@ fn report_collect_error(reported: &mut Reported, error: &anyhow::Error) {
         "collect",
         FailureKind::of(error).as_str(),
         Some((&ErrorDiagnostic::from_error(error), None)),
+        None,
     );
 }
 
@@ -143,6 +145,7 @@ impl Local {
                         "collect",
                         kind.as_str(),
                         Some((diagnostic, Some(provider))),
+                        None,
                     );
                 }
                 self.next_due_ms = now_ms() + collector.next_delay(&report).as_millis() as i64;
@@ -203,7 +206,7 @@ impl Remotes {
                 Ok(store) => self.store = Some(store),
                 Err(error) => {
                     let failure = PullFailure::of_import(&error);
-                    report_once(reported, "", failure.stage(), failure.kind(), None);
+                    report_once(reported, "", failure.stage(), failure.kind(), None, None);
                     let label = format!("{}/{}", failure.stage(), failure.kind());
                     let detail = format!("{error:#}");
                     update(shared, |s| {
@@ -243,6 +246,7 @@ impl Remotes {
                         error.failure.stage(),
                         error.failure.kind(),
                         None,
+                        error.response,
                     );
                 }
             }
