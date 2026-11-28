@@ -8,6 +8,9 @@
 #     ASC_KEY_ID / ASC_ISSUER / ASC_KEY_PATH
 #                         App Store Connect API 密钥；密钥文件存在即公证
 #   以上可写进 script/release.env（已被 .gitignore 忽略，不进仓库），脚本启动时自动读取。
+#     SENTRY_AUTH_TOKEN   dSYM 上传凭据，也可用 sentry-cli 的本地登录配置
+#     SENTRY_DSN_AGENTHOME
+#                         构建时注入，也可从 ~/.config/sentry-dsns.env 读取
 #     NOTARY_PROFILE      备选：notarytool 钥匙串 profile 名（API 密钥不可用时）
 #     SKIP_NOTARIZE=1     跳过公证（包能跑，但别的 Mac 首次打开需右键“打开”）
 set -euo pipefail
@@ -34,39 +37,50 @@ else
 fi
 APP=dist/AgentHome.app
 ZIP="dist/AgentHome-${VERSION}-macos-arm64.zip"
+APP_BIN="$APP/Contents/MacOS/agenthome-app"
+DWARF_DIR=target/release/agenthome-app.dSYM/Contents/Resources/DWARF
 ICON_SRC=docs/design/logo/app-icon.png   # 1024，已按 macOS 图标网格留边、圆角外透明（logo 选定 D，2026-11-09）
 
-# Sentry DSN 构建时注入（开源仓库里不放）；没有就不启用崩溃上报，照样能发版但要知道。
+# 发版包必须同时能上报事件和上传 dSYM，凭据问题在构建前报错。
+if ! command -v sentry-cli >/dev/null; then
+  echo "错误：请安装 sentry-cli 以校验并上传 dSYM" >&2
+  exit 1
+fi
+if ! sentry-cli info --no-defaults --quiet; then
+  echo "错误：Sentry 鉴权失败，请设置 SENTRY_AUTH_TOKEN 或配置 sentry-cli 本地登录" >&2
+  exit 1
+fi
 if [ -z "${SENTRY_DSN_AGENTHOME:-}" ] && [ -f "$HOME/.config/sentry-dsns.env" ]; then
-  SENTRY_DSN_AGENTHOME="$(grep -m1 '^SENTRY_DSN_AGENTHOME=' "$HOME/.config/sentry-dsns.env" | cut -d= -f2-)"
+  SENTRY_DSN_AGENTHOME="$(awk '/^SENTRY_DSN_AGENTHOME=/ {sub(/^[^=]*=/, ""); print; exit}' "$HOME/.config/sentry-dsns.env")"
 fi
-if [ -n "${SENTRY_DSN_AGENTHOME:-}" ]; then
-  export SENTRY_DSN_AGENTHOME
-else
-  echo "警告：没有 SENTRY_DSN_AGENTHOME，这个包不会上报崩溃" >&2
-fi
+: "${SENTRY_DSN_AGENTHOME:?请设置 SENTRY_DSN_AGENTHOME（或写进 ~/.config/sentry-dsns.env）}"
+export SENTRY_DSN_AGENTHOME
 
 echo "== 1/5 release 构建"
 cargo build --release -p agenthome-app -p agenthome-cli
 
-# 符号上传：dSYM 只传 Sentry，不进 .app。没传上去的包崩溃堆栈不可读，所以 sentry-cli 没装、
-# 没登录或上传失败都中止发版（与 Helmp / Friendily 一致）。
-if [ -n "${SENTRY_DSN_AGENTHOME:-}" ]; then
-  if ! command -v sentry-cli >/dev/null; then
-    echo "错误：没装 sentry-cli，dSYM 无法上传，中止发版" >&2
-    exit 1
-  fi
-  if ! sentry-cli debug-files upload --org own-tay --project agenthome --include-sources \
-    target/release/agenthome-app.dSYM; then
-    echo "错误：dSYM 上传失败（堆栈会不可读），中止发版" >&2
-    exit 1
-  fi
+# packed release profile 会在 target 下生成 dSYM。仅有符号表时 check 也可能
+# 成功，因此额外要求 DWARF 调试信息，确保 Sentry 能解析到源码行号。
+DWARF_FILES=("$DWARF_DIR"/*)
+DSYM="${DWARF_FILES[0]}"
+if [ "${#DWARF_FILES[@]}" -ne 1 ] || [ ! -f "$DSYM" ]; then
+  echo "错误：release dSYM 应包含一个 DWARF 文件：$DWARF_DIR" >&2
+  exit 1
+fi
+if ! sentry-cli debug-files check --type dsym --json "$DSYM" | /usr/bin/python3 -c \
+  'import json, sys
+if "debug" not in json.load(sys.stdin)["features"].split(", "):
+    sys.exit("dSYM 缺少 DWARF 调试信息")'; then
+  echo "错误：release dSYM 校验失败：$DSYM" >&2
+  exit 1
 fi
 
 echo "== 2/5 组装 .app"
 rm -rf dist && mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-cp target/release/agenthome-app "$APP/Contents/MacOS/agenthome-app"
+cp target/release/agenthome-app "$APP_BIN"
 cp target/release/agenthome "$APP/Contents/MacOS/agenthome"   # CLI 随包附带
+# 仅 strip 包内副本，在签名前移除调试符号并保留运行时回溯用的函数符号。
+xcrun strip -S "$APP_BIN" "$APP/Contents/MacOS/agenthome"
 # 许可与第三方声明随包分发（Apache-2.0 第 4 条、字体 OFL、依赖署名）
 cp LICENSE NOTICE THIRD_PARTY_LICENSES.md "$APP/Contents/Resources/"
 # 图标：png → icns
@@ -111,6 +125,20 @@ codesign --force --options runtime --timestamp --entitlements dist/entitlements.
   --sign "$IDENTITY" "$APP"
 codesign --verify --deep --strict --verbose=2 "$APP"
 spctl --assess --type execute --verbose=2 "$APP" || echo "（未公证时 spctl 会拒绝，属预期）"
+
+# 签名后的 Mach-O 必须与 dSYM UUID 一致。等 Sentry 处理完成才继续打包。
+APP_UUID="$(xcrun dwarfdump --uuid "$APP_BIN" | awk '/^UUID:/ && $3 == "(arm64)" {print $2}')"
+DSYM_UUID="$(xcrun dwarfdump --uuid "$DSYM" | awk '/^UUID:/ && $3 == "(arm64)" {print $2}')"
+if [ -z "$APP_UUID" ] || [ "$APP_UUID" != "$DSYM_UUID" ]; then
+  echo "错误：arm64 UUID 不匹配（签名二进制：${APP_UUID:-缺失}，dSYM：${DSYM_UUID:-缺失}）" >&2
+  exit 1
+fi
+echo "== 上传 Sentry dSYM（${DSYM_UUID}）"
+if ! sentry-cli debug-files upload --org own-tay --project agenthome --type dsym --include-sources \
+  --id "$DSYM_UUID" --require-all --wait "$DSYM"; then
+  echo "错误：Sentry dSYM 上传或处理失败，中止打包" >&2
+  exit 1
+fi
 
 echo "== 4/5 打包 zip"
 ditto -c -k --keepParent "$APP" "$ZIP"
